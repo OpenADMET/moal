@@ -326,3 +326,64 @@ class TestTestSetIntegration:
         results = loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
         for ir in results.iterations:
             assert ir.model_metric_value is None
+
+
+class TestIsCanonicalForwarding:
+    """Regression test for the is_canonical key-forwarding bug.
+
+    When is_canonical=True the oracle's _ground_truth keys are the raw CSV
+    SMILES (e.g. Kekulé notation).  Before the fix, loop.py called
+    query_batch() without forwarding is_canonical=True, causing the oracle to
+    re-canonicalize those keys on lookup.  This produced a mismatch (Kekulé
+    key → canonical lookup key) and emitted "Compound not found" warnings
+    while silently skipping every query.
+    """
+
+    def test_queries_succeed_with_kekule_smiles_and_is_canonical_true(self):
+        """Every compound selected by the acquisition must be successfully queried
+        when the oracle holds Kekulé SMILES keys and is_canonical=True."""
+        from moal.model import NoisyOracleModel
+
+        # Kekulé SMILES that RDKit would canonicalize to lowercase aromatic
+        # equivalents — these are the raw CSV keys when is_canonical=True.
+        kekule_smiles = [
+            "C1=CC=CC=C1",       # benzene (canonical: c1ccccc1)
+            "C1=CC=C(O)C=C1",    # phenol (canonical: Oc1ccccc1)
+            "C1=CC=C(N)C=C1",    # aniline (canonical: Nc1ccccc1)
+            "C1=CC=NC=C1",       # pyridine (canonical: c1ccncc1)
+            "C1=CC=CO1",         # furan (canonical: c1ccoc1)
+            "CC(=O)O",           # acetic acid (already canonical)
+        ]
+        pec50s = [5.0, 7.8, 6.2, 5.5, 4.9, 6.0]
+        df = pd.DataFrame({"smiles": kekule_smiles, "pec50": pec50s})
+
+        oracle = CostAwareOracle(
+            ground_truth_df=df,
+            cost_ps=1.0,
+            cost_drc=10.0,
+            ps_threshold=5.0,
+            upper_bound=11.0,
+            is_canonical=True,   # keys stored verbatim, no RDKit canonicalization
+        )
+
+        # NoisyOracleModel gets the same dict, so lookups in predict_smiles match.
+        model = NoisyOracleModel(oracle._ground_truth, noise_scale=0.0, seed=0)
+        acquisition = CostAwareGreedyAcquisition(
+            cost_ps=1.0, cost_drc=10.0, ps_threshold=5.0,
+            target_threshold=7.0, tau=0.5,
+        )
+        evaluator = PipelineEvaluator(activity_threshold=7.0, upper_bound=11.0)
+        loop = ActiveLearningLoop(
+            oracle=oracle, model=model, acquisition=acquisition, evaluator=evaluator
+        )
+
+        results = loop.run(n_iterations=2, k_per_iteration=2)
+
+        # The oracle must have labeled compounds — if the bug were present,
+        # every query would have been silently skipped and the pool would be empty.
+        assert oracle.labeled_records, "No compounds were labeled — query_batch likely skipped all"
+        # No labeled compound should be a duplicate.
+        keys = [r.canonical_smiles for r in oracle.labeled_records]
+        assert len(keys) == len(set(keys))
+        # Total cost must be positive (at least one successful query).
+        assert results.total_cost > 0

@@ -311,7 +311,13 @@ class CostAwareOracle:
         return list(self._labeled.values())
 
     def get_unlabeled_smiles(self) -> list[str]:
-        """Return canonical SMILES for all compounds not yet labeled."""
+        """Return ground-truth keys for all compounds not yet labeled.
+
+        Keys are canonical SMILES when the oracle was initialised with
+        ``is_canonical=False`` (the default), or the raw CSV SMILES when
+        ``is_canonical=True``.  Callers that forward these keys to
+        :meth:`query_batch` must pass the matching ``is_canonical`` flag.
+        """
         return [s for s in self._ground_truth if s not in self._labeled]
 
     def is_active(self, smiles: str, threshold: float = 7.0) -> bool:
