@@ -300,7 +300,7 @@ class LiveDashboard:
         """Explicitly save the current figure to a file."""
         self._fig.savefig(path, dpi=120, bbox_inches="tight")
 
-    def save_gif(self, path: str | Path, frame_duration_ms: int = 1000) -> None:
+    def save_gif(self, path: str | Path, frame_duration_ms: int = 500) -> None:
         """Assemble all saved PNG snapshots into an animated GIF.
 
         Reads every ``dashboard_XXXX.png`` written by :meth:`_save_snapshot`
@@ -311,7 +311,7 @@ class LiveDashboard:
         Args:
             path: Destination file path for the GIF.
             frame_duration_ms: Display duration of each frame in milliseconds.
-                Defaults to 1000 (one second per iteration frame).
+                Defaults to 500 (half a second per iteration frame).
         """
         if not self.save_dir:
             logger.warning("save_gif called but save_dir is not set; skipping")
