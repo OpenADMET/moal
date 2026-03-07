@@ -168,7 +168,8 @@ class TestExampleConfig:
         assert cfg.data.is_canonical is False
         # Fast mode defaults must be present in the example config.
         assert cfg.model.fast is False
-        assert cfg.model.noise_scale == pytest.approx(0.5)
+        assert cfg.model.initial_error == pytest.approx(0.7)
+        assert cfg.model.final_error == pytest.approx(0.5)
 
     def test_fast_mode_config_does_not_require_checkpoint(self, tmp_path):
         """A config with fast=true must not fail at the checkpoint-loading stage.
@@ -190,7 +191,8 @@ class TestExampleConfig:
             f"  ground_truth_csv: {csv_file}\n"
             "model:\n"
             "  fast: true\n"
-            "  noise_scale: 0.3\n"
+            "  initial_error: 0.7\n"
+            "  final_error: 0.3\n"
             "dashboard:\n"
             "  enabled: false\n"
         )

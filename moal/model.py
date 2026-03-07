@@ -339,12 +339,14 @@ class NoisyOracleModel:
     :class:`ChemPropLightningModule` (``predict_smiles`` and ``refit``) so it
     can be used as a drop-in replacement in :class:`~moal.loop.ActiveLearningLoop`.
 
+    The noise level is not fixed at construction — it is supplied per-call via
+    the ``noise_scale`` argument to ``predict_smiles``, allowing the caller
+    (typically :class:`~moal.loop.ActiveLearningLoop`) to implement an
+    error ramp across iterations.
+
     Args:
         ground_truth: Mapping from canonical SMILES to true pEC50 values.
             Typically ``oracle._ground_truth``.
-        noise_scale: Half-width of the uniform noise distribution (pEC50
-            log-units). A value of 0.0 returns exact oracle values. Must be
-            non-negative.
         seed: Seed for the internal RNG, ensuring reproducible predictions
             across runs with the same configuration.
     """
@@ -352,18 +354,14 @@ class NoisyOracleModel:
     def __init__(
         self,
         ground_truth: dict[str, float],
-        noise_scale: float = 0.5,
         seed: int = 42,
     ) -> None:
-        if noise_scale < 0:
-            raise ValueError(
-                f"noise_scale must be non-negative, got {noise_scale}"
-            )
         self._ground_truth = ground_truth
-        self.noise_scale = noise_scale
         self._rng = np.random.default_rng(seed)
 
-    def predict_smiles(self, smiles_list: list[str], batch_size: int = 256) -> np.ndarray:
+    def predict_smiles(
+        self, smiles_list: list[str], noise_scale: float, batch_size: int = 256
+    ) -> np.ndarray:
         """Return noisy pEC50 estimates for a list of canonical SMILES.
 
         Each prediction is sampled as ``true_pec50 + Uniform(-noise_scale, +noise_scale)``.
@@ -373,6 +371,10 @@ class NoisyOracleModel:
         Args:
             smiles_list: Canonical SMILES strings. Each must be present in the
                 ``ground_truth`` dict supplied at construction.
+            noise_scale: Half-width of the uniform noise distribution (pEC50
+                log-units). A value of 0.0 returns exact oracle values. Must be
+                non-negative. Passed by the caller on every invocation, enabling
+                per-iteration error schedules.
             batch_size: Ignored; retained for interface compatibility with
                 :class:`ChemPropLightningModule`.
 
@@ -381,13 +383,16 @@ class NoisyOracleModel:
             ``smiles_list``.
 
         Raises:
+            ValueError: If ``noise_scale`` is negative.
             KeyError: If any SMILES in ``smiles_list`` is not in ``ground_truth``.
         """
+        if noise_scale < 0:
+            raise ValueError(f"noise_scale must be non-negative, got {noise_scale}")
         preds = np.empty(len(smiles_list), dtype=np.float32)
         for i, smi in enumerate(smiles_list):
             # KeyError propagates if smi is absent, matching ChemPropLightningModule behaviour
             true_pec50 = self._ground_truth[smi]
-            noise = self._rng.uniform(-self.noise_scale, self.noise_scale)
+            noise = self._rng.uniform(-noise_scale, noise_scale)
             preds[i] = true_pec50 + noise
         return preds
 

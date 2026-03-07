@@ -35,7 +35,8 @@ model:
   w_ps: 0.3                  # Loss weight for PS (inequality) labels
   learnable_sigma: false     # If true, sigma is a learned parameter
   fast: false                # When true, bypass CheMeleon and use a noisy oracle predictor (no checkpoint needed)
-  noise_scale: 0.5           # Uniform noise magnitude (pEC50 units) applied in fast mode
+  initial_error: 0.7         # Starting noise magnitude (pEC50 units) for the error ramp in fast mode
+  final_error: 0.5           # Ending noise magnitude for the ramp; set equal to initial_error for constant noise
 
 # --------------------------------------------------------------------------
 # Acquisition function

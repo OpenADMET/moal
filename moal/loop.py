@@ -60,6 +60,13 @@ class ActiveLearningLoop:
             split for model performance tracking.  If provided, the model
             metric is computed after every refit and shown in the dashboard.
         model_metric: Which metric to track for the model performance curve.
+        initial_error: Starting noise magnitude (pEC50 log-units) for the
+            error ramp when using NoisyOracleModel in fast mode. Ignored for
+            ChemPropLightningModule.
+        final_error: Ending noise magnitude (pEC50 log-units) for the error
+            ramp. A linear schedule from ``initial_error`` to ``final_error``
+            is applied over all iterations. Set equal to ``initial_error`` for
+            constant noise.
     """
 
     def __init__(
@@ -74,6 +81,8 @@ class ActiveLearningLoop:
         dashboard: "LiveDashboard | None" = None,
         test_set: tuple[list[str], np.ndarray] | None = None,
         model_metric: ModelMetric = ModelMetric.MAE,
+        initial_error: float = 0.7,
+        final_error: float = 0.5,
     ) -> None:
         self.oracle = oracle
         self.model = model
@@ -85,6 +94,8 @@ class ActiveLearningLoop:
         self.dashboard = dashboard
         self.test_set = test_set
         self.model_metric = model_metric
+        self.initial_error = initial_error
+        self.final_error = final_error
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -106,6 +117,12 @@ class ActiveLearningLoop:
         n_total = len(self.oracle)
         n_true_actives = self.oracle.n_true_actives(self.evaluator.activity_threshold)
 
+        # Build a per-iteration noise schedule for NoisyOracleModel fast mode;
+        # linspace(a, a, n) naturally handles the constant-error case.
+        noise_schedule: np.ndarray | None = None
+        if isinstance(self.model, NoisyOracleModel):
+            noise_schedule = np.linspace(self.initial_error, self.final_error, n_iterations)
+
         _console.print(
             f"[bold]moal[/bold] campaign starting — "
             f"[cyan]{n_iterations}[/cyan] iterations × "
@@ -121,7 +138,7 @@ class ActiveLearningLoop:
         ps_labeled = self.oracle.get_ps_labeled_smiles()
         all_scorable = unlabeled + ps_labeled
         if all_scorable:
-            all_preds = self.model.predict_smiles(all_scorable)
+            all_preds = self._predict(all_scorable, noise_schedule[0] if noise_schedule is not None else None)
             unlabeled_preds = all_preds[:len(unlabeled)]
             ps_labeled_preds = all_preds[len(unlabeled):]
         else:
@@ -253,7 +270,10 @@ class ActiveLearningLoop:
                     ),
                 )
                 if all_remaining:
-                    all_preds = self.model.predict_smiles(all_remaining)
+                    all_preds = self._predict(
+                        all_remaining,
+                        noise_schedule[iteration] if noise_schedule is not None else None,
+                    )
                     unlabeled_preds = all_preds[:len(remaining_unlabeled)]
                     ps_labeled_preds = all_preds[len(remaining_unlabeled):]
                     pending_queries = self.acquisition.select(
@@ -329,6 +349,13 @@ class ActiveLearningLoop:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _predict(self, smiles_list: list[str], noise_scale: float | None = None) -> np.ndarray:
+        """Route inference, injecting noise_scale for NoisyOracleModel per-iteration error scheduling."""
+        if isinstance(self.model, NoisyOracleModel):
+            # noise_scale is always set from the schedule when NoisyOracleModel is active
+            return self.model.predict_smiles(smiles_list, noise_scale)  # type: ignore[arg-type]
+        return self.model.predict_smiles(smiles_list)
 
     def _empty_result(self, iteration: int) -> IterationResults:
         return IterationResults(

@@ -85,12 +85,13 @@ def main(config: str, output_dir: str | None, verbose: bool) -> None:
     if cfg.model.fast:
         model = NoisyOracleModel(
             ground_truth=oracle._ground_truth,
-            noise_scale=cfg.model.noise_scale,
             seed=cfg.seed,
         )
         logger.info(
-            "Fast mode enabled — using NoisyOracleModel with noise_scale=%.3f",
-            cfg.model.noise_scale,
+            "Fast mode enabled — using NoisyOracleModel with error ramp %.3f → %.3f over %d iterations",
+            cfg.model.initial_error,
+            cfg.model.final_error,
+            cfg.active_learning_loop.n_iterations,
         )
     else:
         model = ChemPropLightningModule(
@@ -158,6 +159,8 @@ def main(config: str, output_dir: str | None, verbose: bool) -> None:
         dashboard=dashboard,
         test_set=test_set,
         model_metric=model_metric,
+        initial_error=cfg.model.initial_error,
+        final_error=cfg.model.final_error,
     )
 
     results = loop.run(

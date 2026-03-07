@@ -299,14 +299,14 @@ _GT: dict[str, float] = {
 
 @pytest.fixture
 def noisy_model() -> NoisyOracleModel:
-    return NoisyOracleModel(ground_truth=_GT, noise_scale=0.5, seed=0)
+    return NoisyOracleModel(ground_truth=_GT, seed=0)
 
 
 class TestNoisyOracleModel:
     def test_predictions_within_noise_bounds(self, noisy_model):
         """All predictions must lie within [true - noise_scale, true + noise_scale]."""
         smiles = list(_GT.keys())
-        preds = noisy_model.predict_smiles(smiles)
+        preds = noisy_model.predict_smiles(smiles, noise_scale=0.5)
         for smi, pred in zip(smiles, preds):
             true = _GT[smi]
             assert true - 0.5 <= pred <= true + 0.5, (
@@ -315,65 +315,70 @@ class TestNoisyOracleModel:
 
     def test_zero_noise_returns_exact_values(self):
         """noise_scale=0.0 must return predictions identical to true pEC50 values."""
-        model = NoisyOracleModel(ground_truth=_GT, noise_scale=0.0, seed=0)
+        model = NoisyOracleModel(ground_truth=_GT, seed=0)
         smiles = list(_GT.keys())
-        preds = model.predict_smiles(smiles)
+        preds = model.predict_smiles(smiles, noise_scale=0.0)
         for smi, pred in zip(smiles, preds):
             assert pred == pytest.approx(_GT[smi], abs=1e-6)
 
     def test_predictions_reproducible_with_same_seed(self):
         """Two models with the same seed must produce identical predictions."""
         smiles = list(_GT.keys())
-        m1 = NoisyOracleModel(ground_truth=_GT, noise_scale=0.5, seed=99)
-        m2 = NoisyOracleModel(ground_truth=_GT, noise_scale=0.5, seed=99)
+        m1 = NoisyOracleModel(ground_truth=_GT, seed=99)
+        m2 = NoisyOracleModel(ground_truth=_GT, seed=99)
         np.testing.assert_array_equal(
-            m1.predict_smiles(smiles), m2.predict_smiles(smiles)
+            m1.predict_smiles(smiles, noise_scale=0.5),
+            m2.predict_smiles(smiles, noise_scale=0.5),
         )
 
     def test_predictions_differ_with_different_seeds(self):
         """Different seeds must (almost certainly) produce different predictions."""
         smiles = list(_GT.keys())
-        m1 = NoisyOracleModel(ground_truth=_GT, noise_scale=0.5, seed=1)
-        m2 = NoisyOracleModel(ground_truth=_GT, noise_scale=0.5, seed=2)
-        assert not np.array_equal(m1.predict_smiles(smiles), m2.predict_smiles(smiles))
+        m1 = NoisyOracleModel(ground_truth=_GT, seed=1)
+        m2 = NoisyOracleModel(ground_truth=_GT, seed=2)
+        assert not np.array_equal(
+            m1.predict_smiles(smiles, noise_scale=0.5),
+            m2.predict_smiles(smiles, noise_scale=0.5),
+        )
 
     def test_refit_is_noop(self, noisy_model):
         """refit() must return self and leave predictions unchanged."""
         smiles = list(_GT.keys())
         # Exhaust some RNG state before capturing the reference predictions
-        ref = NoisyOracleModel(ground_truth=_GT, noise_scale=0.5, seed=0)
-        preds_before = ref.predict_smiles(smiles)
+        ref = NoisyOracleModel(ground_truth=_GT, seed=0)
+        preds_before = ref.predict_smiles(smiles, noise_scale=0.5)
 
-        ref2 = NoisyOracleModel(ground_truth=_GT, noise_scale=0.5, seed=0)
+        ref2 = NoisyOracleModel(ground_truth=_GT, seed=0)
         returned = ref2.refit(records=[], trainer_kwargs={"max_epochs": 5})
         assert returned is ref2  # must return self
-        preds_after = ref2.predict_smiles(smiles)
+        preds_after = ref2.predict_smiles(smiles, noise_scale=0.5)
         np.testing.assert_array_equal(preds_before, preds_after)
 
     def test_negative_noise_scale_raises(self):
-        """A negative noise_scale must raise ValueError at construction."""
+        """A negative noise_scale must raise ValueError when calling predict_smiles."""
+        model = NoisyOracleModel(ground_truth=_GT)
         with pytest.raises(ValueError, match="non-negative"):
-            NoisyOracleModel(ground_truth=_GT, noise_scale=-1.0)
+            model.predict_smiles(list(_GT.keys()), noise_scale=-1.0)
 
     def test_unknown_smiles_raises_key_error(self, noisy_model):
         """SMILES absent from ground_truth must raise KeyError."""
         with pytest.raises(KeyError):
-            noisy_model.predict_smiles(["C1CC1"])
+            noisy_model.predict_smiles(["C1CC1"], noise_scale=0.5)
 
     def test_empty_smiles_list(self, noisy_model):
         """An empty input list must return an empty float32 array without error."""
-        result = noisy_model.predict_smiles([])
+        result = noisy_model.predict_smiles([], noise_scale=0.5)
         assert result.shape == (0,)
         assert result.dtype == np.float32
 
     def test_output_dtype_is_float32(self, noisy_model):
         """Output array must always be float32 for compatibility with the pipeline."""
-        preds = noisy_model.predict_smiles(["c1ccccc1"])
+        preds = noisy_model.predict_smiles(["c1ccccc1"], noise_scale=0.5)
         assert preds.dtype == np.float32
 
     def test_batch_size_argument_ignored(self, noisy_model):
         """batch_size kwarg must be accepted without error or behaviour change."""
         smiles = list(_GT.keys())
-        preds_default = NoisyOracleModel(ground_truth=_GT, noise_scale=0.3, seed=7).predict_smiles(smiles)
-        preds_custom  = NoisyOracleModel(ground_truth=_GT, noise_scale=0.3, seed=7).predict_smiles(smiles, batch_size=1)
+        preds_default = NoisyOracleModel(ground_truth=_GT, seed=7).predict_smiles(smiles, noise_scale=0.3)
+        preds_custom  = NoisyOracleModel(ground_truth=_GT, seed=7).predict_smiles(smiles, noise_scale=0.3, batch_size=1)
         np.testing.assert_array_equal(preds_default, preds_custom)
