@@ -141,9 +141,6 @@ class DashboardConfig:
     """Metric to display in the model performance panel.
     Valid values: ``mae``, ``rmse``, ``kendall_tau``, ``spearman_r``, ``r2``."""
 
-    save_dir: str = ""
-    """Directory to write PNG snapshots after each iteration. Empty = don't save."""
-
     figsize: tuple[int, int] = (15, 4)
     """Overall figure size (width, height) in inches."""
 

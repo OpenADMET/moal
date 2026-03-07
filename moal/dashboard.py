@@ -8,6 +8,7 @@ Three subplots update after every active learning iteration:
 
 from __future__ import annotations
 
+import io
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -42,7 +43,6 @@ class LiveDashboard:
     Args:
         n_iterations: Total planned iterations (used to pre-size x-axes).
         model_metric: Metric to display in the model performance panel.
-        save_dir: If set, PNG snapshots are written here after every update.
         figsize: Overall figure size (width, height) in inches.
         show: If True, attempt interactive ``plt.ion()`` mode. If False (or if
             the display is unavailable), fall back to file-save-only mode.
@@ -52,18 +52,15 @@ class LiveDashboard:
         self,
         n_iterations: int,
         model_metric: ModelMetric = ModelMetric.MAE,
-        save_dir: str | Path | None = None,
         figsize: tuple[int, int] = (15, 4),
         show: bool = True,
     ) -> None:
         self.n_iterations = n_iterations
         self.model_metric = model_metric
-        self.save_dir = Path(save_dir) if save_dir else None
         self._interactive = False
         self._update_count = 0
-
-        if self.save_dir:
-            self.save_dir.mkdir(parents=True, exist_ok=True)
+        # In-memory PNG frames captured after every update, used by save_gif.
+        self._frames: list[bytes] = []
 
         # Use a non-interactive backend when show=False or when we detect
         # there is no display environment.
@@ -194,8 +191,7 @@ class LiveDashboard:
             except (OSError, RuntimeError):
                 self._interactive = False
 
-        if self.save_dir:
-            self._save_snapshot()
+        self._capture_frame()
 
     # ------------------------------------------------------------------
     # Panel drawing
@@ -325,12 +321,14 @@ class LiveDashboard:
             return rec.value >= threshold
         return False
 
-    def _save_snapshot(self) -> None:
-        path = self.save_dir / f"dashboard_{self._update_count:04d}.png"  # type: ignore[operator]
+    def _capture_frame(self) -> None:
+        """Render the current figure into an in-memory PNG buffer."""
+        buf = io.BytesIO()
         try:
-            self._fig.savefig(path, dpi=100, bbox_inches="tight")
+            self._fig.savefig(buf, format="png", dpi=100, bbox_inches="tight")
+            self._frames.append(buf.getvalue())
         except Exception as exc:
-            logger.warning("Could not save dashboard snapshot: %s", exc)
+            logger.warning("Could not capture dashboard frame: %s", exc)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -346,12 +344,11 @@ class LiveDashboard:
         frame_duration_ms: int = 500,
         last_frame_duration_ms: int = 5000,
     ) -> None:
-        """Assemble all saved PNG snapshots into an animated GIF.
+        """Assemble all captured frames into an animated GIF.
 
-        Reads every ``dashboard_XXXX.png`` written by :meth:`_save_snapshot`
-        in sorted (chronological) order and encodes them into a looping GIF.
-        This method is a no-op (with a warning) when ``save_dir`` was not set
-        at construction time or when no snapshots have been written yet.
+        Uses the in-memory PNG frames captured by :meth:`_capture_frame` after
+        every :meth:`update` call. This method is a no-op (with a warning) when
+        no updates have been made yet.
 
         Args:
             path: Destination file path for the GIF.
@@ -361,26 +358,15 @@ class LiveDashboard:
                 milliseconds, allowing the viewer to read the completed state
                 before the animation loops. Defaults to 5000 (5 seconds).
         """
-        if not self.save_dir:
-            logger.warning("save_gif called but save_dir is not set; skipping")
-            return
-
-        frame_paths = sorted(self.save_dir.glob("dashboard_*.png"))
-        if not frame_paths:
-            logger.warning(
-                "No dashboard snapshots found in %s; skipping GIF", self.save_dir
-            )
+        if not self._frames:
+            logger.warning("No frames captured; skipping GIF")
             return
 
         try:
-            from PIL import Image  # Pillow is a declared dependency
+            from PIL import Image
 
-            frames = [Image.open(p).convert("RGB") for p in frame_paths]
-            # convert("P") gives an 8-bit palette GIF; quantize reduces colour
-            # depth without visible banding at typical dashboard colour counts
+            frames = [Image.open(io.BytesIO(f)).convert("RGB") for f in self._frames]
             palette_frames = [f.convert("P", dither=Image.Dither.NONE) for f in frames]
-            # Per-frame durations: hold the last frame longer so viewers can
-            # read the final campaign state before the animation loops
             durations = [frame_duration_ms] * len(palette_frames)
             durations[-1] = last_frame_duration_ms
             palette_frames[0].save(
@@ -394,7 +380,7 @@ class LiveDashboard:
             )
             logger.info(
                 "Dashboard animation (%d frames) saved to %s",
-                len(frame_paths),
+                len(self._frames),
                 path,
             )
         except Exception as exc:

@@ -63,7 +63,6 @@ trainer:
 dashboard:
   enabled: true
   model_metric: mae         # Metric displayed in panel 3: mae | rmse | kendall_tau | spearman_r | r2
-  save_dir: ""              # Directory to write PNG snapshots after each iteration ("" = don't save)
   figsize: [15, 4]          # Figure size in inches [width, height]
   show: true                # Set to false for headless/server environments
 
@@ -76,7 +75,7 @@ data:
   pec50_column: pec50    # Column name for pEC50 values (default: "pec50")
   is_canonical: false    # Set to true to skip RDKit canonicalization (input SMILES must already be canonical)
   output_dir: results    # Directory for iteration_metrics.csv, cumulative_actives_curve.csv,
-                         # dashboard_final.png, and config_used.yaml
+                         # dashboard_final.png, dashboard_animation.gif, and config_used.yaml
 
 # --------------------------------------------------------------------------
 # Active learning loop
