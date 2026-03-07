@@ -149,7 +149,13 @@ class ActiveLearningLoop:
                         f"[steel_blue1]{n_ps} primary screens[/steel_blue1]"
                     ),
                 )
-                new_records = self.oracle.query_batch(queries, iteration)
+                # Forward is_canonical so query_batch uses the same key strategy
+                # that was used when building the ground truth dict; omitting it
+                # would cause re-canonicalization to produce keys that don't exist
+                # when the oracle was initialised with is_canonical=True.
+                new_records = self.oracle.query_batch(
+                    queries, iteration, is_canonical=self.oracle.is_canonical
+                )
                 # Derive actual per-fidelity costs from records returned by the
                 # oracle — not from the pre-query candidate list, which may
                 # differ if the oracle skips invalid or already-labeled compounds.
