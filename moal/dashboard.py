@@ -300,7 +300,12 @@ class LiveDashboard:
         """Explicitly save the current figure to a file."""
         self._fig.savefig(path, dpi=120, bbox_inches="tight")
 
-    def save_gif(self, path: str | Path, frame_duration_ms: int = 500) -> None:
+    def save_gif(
+        self,
+        path: str | Path,
+        frame_duration_ms: int = 500,
+        last_frame_duration_ms: int = 5000,
+    ) -> None:
         """Assemble all saved PNG snapshots into an animated GIF.
 
         Reads every ``dashboard_XXXX.png`` written by :meth:`_save_snapshot`
@@ -312,6 +317,9 @@ class LiveDashboard:
             path: Destination file path for the GIF.
             frame_duration_ms: Display duration of each frame in milliseconds.
                 Defaults to 500 (half a second per iteration frame).
+            last_frame_duration_ms: Display duration of the final frame in
+                milliseconds, allowing the viewer to read the completed state
+                before the animation loops. Defaults to 5000 (5 seconds).
         """
         if not self.save_dir:
             logger.warning("save_gif called but save_dir is not set; skipping")
@@ -331,12 +339,16 @@ class LiveDashboard:
             # convert("P") gives an 8-bit palette GIF; quantize reduces colour
             # depth without visible banding at typical dashboard colour counts
             palette_frames = [f.convert("P", dither=Image.Dither.NONE) for f in frames]
+            # Per-frame durations: hold the last frame longer so viewers can
+            # read the final campaign state before the animation loops
+            durations = [frame_duration_ms] * len(palette_frames)
+            durations[-1] = last_frame_duration_ms
             palette_frames[0].save(
                 path,
                 format="GIF",
                 save_all=True,
                 append_images=palette_frames[1:],
-                duration=frame_duration_ms,
+                duration=durations,
                 loop=0,  # 0 = loop forever
                 optimize=False,
             )
