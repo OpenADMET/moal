@@ -141,7 +141,6 @@ def main(config: str, output_dir: str | None, verbose: bool) -> None:
         dashboard = LiveDashboard(
             n_iterations=cfg.active_learning_loop.n_iterations,
             model_metric=ModelMetric(cfg.dashboard.model_metric),
-            save_dir=cfg.dashboard.save_dir or None,
             figsize=cfg.dashboard.figsize,
             show=cfg.dashboard.show,
         )
@@ -173,10 +172,8 @@ def main(config: str, output_dir: str | None, verbose: bool) -> None:
         dashboard.save(final_path)
         logger.info("Final dashboard saved to %s", final_path)
 
-        # Assemble per-iteration snapshots into a looping GIF when save_dir is set.
-        if dashboard.save_dir:
-            gif_path = dashboard.save_dir / "dashboard_animation.gif"
-            dashboard.save_gif(gif_path)
+        gif_path = out_dir / "dashboard_animation.gif"
+        dashboard.save_gif(gif_path)
 
         dashboard.close()
 
