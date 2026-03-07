@@ -190,10 +190,12 @@ def main(config: str, output_dir: str | None, verbose: bool) -> None:
     logger.info("Cumulative actives curve written to %s", curve_path)
 
     logger.info(
-        "Campaign complete. Total cost: $%.2f | Labeled: %d | Confirmed actives: %d",
+        "Campaign complete. Total cost: $%.2f | Labeled: %d | Confirmed actives: %d"
+        " | PS→DRC upgrades: %d",
         results.total_cost,
         results.total_labeled,
         int(results.final_metrics.get("n_confirmed_actives", 0)),
+        int(results.final_metrics.get("n_ps_to_drc_upgrades", 0)),
     )
 
 

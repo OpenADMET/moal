@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from moal.types import CensoringType, LabelRecord
+from moal.types import CensoringType, LabelRecord, QueryType
 
 logger = logging.getLogger(__name__)
 
@@ -214,10 +214,22 @@ class PipelineEvaluator:
     def fidelity_breakdown(
         self, labeled: list[LabelRecord]
     ) -> dict[str, int]:
-        """Count of DRC vs. PS queries in the labeled pool."""
-        counts: dict[str, int] = {"DRC": 0, "PS": 0}
+        """Count DRC, PS, and PS→DRC upgrades in the labeled pool.
+
+        A PS→DRC upgrade is a compound that has both a PS and a DRC record —
+        the DRC was run as a follow-up to a primary screen hit rather than as
+        a first-pass query.
+        """
+        counts: dict[str, int] = {"DRC": 0, "PS": 0, "upgrades": 0}
+        fidelities_by_smiles: dict[str, set] = defaultdict(set)
         for rec in labeled:
             counts[rec.fidelity.value] += 1
+            fidelities_by_smiles[rec.canonical_smiles].add(rec.fidelity)
+        counts["upgrades"] = sum(
+            1
+            for fids in fidelities_by_smiles.values()
+            if QueryType.PRIMARY_SCREEN in fids and QueryType.DOSE_RESPONSE in fids
+        )
         return counts
 
     # ------------------------------------------------------------------
@@ -255,6 +267,7 @@ class PipelineEvaluator:
             ),
             "n_drc_queries": float(breakdown["DRC"]),
             "n_ps_queries": float(breakdown["PS"]),
+            "n_ps_to_drc_upgrades": float(breakdown["upgrades"]),
         }
         return metrics
 
