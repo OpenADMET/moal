@@ -119,7 +119,7 @@ class TestCLICustomColumns:
         assert result.exit_code == 1
 
 
-
+class TestExampleConfig:
     def test_example_config_is_valid_yaml(self):
         """examples/default_config.yaml must parse as valid YAML."""
         import yaml

@@ -120,3 +120,26 @@ class TestSelect:
     def test_invalid_cost_raises(self):
         with pytest.raises(ValueError, match="positive"):
             CostAwareGreedyAcquisition(cost_ps=-1.0, cost_drc=10.0)
+
+    def test_k_zero_returns_empty(self, acq):
+        """k=0 must return an empty list without touching the pool."""
+        smiles = [f"C{i}" for i in range(10)]
+        preds = np.ones(10, dtype=np.float32) * 6.0
+        assert acq.select(smiles, preds, k=0) == []
+
+    def test_degenerate_thresholds_still_selects(self, acq):
+        """When ps_threshold == target_threshold both scoring functions compete at the same
+        point; the acquisition must still return valid (smiles, query_type) pairs."""
+        degenerate = CostAwareGreedyAcquisition(
+            cost_ps=1.0,
+            cost_drc=10.0,
+            ps_threshold=7.0,
+            target_threshold=7.0,
+            tau=0.5,
+        )
+        smiles = [f"C{i}" for i in range(5)]
+        preds = np.array([5.0, 6.0, 7.0, 8.0, 9.0], dtype=np.float32)
+        selected = degenerate.select(smiles, preds, k=3)
+        assert len(selected) == 3
+        for _, qt in selected:
+            assert qt in (QueryType.PRIMARY_SCREEN, QueryType.DOSE_RESPONSE)

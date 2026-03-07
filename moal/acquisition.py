@@ -118,6 +118,9 @@ class CostAwareGreedyAcquisition:
             logger.warning("No unlabeled compounds available for acquisition.")
             return []
 
+        if k == 0:
+            return []
+
         predictions = np.asarray(predictions, dtype=np.float32)
         assert len(unlabeled_smiles) == len(predictions), (
             f"SMILES list length ({len(unlabeled_smiles)}) must match "

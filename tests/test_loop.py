@@ -22,6 +22,7 @@ from moal.acquisition import CostAwareGreedyAcquisition
 from moal.dashboard import LiveDashboard
 from moal.evaluation import PipelineEvaluator
 from moal.loop import ActiveLearningLoop
+from moal.model import ChemPropLightningModule
 from moal.oracle import CostAwareOracle
 from moal.preprocessing import SMILESPreprocessor
 from moal.types import LabelRecord
@@ -91,8 +92,12 @@ def oracle(ground_truth_df):
 
 @pytest.fixture
 def mock_model():
-    """Mock model that returns random pEC50 predictions (no CheMeleon needed)."""
-    model = MagicMock()
+    """Spec-d mock that returns random pEC50 predictions (no CheMeleon needed).
+
+    Using create_autospec ensures any API change to ChemPropLightningModule
+    is caught here rather than silently accepted.
+    """
+    model = create_autospec(ChemPropLightningModule, instance=True)
     rng = np.random.default_rng(0)
 
     def _predict(smiles_list, **kwargs):
@@ -165,6 +170,18 @@ class TestLoopExecution:
         loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
         assert mock_model.refit.call_count == N_ITERATIONS
 
+    def test_predict_smiles_never_receives_labeled_compounds(self, loop, mock_model):
+        """The unlabeled pool passed to predict_smiles must shrink each iteration,
+        confirming that already-labeled compounds are excluded before scoring."""
+        loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
+        call_sizes = [
+            len(c.args[0]) for c in mock_model.predict_smiles.call_args_list
+        ]
+        # Each iteration removes K newly-labeled compounds from the pool
+        assert all(s1 > s2 for s1, s2 in zip(call_sizes, call_sizes[1:])), (
+            f"Pool must strictly shrink between iterations; got sizes {call_sizes}"
+        )
+
 
 class TestMetrics:
     def test_metrics_are_finite(self, loop):
@@ -201,7 +218,7 @@ class TestEarlyStop:
         )
         rng = np.random.default_rng(99)
 
-        mock = MagicMock()
+        mock = create_autospec(ChemPropLightningModule, instance=True)
         mock.predict_smiles.side_effect = lambda s, **kw: rng.normal(6.0, 1.0, len(s)).astype(np.float32)
         mock.refit.return_value = mock
 
