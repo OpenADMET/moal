@@ -252,7 +252,8 @@ class ActiveLearningLoop:
                 if self.test_set is not None:
                     test_smiles, test_pec50 = self.test_set
                     model_metric_value = self.evaluator.evaluate_model(
-                        self.model, test_smiles, test_pec50, self.model_metric
+                        self.model, test_smiles, test_pec50, self.model_metric,
+                        noise_scale=noise_schedule[iteration] if noise_schedule is not None else None,
                     )
                 progress.advance(task)
 

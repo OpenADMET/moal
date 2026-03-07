@@ -12,7 +12,7 @@ pEC50 predictions) to verify that:
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock, create_autospec
+from unittest.mock import create_autospec, patch
 
 import numpy as np
 import pandas as pd
@@ -475,3 +475,125 @@ class TestPSUpgradeInLoop:
         upgrade_loop.run(n_iterations=10, k_per_iteration=2)
         # All compounds labeled; none remain eligible for PS→DRC upgrade
         assert upgrade_oracle.get_ps_labeled_smiles() == []
+
+
+# ---------------------------------------------------------------------------
+# Error ramp dispatch tests
+# ---------------------------------------------------------------------------
+
+# Small pool used across ramp tests — enough compounds for several iterations
+# without exhausting the pool on the first pass.
+_RAMP_SMILES = [
+    "c1ccccc1", "CCO", "c1ccc(O)cc1", "c1ccncc1", "c1ccoc1",
+    "CC(C)O", "CCCO", "c1ccc(F)cc1", "c1ccc(Cl)cc1", "Cc1ccccc1",
+]
+_RAMP_PECS50 = [4.0, 6.0, 7.5, 5.5, 4.9, 5.8, 6.2, 4.3, 5.1, 6.7]
+
+
+@pytest.fixture
+def ramp_oracle():
+    df = pd.DataFrame({"smiles": _RAMP_SMILES, "pec50": _RAMP_PECS50})
+    return CostAwareOracle(
+        ground_truth_df=df,
+        cost_ps=1.0,
+        cost_drc=10.0,
+        ps_threshold=5.0,
+        upper_bound=11.0,
+    )
+
+
+class TestNoisyOracleErrorRamp:
+    """Verify that the per-iteration noise ramp is correctly computed and dispatched."""
+
+    N_ITER = 4
+    K = 2
+
+    def _make_loop(self, oracle, initial_error, final_error):
+        from moal.model import NoisyOracleModel
+        model = NoisyOracleModel(oracle._ground_truth, seed=0)
+        acq = CostAwareGreedyAcquisition(
+            cost_ps=1.0, cost_drc=10.0, ps_threshold=5.0,
+            target_threshold=7.0, tau=0.5,
+        )
+        ev = PipelineEvaluator(activity_threshold=7.0, upper_bound=11.0)
+        return model, ActiveLearningLoop(
+            oracle=oracle, model=model, acquisition=acq, evaluator=ev,
+            initial_error=initial_error, final_error=final_error,
+        )
+
+    def test_ramp_dispatches_correct_noise_per_iteration(self, ramp_oracle):
+        """Step 3 of each iteration must call predict_smiles with the scheduled noise_scale.
+
+        The schedule is np.linspace(initial_error, final_error, n_iterations), so
+        iteration i should receive schedule[i]. Spy on predict_smiles to capture
+        all noise_scale arguments while allowing real predictions through.
+        """
+        from moal.model import NoisyOracleModel
+
+        initial, final = 0.8, 0.2
+        expected_schedule = np.linspace(initial, final, self.N_ITER)
+
+        model, loop = self._make_loop(ramp_oracle, initial, final)
+        captured: list[float] = []
+        real_predict = model.predict_smiles
+
+        def _spy(smiles_list, noise_scale, batch_size=256):
+            captured.append(noise_scale)
+            return real_predict(smiles_list, noise_scale, batch_size)
+
+        with patch.object(model, "predict_smiles", side_effect=_spy):
+            loop.run(n_iterations=self.N_ITER, k_per_iteration=self.K)
+
+        # The first call is the pre-loop seed; calls 1..N_ITER are the per-iteration
+        # Step 3 selections. Slice off the seed call and check the iteration calls.
+        assert len(captured) >= self.N_ITER + 1, (
+            f"Expected at least {self.N_ITER + 1} predict_smiles calls, got {len(captured)}"
+        )
+        iter_noise_scales = captured[1 : self.N_ITER + 1]
+        for i, (actual, expected) in enumerate(zip(iter_noise_scales, expected_schedule)):
+            assert actual == pytest.approx(expected, abs=1e-7), (
+                f"Iteration {i}: expected noise_scale={expected:.6f}, got {actual:.6f}"
+            )
+
+    def test_constant_ramp_when_initial_equals_final(self, ramp_oracle):
+        """When initial_error == final_error, every predict_smiles call must use that value."""
+        from moal.model import NoisyOracleModel
+
+        noise_val = 0.5
+        model, loop = self._make_loop(ramp_oracle, noise_val, noise_val)
+        captured: list[float] = []
+        real_predict = model.predict_smiles
+
+        def _spy(smiles_list, noise_scale, batch_size=256):
+            captured.append(noise_scale)
+            return real_predict(smiles_list, noise_scale, batch_size)
+
+        with patch.object(model, "predict_smiles", side_effect=_spy):
+            loop.run(n_iterations=self.N_ITER, k_per_iteration=self.K)
+
+        assert len(captured) >= self.N_ITER + 1
+        for i, ns in enumerate(captured):
+            assert ns == pytest.approx(noise_val, abs=1e-7), (
+                f"Call {i}: expected constant noise_scale={noise_val}, got {ns}"
+            )
+
+    def test_pre_loop_call_uses_initial_error(self, ramp_oracle):
+        """The pre-loop seed call (before iteration 0) must use initial_error, not final_error."""
+        from moal.model import NoisyOracleModel
+
+        initial, final = 0.9, 0.1
+        model, loop = self._make_loop(ramp_oracle, initial, final)
+        captured: list[float] = []
+        real_predict = model.predict_smiles
+
+        def _spy(smiles_list, noise_scale, batch_size=256):
+            captured.append(noise_scale)
+            return real_predict(smiles_list, noise_scale, batch_size)
+
+        with patch.object(model, "predict_smiles", side_effect=_spy):
+            loop.run(n_iterations=self.N_ITER, k_per_iteration=self.K)
+
+        assert captured, "predict_smiles was never called"
+        assert captured[0] == pytest.approx(initial, abs=1e-7), (
+            f"Pre-loop call used noise_scale={captured[0]:.6f}, expected initial_error={initial}"
+        )

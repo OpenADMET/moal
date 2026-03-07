@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
+from moal.model import NoisyOracleModel
 from moal.types import CensoringType, LabelRecord, QueryType
 
 logger = logging.getLogger(__name__)
@@ -281,15 +282,19 @@ class PipelineEvaluator:
         test_smiles: list[str],
         test_pec50: np.ndarray,
         metric: ModelMetric,
+        noise_scale: float | None = None,
     ) -> float:
         """Evaluate model predictive performance on a held-out test set.
 
         Args:
-            model: A ``ChemPropLightningModule`` (or any object with a
-                ``predict_smiles(list[str]) -> np.ndarray`` method).
+            model: A ``ChemPropLightningModule`` or ``NoisyOracleModel`` (or
+                any object with a compatible ``predict_smiles`` method).
             test_smiles: Canonical SMILES for held-out test compounds.
             test_pec50: True pEC50 values aligned with ``test_smiles``.
             metric: Which scalar metric to compute.
+            noise_scale: Noise half-width for ``NoisyOracleModel`` (fast mode).
+                Must be provided when ``model`` is a ``NoisyOracleModel``;
+                ignored otherwise.
 
         Returns:
             Scalar metric value (float).
@@ -297,7 +302,14 @@ class PipelineEvaluator:
         if len(test_smiles) == 0:
             return float("nan")
 
-        preds = model.predict_smiles(test_smiles)
+        if isinstance(model, NoisyOracleModel):
+            if noise_scale is None:
+                raise ValueError(
+                    "noise_scale must be provided when evaluating a NoisyOracleModel"
+                )
+            preds = model.predict_smiles(test_smiles, noise_scale)
+        else:
+            preds = model.predict_smiles(test_smiles)
         true = np.asarray(test_pec50, dtype=np.float32)
 
         if metric == ModelMetric.MAE:
