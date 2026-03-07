@@ -143,3 +143,63 @@ class TestSelect:
         assert len(selected) == 3
         for _, qt in selected:
             assert qt in (QueryType.PRIMARY_SCREEN, QueryType.DOSE_RESPONSE)
+
+
+class TestPSUpgradeCandidates:
+    """Acquisition behaviour when ps_labeled_smiles pool is supplied."""
+
+    @pytest.fixture
+    def acq(self):
+        return CostAwareGreedyAcquisition(
+            cost_ps=1.0,
+            cost_drc=10.0,
+            ps_threshold=5.0,
+            target_threshold=7.0,
+            tau=0.5,
+        )
+
+    def test_ps_labeled_compounds_only_generate_drc_candidates(self, acq):
+        """Compounds in the PS-labeled pool must not be selectable as PS."""
+        ps_smiles = ["A"]
+        ps_preds = np.array([9.0], dtype=np.float32)
+        selected = acq.select([], np.array([]), 1,
+                              ps_labeled_smiles=ps_smiles,
+                              ps_labeled_predictions=ps_preds)
+        assert len(selected) == 1
+        assert selected[0] == ("A", QueryType.DOSE_RESPONSE)
+
+    def test_ps_labeled_and_unlabeled_compete_correctly(self, acq):
+        """A high-scoring PS-labeled DRC candidate must beat a low-scoring unlabeled PS."""
+        unlabeled = ["B"]
+        unlabeled_preds = np.array([3.0], dtype=np.float32)  # low DRC score
+        ps_labeled = ["A"]
+        ps_labeled_preds = np.array([9.0], dtype=np.float32)  # high DRC score
+        selected = acq.select(unlabeled, unlabeled_preds, 1,
+                              ps_labeled_smiles=ps_labeled,
+                              ps_labeled_predictions=ps_labeled_preds)
+        assert selected[0] == ("A", QueryType.DOSE_RESPONSE)
+
+    def test_empty_ps_labeled_behaves_like_no_pool(self, acq):
+        """Passing ps_labeled_smiles=[] must not change behaviour vs omitting the argument."""
+        smiles = [f"C{i}" for i in range(5)]
+        preds = np.ones(5, dtype=np.float32) * 6.0
+        without_pool = acq.select(smiles, preds, 3)
+        with_empty_pool = acq.select(smiles, preds, 3,
+                                     ps_labeled_smiles=[],
+                                     ps_labeled_predictions=None)
+        assert without_pool == with_empty_pool
+
+    def test_no_smiles_length_mismatch_assertion(self, acq):
+        """Mismatched ps_labeled_smiles and ps_labeled_predictions must raise AssertionError."""
+        with pytest.raises(AssertionError):
+            acq.select([], np.array([]), 1,
+                       ps_labeled_smiles=["A", "B"],
+                       ps_labeled_predictions=np.array([1.0]))
+
+    def test_only_ps_labeled_pool_all_empty_returns_empty(self, acq):
+        """When both pools are empty, select must return empty and warn."""
+        result = acq.select([], np.array([]), 2,
+                            ps_labeled_smiles=[],
+                            ps_labeled_predictions=None)
+        assert result == []
+

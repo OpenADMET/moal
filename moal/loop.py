@@ -116,11 +116,23 @@ class ActiveLearningLoop:
 
         # Pre-compute first iteration's candidate queries before entering the
         # progress bar so Step 3 of iteration i prepares for iteration i+1.
+        # Both the unqueried pool and PS-labeled INTERVAL hits are scorable.
         unlabeled = self.oracle.get_unlabeled_smiles()
-        predictions = self.model.predict_smiles(unlabeled) if unlabeled else np.array([])
+        ps_labeled = self.oracle.get_ps_labeled_smiles()
+        all_scorable = unlabeled + ps_labeled
+        if all_scorable:
+            all_preds = self.model.predict_smiles(all_scorable)
+            unlabeled_preds = all_preds[:len(unlabeled)]
+            ps_labeled_preds = all_preds[len(unlabeled):]
+        else:
+            unlabeled_preds = ps_labeled_preds = np.array([])
         pending_queries = (
-            self.acquisition.select(unlabeled, predictions, k_per_iteration)
-            if unlabeled else []
+            self.acquisition.select(
+                unlabeled, unlabeled_preds, k_per_iteration,
+                ps_labeled_smiles=ps_labeled,
+                ps_labeled_predictions=ps_labeled_preds if ps_labeled else None,
+            )
+            if all_scorable else []
         )
 
         total_steps = n_iterations * 3
@@ -208,10 +220,16 @@ class ActiveLearningLoop:
                     ),
                 )
                 remaining_unlabeled = self.oracle.get_unlabeled_smiles()
-                if remaining_unlabeled:
-                    next_preds = self.model.predict_smiles(remaining_unlabeled)
+                remaining_ps_labeled = self.oracle.get_ps_labeled_smiles()
+                all_remaining = remaining_unlabeled + remaining_ps_labeled
+                if all_remaining:
+                    all_preds = self.model.predict_smiles(all_remaining)
+                    unlabeled_preds = all_preds[:len(remaining_unlabeled)]
+                    ps_labeled_preds = all_preds[len(remaining_unlabeled):]
                     pending_queries = self.acquisition.select(
-                        remaining_unlabeled, next_preds, k_per_iteration
+                        remaining_unlabeled, unlabeled_preds, k_per_iteration,
+                        ps_labeled_smiles=remaining_ps_labeled,
+                        ps_labeled_predictions=ps_labeled_preds if remaining_ps_labeled else None,
                     )
                 else:
                     pending_queries = []
@@ -249,8 +267,8 @@ class ActiveLearningLoop:
                         model_metric_value=model_metric_value,
                     )
 
-                if not remaining_unlabeled:
-                    progress.update(task, description="[green]All compounds labeled — stopping early.")
+                if not all_remaining:
+                    progress.update(task, description="[green]All compounds queried — stopping early.")
                     break
 
         results.final_metrics = self.evaluator.evaluate(

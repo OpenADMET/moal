@@ -65,7 +65,9 @@ class CostAwareOracle:
 
         self._preprocessor = preprocessor or SMILESPreprocessor()
         self._total_cost: float = 0.0
-        self._labeled: dict[str, LabelRecord] = {}
+        # Each value is a list of records ordered chronologically.  A compound
+        # may have at most one PS record followed by at most one DRC record.
+        self._labeled: dict[str, list[LabelRecord]] = {}
 
         self._ground_truth = self._build_ground_truth(ground_truth_df)
 
@@ -192,10 +194,19 @@ class CostAwareOracle:
                 raise ValueError(f"Cannot parse SMILES: {smiles!r}")
 
         if key in self._labeled:
-            raise ValueError(
-                f"Compound already labeled (key: {key!r}). "
-                "Each compound may only be queried once."
-            )
+            existing = self._labeled[key]
+            has_drc = any(r.fidelity == QueryType.DOSE_RESPONSE for r in existing)
+            if has_drc:
+                raise ValueError(
+                    f"Compound already has a DRC label (key: {key!r}). "
+                    "DRC is the highest-fidelity assay and cannot be repeated or downgraded."
+                )
+            if query_type == QueryType.PRIMARY_SCREEN:
+                raise ValueError(
+                    f"Compound already has a PS label (key: {key!r}). "
+                    "Each compound may only receive one PS query."
+                )
+            # query_type is DRC and compound has only a PS record: upgrade is allowed
         if key not in self._ground_truth:
             raise KeyError(
                 f"Compound not found in ground truth dataset (key: {key!r})."
@@ -208,7 +219,7 @@ class CostAwareOracle:
         else:
             record = self._make_drc_record(smiles, key, true_pec50, iteration)
 
-        self._labeled[key] = record
+        self._labeled.setdefault(key, []).append(record)
         self._total_cost += record.cost
         return record
 
@@ -308,10 +319,10 @@ class CostAwareOracle:
 
     @property
     def labeled_records(self) -> list[LabelRecord]:
-        return list(self._labeled.values())
+        return [r for records in self._labeled.values() for r in records]
 
     def get_unlabeled_smiles(self) -> list[str]:
-        """Return ground-truth keys for all compounds not yet labeled.
+        """Return ground-truth keys for all compounds not yet queried with any assay.
 
         Keys are canonical SMILES when the oracle was initialised with
         ``is_canonical=False`` (the default), or the raw CSV SMILES when
@@ -319,6 +330,27 @@ class CostAwareOracle:
         :meth:`query_batch` must pass the matching ``is_canonical`` flag.
         """
         return [s for s in self._ground_truth if s not in self._labeled]
+
+    def get_ps_labeled_smiles(self) -> list[str]:
+        """Return ground-truth keys for compounds that have a PS label but no DRC label.
+
+        Only INTERVAL-censored PS records are returned.  LEFT-labeled compounds
+        are confirmed inactive (pEC50 < ps_threshold) and are not useful DRC
+        upgrade candidates.  Callers that forward these keys to
+        :meth:`query_batch` must pass the matching ``is_canonical`` flag.
+        """
+        result = []
+        for key, records in self._labeled.items():
+            if any(r.fidelity == QueryType.DOSE_RESPONSE for r in records):
+                continue
+            # Only promote INTERVAL PS labels; LEFT means confirmed inactive
+            if any(
+                r.fidelity == QueryType.PRIMARY_SCREEN
+                and r.censoring_type == CensoringType.INTERVAL
+                for r in records
+            ):
+                result.append(key)
+        return result
 
     def is_active(self, smiles: str, threshold: float = 7.0) -> bool:
         """Return True if the compound's true pEC50 meets the activity threshold."""
