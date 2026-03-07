@@ -1,0 +1,167 @@
+"""Mixed-fidelity dataset and PyTorch Lightning DataModule."""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+import lightning as L
+import torch
+from torch.utils.data import DataLoader, Dataset, random_split
+
+from moal.types import LabelRecord
+
+logger = logging.getLogger(__name__)
+
+try:
+    from chemprop.data import MoleculeDataset, MoleculeDatapoint
+    from chemprop.featurizers import SimpleMoleculeMolGraphFeaturizer
+    _CHEMPROP_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    _CHEMPROP_AVAILABLE = False
+    logger.warning(
+        "chemprop is not installed. MixedFidelityDataset will be unusable. "
+        "Install with: pip install chemprop"
+    )
+
+
+def _make_datapoint(canonical_smiles: str) -> "MoleculeDatapoint":
+    """Construct a chemprop MoleculeDatapoint without a target (for inference)."""
+    return MoleculeDatapoint.from_smi(canonical_smiles)
+
+
+class MixedFidelityDataset(Dataset):
+    """Thin PyTorch Dataset wrapping a list of LabelRecords.
+
+    Each item is a (MolGraph, LabelRecord) pair. The MolGraph is built
+    lazily and cached on first access.
+
+    Args:
+        records: Labeled observations from the oracle.
+        featurizer: A chemprop MoleculeFeaturizer (e.g.,
+            SimpleMoleculeMolGraphFeaturizer). If None, a default instance
+            is created.
+    """
+
+    def __init__(
+        self,
+        records: list[LabelRecord],
+        featurizer: Any | None = None,
+    ) -> None:
+        if not _CHEMPROP_AVAILABLE:
+            raise ImportError("chemprop is required for MixedFidelityDataset.")
+        self.records = records
+        self.featurizer = featurizer or SimpleMoleculeMolGraphFeaturizer()
+        self._mol_graphs: list[Any] = [None] * len(records)
+
+    def __len__(self) -> int:
+        return len(self.records)
+
+    def __getitem__(self, idx: int) -> tuple[Any, LabelRecord]:
+        if self._mol_graphs[idx] is None:
+            smi = self.records[idx].canonical_smiles
+            dp = _make_datapoint(smi)
+            self._mol_graphs[idx] = self.featurizer(dp.mol)
+        return self._mol_graphs[idx], self.records[idx]
+
+    @staticmethod
+    def collate_fn(batch: list[tuple[Any, LabelRecord]]) -> tuple[Any, list[LabelRecord]]:
+        """Collate a list of (MolGraph, LabelRecord) into a batch.
+
+        Returns:
+            (BatchMolGraph, list[LabelRecord])
+        """
+        from chemprop.data import BatchMolGraph
+
+        graphs, records = zip(*batch)
+        return BatchMolGraph(list(graphs)), list(records)
+
+
+class MixedFidelityDataModule(L.LightningDataModule):
+    """LightningDataModule for mixed-fidelity labeled data.
+
+    Args:
+        records: All labeled observations (train + val pool).
+        featurizer: chemprop MoleculeFeaturizer.
+        batch_size: Number of samples per mini-batch.
+        val_fraction: Fraction of records held out for validation.
+        num_workers: DataLoader worker count (0 = main process).
+    """
+
+    def __init__(
+        self,
+        records: list[LabelRecord],
+        featurizer: Any | None = None,
+        batch_size: int = 64,
+        val_fraction: float = 0.1,
+        num_workers: int = 0,
+        seed: int = 42,
+    ) -> None:
+        super().__init__()
+        self.records = records
+        self.featurizer = featurizer
+        self.batch_size = batch_size
+        self.val_fraction = val_fraction
+        self.num_workers = num_workers
+        self.seed = seed
+
+        self._train_dataset: MixedFidelityDataset | None = None
+        self._val_dataset: MixedFidelityDataset | None = None
+
+    def setup(self, stage: str | None = None) -> None:
+        n_val = max(1, int(len(self.records) * self.val_fraction))
+        n_train = len(self.records) - n_val
+        if n_train <= 0:
+            logger.warning(
+                "Too few records (%d) for a val split; using all for training.",
+                len(self.records),
+            )
+            n_train, n_val = len(self.records), 0
+
+        full = MixedFidelityDataset(self.records, featurizer=self.featurizer)
+        if n_val > 0:
+            train_subset, val_subset = random_split(
+                full, [n_train, n_val], generator=torch.Generator().manual_seed(self.seed)
+            )
+            # Wrap subsets so we can access .records for collate
+            self._train_dataset = _SubsetWrapper(train_subset, full)
+            self._val_dataset = _SubsetWrapper(val_subset, full)
+        else:
+            self._train_dataset = full
+            self._val_dataset = None
+
+    def train_dataloader(self) -> DataLoader:
+        return DataLoader(
+            self._train_dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            collate_fn=MixedFidelityDataset.collate_fn,
+            num_workers=self.num_workers,
+            drop_last=False,
+        )
+
+    def val_dataloader(self) -> DataLoader | None:
+        if self._val_dataset is None:
+            return None
+        return DataLoader(
+            self._val_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            collate_fn=MixedFidelityDataset.collate_fn,
+            num_workers=self.num_workers,
+        )
+
+
+class _SubsetWrapper(Dataset):
+    """Thin wrapper that preserves MixedFidelityDataset collate semantics
+    when working with a random_split Subset."""
+
+    def __init__(self, subset: Any, full_dataset: MixedFidelityDataset) -> None:
+        self._subset = subset
+        self._full = full_dataset
+
+    def __len__(self) -> int:
+        return len(self._subset)
+
+    def __getitem__(self, idx: int) -> tuple[Any, LabelRecord]:
+        return self._subset[idx]

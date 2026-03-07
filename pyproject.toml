@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "moal"
+version = "0.1.0"
+description = "Cost-aware synthetic active learning pipeline for cheminformatics"
+requires-python = ">=3.10"
+dependencies = [
+    "chemprop>=2.0,<3.0",
+    "lightning>=2.0",
+    "torch>=2.0",
+    "rdkit>=2023.3",
+    "pandas>=2.0",
+    "numpy>=1.25",
+    "scipy>=1.11",
+    "click>=8.1",
+    "pyyaml>=6.0",
+    "rich>=13.0",
+    "matplotlib>=3.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+]
+
+[project.scripts]
+moal = "moal.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["moal*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

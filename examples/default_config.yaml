@@ -1,0 +1,81 @@
+# Example campaign configuration for moal.
+#
+# Run with:
+#   moal --config examples/default_config.yaml
+#
+# Every field shown here is the default value. Override only what you need.
+# See moal/config.py for full documentation of each parameter.
+
+# --------------------------------------------------------------------------
+# Oracle / assay parameters
+# --------------------------------------------------------------------------
+oracle:
+  cost_ps: 1.0          # Cost ($) of a Primary Screen query
+  cost_drc: 10.0        # Cost ($) of a Dose-Response Curve query
+  ps_threshold: 5.0     # pEC50 threshold used by the primary screen (10 µM IC50).
+                        #   Compounds with true pEC50 < ps_threshold → LEFT label ("< 5")
+                        #   Compounds with true pEC50 >= ps_threshold → INTERVAL label (">= 5")
+  upper_bound: 11.0     # Practical pEC50 ceiling for INTERVAL labels (100 fM IC50)
+  activity_threshold: 7.0  # pEC50 defining an "active" compound for evaluation (100 nM IC50)
+
+# --------------------------------------------------------------------------
+# ChemProp / CheMeleon model
+# --------------------------------------------------------------------------
+model:
+  chempeleon_ckpt_path: ""   # REQUIRED: path to CheMeleon pretrained checkpoint (.pt / .ckpt)
+  hidden_size: 300
+  depth: 3
+  ffn_hidden_size: 300
+  ffn_num_layers: 2
+  freeze_epochs: 10          # Epochs to train only the FFN head before unfreezing the encoder
+  lr_encoder: 1.0e-5         # Learning rate for the message-passing encoder (after unfreezing)
+  lr_head: 1.0e-3            # Learning rate for the FFN head throughout training
+  sigma: 0.5                 # Tobit loss noise scale (pEC50 log-units); typical intra-assay CV
+  w_drc: 1.0                 # Loss weight for DRC (exact) labels
+  w_ps: 0.3                  # Loss weight for PS (inequality) labels
+  learnable_sigma: false     # If true, sigma is a learned parameter
+
+# --------------------------------------------------------------------------
+# Acquisition function
+# --------------------------------------------------------------------------
+acquisition:
+  ps_threshold: 5.0      # Must match oracle.ps_threshold
+  target_threshold: 7.0  # pEC50 optimization target; drives DRC exploitation score
+  tau: 0.5               # Sigmoid temperature (lower = more exploitative)
+
+# --------------------------------------------------------------------------
+# PyTorch Lightning trainer (used during model.refit())
+# --------------------------------------------------------------------------
+trainer:
+  max_epochs: 30
+  accelerator: auto         # "cpu", "gpu", "mps", or "auto"
+  enable_progress_bar: false
+  enable_model_summary: false
+  val_fraction: 0.1         # Fraction of labeled records held out for validation
+  split_seed: 42            # Seed for the train/val split inside MixedFidelityDataModule
+
+# --------------------------------------------------------------------------
+# Live dashboard
+# --------------------------------------------------------------------------
+dashboard:
+  enabled: true
+  model_metric: mae         # Metric displayed in panel 3: mae | rmse | kendall_tau | spearman_r | r2
+  save_dir: ""              # Directory to write PNG snapshots after each iteration ("" = don't save)
+  figsize: [15, 4]          # Figure size in inches [width, height]
+  show: true                # Set to false for headless/server environments
+
+# --------------------------------------------------------------------------
+# Campaign loop
+# --------------------------------------------------------------------------
+n_iterations: 20       # Number of active learning iterations (m)
+k_per_iteration: 10    # Number of queries selected per iteration (k)
+test_set_size: 0.15    # Fraction of compounds held out as scaffold-split test set for model
+                       # performance tracking. Set to 0.0 to disable.
+seed: 42               # Master random seed (scaffold split, tie-breaking)
+
+# --------------------------------------------------------------------------
+# I/O
+# --------------------------------------------------------------------------
+ground_truth_csv: ""   # REQUIRED: path to CSV with columns "smiles" and "pec50"
+output_dir: results    # Directory for iteration_metrics.csv, cumulative_actives_curve.csv,
+                       # dashboard_final.png, and config_used.yaml

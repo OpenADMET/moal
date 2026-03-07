@@ -1,0 +1,324 @@
+"""ChemProp Lightning module with CheMeleon pretrained weights.
+
+Key design constraints:
+1. CheMeleon atom/bond feature constants are hardcoded and asserted at init.
+2. CheMeleon weights are loaded with strict=True — no silent mismatches.
+3. A freeze/unfreeze schedule trains the FFN head first (freeze_epochs epochs)
+   then unfreezes the encoder with a discriminative (lower) learning rate.
+4. Loss is CensoredRegressionLoss from moal.loss.
+"""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import Any
+
+import lightning as L
+import numpy as np
+import torch
+import torch.nn as nn
+from torch import Tensor
+from torch.optim import Adam
+
+from moal.loss import CensoredRegressionLoss
+from moal.types import LabelRecord
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# CheMeleon atom feature specification
+# ---------------------------------------------------------------------------
+# These constants mirror the exact feature set used during CheMeleon
+# pretraining. Changing any of these will corrupt the pretrained embedding
+# space.  If CheMeleon releases an updated feature spec, update these
+# constants and bump _CHEMPELEON_ATOM_FDIM / _CHEMPELEON_BOND_FDIM.
+#
+# Feature order: atomic_num_one_hot (100), degree (6), formal_charge (5),
+#   chiral_tag (4), num_Hs (5), hybridization (5), aromaticity (1),
+#   mass (1)  →  total = 127 (atom), bond: 14 (type + stereo + conjugated etc.)
+
+_CHEMPELEON_ATOM_FDIM: int = 72   # as used in CheMeleon / default chemprop v2
+_CHEMPELEON_BOND_FDIM: int = 14   # as used in CheMeleon / default chemprop v2
+
+
+def _assert_feature_dims(model: nn.Module) -> None:
+    """Verify that the model's input feature dimensions match CheMeleon's."""
+    try:
+        atom_fdim = model.message_passing.W_i.in_features  # type: ignore[attr-defined]
+    except AttributeError:
+        logger.warning(
+            "Could not verify atom feature dimension — "
+            "ensure CheMeleon feature spec matches _CHEMPELEON_ATOM_FDIM=%d.",
+            _CHEMPELEON_ATOM_FDIM,
+        )
+        return
+    if atom_fdim != _CHEMPELEON_ATOM_FDIM + _CHEMPELEON_BOND_FDIM:
+        raise ValueError(
+            f"Model atom+bond feature dimension ({atom_fdim}) does not match "
+            f"expected CheMeleon dimension ({_CHEMPELEON_ATOM_FDIM + _CHEMPELEON_BOND_FDIM}). "
+            "Ensure the featurizer uses the exact CheMeleon feature set."
+        )
+
+
+class ChemPropLightningModule(L.LightningModule):
+    """ChemProp MPNN fine-tuned from CheMeleon pretrained weights.
+
+    Args:
+        chempeleon_ckpt_path: Path to the CheMeleon pretrained checkpoint
+            (.pt or .ckpt file). Must contain a ``state_dict`` loadable by
+            ChemProp v2.x's MPNN with ``strict=True``.
+        hidden_size: MPNN hidden dimension (must match CheMeleon checkpoint).
+        depth: Number of message-passing steps.
+        ffn_hidden_size: FFN head hidden dimension.
+        freeze_epochs: Number of epochs to train only the FFN head before
+            unfreezing the encoder.
+        lr_encoder: Learning rate for the message-passing encoder after
+            unfreezing.
+        lr_head: Learning rate for the FFN head.
+        sigma: Fixed noise scale for CensoredRegressionLoss.
+        w_drc: DRC loss weight.
+        w_ps: Primary screen loss weight.
+        learnable_sigma: If True, σ is a learned parameter.
+    """
+
+    def __init__(
+        self,
+        chempeleon_ckpt_path: str | Path,
+        hidden_size: int = 300,
+        depth: int = 3,
+        ffn_hidden_size: int = 300,
+        ffn_num_layers: int = 2,
+        freeze_epochs: int = 10,
+        lr_encoder: float = 1e-5,
+        lr_head: float = 1e-3,
+        sigma: float = 0.5,
+        w_drc: float = 1.0,
+        w_ps: float = 0.3,
+        learnable_sigma: bool = False,
+    ) -> None:
+        super().__init__()
+        self.save_hyperparameters(ignore=["chempeleon_ckpt_path"])
+
+        self.freeze_epochs = freeze_epochs
+        self.lr_encoder = lr_encoder
+        self.lr_head = lr_head
+        self._encoder_frozen = True
+
+        self.loss_fn = CensoredRegressionLoss(
+            sigma=sigma, w_drc=w_drc, w_ps=w_ps, learnable_sigma=learnable_sigma
+        )
+
+        self.model = self._build_model(
+            hidden_size=hidden_size,
+            depth=depth,
+            ffn_hidden_size=ffn_hidden_size,
+            ffn_num_layers=ffn_num_layers,
+        )
+        self._load_chempeleon_weights(chempeleon_ckpt_path)
+        self._freeze_encoder()
+
+    # ------------------------------------------------------------------
+    # Model construction
+    # ------------------------------------------------------------------
+
+    def _build_model(
+        self,
+        hidden_size: int,
+        depth: int,
+        ffn_hidden_size: int,
+        ffn_num_layers: int,
+    ) -> nn.Module:
+        try:
+            from chemprop.models import MPNN
+            from chemprop.nn import BondMessagePassing, MeanAggregation, RegressionFFN
+        except ImportError as exc:  # pragma: no cover
+            raise ImportError(
+                "chemprop>=2.0 is required. Install with: pip install chemprop"
+            ) from exc
+
+        mp = BondMessagePassing(d_h=hidden_size, depth=depth)
+        agg = MeanAggregation()
+        ffn = RegressionFFN(
+            input_dim=hidden_size,
+            hidden_dim=ffn_hidden_size,
+            n_layers=ffn_num_layers,
+            output_dim=1,
+        )
+        return MPNN(message_passing=mp, agg=agg, predictor=ffn)
+
+    def _load_chempeleon_weights(self, ckpt_path: str | Path) -> None:
+        ckpt_path = Path(ckpt_path)
+        if not ckpt_path.exists():
+            raise FileNotFoundError(f"CheMeleon checkpoint not found: {ckpt_path}")
+
+        _assert_feature_dims(self.model)
+
+        checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=True)
+        state_dict = checkpoint.get("state_dict", checkpoint)
+
+        try:
+            self.model.load_state_dict(state_dict, strict=True)
+            logger.info("CheMeleon weights loaded successfully from %s", ckpt_path)
+        except RuntimeError as exc:
+            # Surface a helpful diff of missing / unexpected keys.
+            loaded_keys = set(state_dict.keys())
+            model_keys = set(self.model.state_dict().keys())
+            missing = model_keys - loaded_keys
+            unexpected = loaded_keys - model_keys
+            raise RuntimeError(
+                f"Failed to load CheMeleon weights (strict=True).\n"
+                f"  Missing keys  ({len(missing)}): {sorted(missing)[:10]}...\n"
+                f"  Unexpected keys ({len(unexpected)}): {sorted(unexpected)[:10]}...\n"
+                f"Original error: {exc}"
+            ) from exc
+
+    # ------------------------------------------------------------------
+    # Freeze / unfreeze schedule
+    # ------------------------------------------------------------------
+
+    def _encoder_params(self) -> list[nn.Parameter]:
+        return list(self.model.message_passing.parameters())
+
+    def _head_params(self) -> list[nn.Parameter]:
+        return list(self.model.agg.parameters()) + list(self.model.predictor.parameters())
+
+    def _freeze_encoder(self) -> None:
+        for p in self._encoder_params():
+            p.requires_grad_(False)
+        self._encoder_frozen = True
+        logger.debug("Encoder frozen.")
+
+    def _unfreeze_encoder(self) -> None:
+        for p in self._encoder_params():
+            p.requires_grad_(True)
+        self._encoder_frozen = False
+        logger.info("Encoder unfrozen after warm-up.")
+
+    def on_train_epoch_start(self) -> None:
+        if self._encoder_frozen and self.current_epoch >= self.freeze_epochs:
+            self._unfreeze_encoder()
+            # Rebuild optimizers so the newly unfrozen params get lr_encoder.
+            self.trainer.strategy.setup_optimizers(self.trainer)
+
+    # ------------------------------------------------------------------
+    # Lightning interface
+    # ------------------------------------------------------------------
+
+    def forward(self, batch_mol_graph: Any) -> Tensor:
+        return self.model(batch_mol_graph).squeeze(-1)
+
+    def training_step(self, batch: tuple[Any, list[LabelRecord]], batch_idx: int) -> Tensor:
+        mol_graph, records = batch
+        predictions = self(mol_graph)
+        breakdown = self.loss_fn.forward_with_breakdown(predictions, records)
+        self.log("train_loss", breakdown.total, prog_bar=True, batch_size=len(records))
+        if not breakdown.drc_loss.isnan():
+            self.log("train_drc_loss", breakdown.drc_loss, batch_size=len(records))
+        if not breakdown.ps_loss.isnan():
+            self.log("train_ps_loss", breakdown.ps_loss, batch_size=len(records))
+        return breakdown.total
+
+    def validation_step(self, batch: tuple[Any, list[LabelRecord]], batch_idx: int) -> None:
+        mol_graph, records = batch
+        predictions = self(mol_graph)
+        breakdown = self.loss_fn.forward_with_breakdown(predictions, records)
+        self.log("val_loss", breakdown.total, prog_bar=True, batch_size=len(records))
+        if not breakdown.drc_loss.isnan():
+            self.log("val_drc_loss", breakdown.drc_loss, batch_size=len(records))
+        if not breakdown.ps_loss.isnan():
+            self.log("val_ps_loss", breakdown.ps_loss, batch_size=len(records))
+
+    def configure_optimizers(self) -> Adam:
+        param_groups = [{"params": self._head_params(), "lr": self.lr_head}]
+        if not self._encoder_frozen:
+            param_groups.append({"params": self._encoder_params(), "lr": self.lr_encoder})
+        return Adam(param_groups)
+
+    # ------------------------------------------------------------------
+    # Inference helpers
+    # ------------------------------------------------------------------
+
+    @torch.no_grad()
+    def predict_smiles(self, smiles_list: list[str], batch_size: int = 256) -> np.ndarray:
+        """Batch inference over a list of canonical SMILES.
+
+        Args:
+            smiles_list: **Must be RDKit-canonical, salt-stripped SMILES.** Passing
+                non-canonical or salt-containing SMILES produces silently incorrect
+                graph representations because the featurizer does not canonicalize
+                internally. All SMILES in the active learning loop are pre-canonicalized
+                by ``SMILESPreprocessor`` before reaching this method. If calling this
+                method directly from user code, run each SMILES through
+                ``SMILESPreprocessor().canonicalize(smi)`` first.
+            batch_size: Number of molecules processed per forward pass.
+
+        Returns:
+            NumPy array of shape ``(N,)`` with pEC50 point estimates, aligned with
+            ``smiles_list``.
+        """
+        from chemprop.data import BatchMolGraph, MoleculeDatapoint
+        from chemprop.featurizers import SimpleMoleculeMolGraphFeaturizer
+
+        featurizer = SimpleMoleculeMolGraphFeaturizer()
+        self.eval()
+        all_preds: list[float] = []
+
+        for i in range(0, len(smiles_list), batch_size):
+            chunk = smiles_list[i : i + batch_size]
+            graphs = [featurizer(MoleculeDatapoint.from_smi(s).mol) for s in chunk]
+            bmg = BatchMolGraph(graphs)
+            bmg = bmg.to(self.device)
+            preds = self(bmg).cpu().numpy().tolist()
+            all_preds.extend(preds)
+
+        return np.array(all_preds, dtype=np.float32)
+
+    def refit(
+        self,
+        records: list[LabelRecord],
+        trainer_kwargs: dict[str, Any] | None = None,
+        datamodule_kwargs: dict[str, Any] | None = None,
+        reset_weights: bool = False,
+    ) -> "ChemPropLightningModule":
+        """Refit the model on a (growing) labeled pool.
+
+        Args:
+            records: All labeled records accumulated so far.
+            trainer_kwargs: Passed directly to ``lightning.Trainer``. When
+                using the CLI, these come from ``TrainerConfig.to_dict()`` so
+                ``max_epochs`` and other defaults are visible in the YAML
+                config.  If *not* provided the hard-coded fallback of
+                ``max_epochs=30`` is used — prefer passing an explicit dict.
+            datamodule_kwargs: Passed to ``MixedFidelityDataModule`` (e.g.
+                ``val_fraction``, ``seed``). Use
+                ``TrainerConfig.to_datamodule_kwargs()`` to populate this from
+                the campaign config so train/val split parameters are
+                reproducible and config-driven.
+            reset_weights: If True, reload CheMeleon weights before refitting
+                (full warm-start from pretrained). Default: False (continue
+                fine-tuning from current weights).
+
+        Returns:
+            self (for chaining).
+        """
+        from moal.dataset import MixedFidelityDataModule
+
+        if reset_weights:
+            self._load_chempeleon_weights(self.hparams.get("chempeleon_ckpt_path", ""))
+            self._freeze_encoder()
+
+        dm = MixedFidelityDataModule(records, **(datamodule_kwargs or {}))
+        dm.setup()
+
+        kwargs: dict[str, Any] = {
+            "max_epochs": 30,
+            "enable_progress_bar": False,
+            "enable_model_summary": False,
+        }
+        if trainer_kwargs:
+            kwargs.update(trainer_kwargs)
+
+        trainer = L.Trainer(**kwargs)
+        trainer.fit(self, datamodule=dm)
+        return self
