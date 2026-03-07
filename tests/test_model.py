@@ -1,17 +1,58 @@
 """Tests for ChemPropLightningModule initialization.
 
-All tests patch ``_load_chempeleon_weights`` to a no-op so that no real
-checkpoint file is required. This isolates init logic (model construction,
-freeze schedule, hyperparameter storage, optimizer configuration) from I/O.
+A synthetic checkpoint is produced for each test by building an MPNN with the
+same architecture and saving its state dict — no monkeypatching required.
+This exercises the full init path including file-existence checks,
+feature-dimension assertions, and strict state_dict loading.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
+import torch
 import torch.nn as nn
 
 from moal.loss import CensoredRegressionLoss
 from moal.model import ChemPropLightningModule
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _build_ckpt(
+    tmp_path: Path,
+    hidden_size: int = 300,
+    depth: int = 3,
+    ffn_hidden_size: int = 300,
+    ffn_num_layers: int = 2,
+) -> str:
+    """Build an MPNN with the given architecture and save its state dict.
+
+    Returns the path to the saved checkpoint file as a string.  Using the
+    model's own weights avoids needing a real CheMeleon checkpoint while
+    still exercising ``load_state_dict(strict=True)`` with a matching spec.
+    """
+    from chemprop.models import MPNN
+    from chemprop.nn import BondMessagePassing, MeanAggregation, RegressionFFN
+
+    mp = BondMessagePassing(d_h=hidden_size, depth=depth)
+    ffn = RegressionFFN(input_dim=hidden_size, hidden_dim=ffn_hidden_size, n_layers=ffn_num_layers)
+    arch_model = MPNN(message_passing=mp, agg=MeanAggregation(), predictor=ffn)
+
+    path = tmp_path / f"ckpt_{hidden_size}_{depth}_{ffn_hidden_size}_{ffn_num_layers}.pt"
+    torch.save({"state_dict": arch_model.state_dict()}, path)
+    return str(path)
+
+
+def _make_model(tmp_path: Path, **kwargs) -> ChemPropLightningModule:
+    """Build a ChemPropLightningModule with a matching synthetic checkpoint."""
+    arch_keys = {k: kwargs[k] for k in ("hidden_size", "depth", "ffn_hidden_size", "ffn_num_layers") if k in kwargs}
+    ckpt = _build_ckpt(tmp_path, **arch_keys)
+    return ChemPropLightningModule(chempeleon_ckpt_path=ckpt, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -20,21 +61,9 @@ from moal.model import ChemPropLightningModule
 
 
 @pytest.fixture
-def model(monkeypatch) -> ChemPropLightningModule:
-    """Default-config module with checkpoint loading disabled."""
-    monkeypatch.setattr(ChemPropLightningModule, "_load_chempeleon_weights", lambda *_: None)
-    return ChemPropLightningModule(chempeleon_ckpt_path="dummy.ckpt")
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_model(monkeypatch, **kwargs) -> ChemPropLightningModule:
-    """Instantiate with checkpoint loading disabled, forwarding kwargs."""
-    monkeypatch.setattr(ChemPropLightningModule, "_load_chempeleon_weights", lambda *_: None)
-    return ChemPropLightningModule(chempeleon_ckpt_path="dummy.ckpt", **kwargs)
+def model(tmp_path) -> ChemPropLightningModule:
+    """Default-config module initialized from a real synthetic checkpoint."""
+    return _make_model(tmp_path)
 
 
 # ---------------------------------------------------------------------------
@@ -92,29 +121,29 @@ class TestDefaultInit:
 
 class TestArchitectureParams:
     @pytest.mark.parametrize("hidden_size", [128, 256, 512])
-    def test_hidden_size_sets_message_passing_width(self, monkeypatch, hidden_size):
+    def test_hidden_size_sets_message_passing_width(self, tmp_path, hidden_size):
         """W_h in the message-passing layer must reflect the configured hidden size."""
-        m = _make_model(monkeypatch, hidden_size=hidden_size)
+        m = _make_model(tmp_path, hidden_size=hidden_size)
         assert m.model.message_passing.W_h.in_features == hidden_size
         assert m.model.message_passing.W_h.out_features == hidden_size
 
     @pytest.mark.parametrize("depth", [2, 3, 5])
-    def test_depth_sets_message_passing_depth(self, monkeypatch, depth):
+    def test_depth_sets_message_passing_depth(self, tmp_path, depth):
         """The message-passing depth attribute must match the configured depth."""
-        m = _make_model(monkeypatch, depth=depth)
+        m = _make_model(tmp_path, depth=depth)
         assert m.model.message_passing.depth == depth
 
     @pytest.mark.parametrize("ffn_num_layers", [1, 2, 4])
-    def test_ffn_num_layers_sets_predictor_depth(self, monkeypatch, ffn_num_layers):
+    def test_ffn_num_layers_sets_predictor_depth(self, tmp_path, ffn_num_layers):
         """The FFN predictor must contain ffn_num_layers + 1 sequential blocks
         (chemprop adds an extra input projection block)."""
-        m = _make_model(monkeypatch, ffn_num_layers=ffn_num_layers)
+        m = _make_model(tmp_path, ffn_num_layers=ffn_num_layers)
         assert len(m.model.predictor.ffn) == ffn_num_layers + 1
 
     @pytest.mark.parametrize("ffn_hidden_size", [64, 128, 512])
-    def test_ffn_hidden_size_sets_predictor_width(self, monkeypatch, ffn_hidden_size):
+    def test_ffn_hidden_size_sets_predictor_width(self, tmp_path, ffn_hidden_size):
         """The hidden linear layers in the FFN predictor must match ffn_hidden_size."""
-        m = _make_model(monkeypatch, ffn_hidden_size=ffn_hidden_size)
+        m = _make_model(tmp_path, ffn_hidden_size=ffn_hidden_size)
         # Block 1 is the first hidden layer; index [2] is the Linear within the Sequential.
         assert m.model.predictor.ffn[1][2].in_features == ffn_hidden_size
 
@@ -126,9 +155,9 @@ class TestArchitectureParams:
             (512, 3, 2),
         ],
     )
-    def test_combined_architecture_params(self, monkeypatch, hidden_size, depth, ffn_num_layers):
+    def test_combined_architecture_params(self, tmp_path, hidden_size, depth, ffn_num_layers):
         """Combinations of architecture params must all be reflected in the built model."""
-        m = _make_model(monkeypatch, hidden_size=hidden_size, depth=depth, ffn_num_layers=ffn_num_layers)
+        m = _make_model(tmp_path, hidden_size=hidden_size, depth=depth, ffn_num_layers=ffn_num_layers)
         assert m.model.message_passing.W_h.in_features == hidden_size
         assert m.model.message_passing.depth == depth
         assert len(m.model.predictor.ffn) == ffn_num_layers + 1
@@ -141,23 +170,23 @@ class TestArchitectureParams:
 
 class TestTrainingHyperparams:
     @pytest.mark.parametrize("freeze_epochs", [0, 5, 20])
-    def test_freeze_epochs_stored(self, monkeypatch, freeze_epochs):
+    def test_freeze_epochs_stored(self, tmp_path, freeze_epochs):
         """freeze_epochs must be stored as an instance attribute."""
-        m = _make_model(monkeypatch, freeze_epochs=freeze_epochs)
+        m = _make_model(tmp_path, freeze_epochs=freeze_epochs)
         assert m.freeze_epochs == freeze_epochs
 
     @pytest.mark.parametrize("lr_head", [1e-4, 1e-3, 5e-3])
-    def test_lr_head_in_optimizer(self, monkeypatch, lr_head):
+    def test_lr_head_in_optimizer(self, tmp_path, lr_head):
         """The head optimizer param group must use the configured lr_head."""
-        m = _make_model(monkeypatch, lr_head=lr_head)
+        m = _make_model(tmp_path, lr_head=lr_head)
         opt = m.configure_optimizers()
         # When frozen, only the head param group is present.
         assert opt.param_groups[0]["lr"] == pytest.approx(lr_head)
 
     @pytest.mark.parametrize("lr_encoder", [1e-6, 1e-5, 1e-4])
-    def test_lr_encoder_in_optimizer_after_unfreeze(self, monkeypatch, lr_encoder):
+    def test_lr_encoder_in_optimizer_after_unfreeze(self, tmp_path, lr_encoder):
         """After unfreezing, the encoder param group must use the configured lr_encoder."""
-        m = _make_model(monkeypatch, lr_encoder=lr_encoder)
+        m = _make_model(tmp_path, lr_encoder=lr_encoder)
         m._unfreeze_encoder()
         opt = m.configure_optimizers()
         encoder_lrs = [g["lr"] for g in opt.param_groups if g["lr"] != m.lr_head]
@@ -171,26 +200,26 @@ class TestTrainingHyperparams:
 
 class TestLossConfig:
     @pytest.mark.parametrize("sigma", [0.1, 0.5, 1.0])
-    def test_sigma_stored_in_loss_fn(self, monkeypatch, sigma):
+    def test_sigma_stored_in_loss_fn(self, tmp_path, sigma):
         """loss_fn.sigma must reflect the configured sigma value."""
-        m = _make_model(monkeypatch, sigma=sigma)
+        m = _make_model(tmp_path, sigma=sigma)
         assert float(m.loss_fn.sigma) == pytest.approx(sigma, abs=1e-4)
 
     @pytest.mark.parametrize("w_drc,w_ps", [(1.0, 0.3), (2.0, 1.0), (0.5, 0.5)])
-    def test_loss_weights_stored(self, monkeypatch, w_drc, w_ps):
+    def test_loss_weights_stored(self, tmp_path, w_drc, w_ps):
         """loss_fn must store the configured DRC and PS loss weights."""
-        m = _make_model(monkeypatch, w_drc=w_drc, w_ps=w_ps)
+        m = _make_model(tmp_path, w_drc=w_drc, w_ps=w_ps)
         assert m.loss_fn.w_drc == pytest.approx(w_drc)
         assert m.loss_fn.w_ps == pytest.approx(w_ps)
 
-    def test_learnable_sigma_false_has_no_parameters(self, monkeypatch):
+    def test_learnable_sigma_false_has_no_parameters(self, tmp_path):
         """With learnable_sigma=False, loss_fn must expose no learnable parameters."""
-        m = _make_model(monkeypatch, learnable_sigma=False)
+        m = _make_model(tmp_path, learnable_sigma=False)
         assert list(m.loss_fn.parameters()) == []
 
-    def test_learnable_sigma_true_has_log_sigma_parameter(self, monkeypatch):
+    def test_learnable_sigma_true_has_log_sigma_parameter(self, tmp_path):
         """With learnable_sigma=True, loss_fn must expose log_sigma as an nn.Parameter."""
-        m = _make_model(monkeypatch, learnable_sigma=True)
+        m = _make_model(tmp_path, learnable_sigma=True)
         assert isinstance(m.loss_fn.log_sigma, nn.Parameter)
         assert m.loss_fn.log_sigma.requires_grad is True
 

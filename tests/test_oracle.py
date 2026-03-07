@@ -147,6 +147,25 @@ class TestIsActive:
         assert oracle.is_active("c1ccccc1", threshold=7.0) is False
 
 
+class TestUnknownCompound:
+    def test_query_unknown_smiles_raises_key_error(self):
+        """Querying a SMILES that is not in the ground truth must raise KeyError."""
+        oracle = _make_oracle()
+        with pytest.raises(KeyError):
+            oracle.query("C1CC1", QueryType.DOSE_RESPONSE, iteration=0)
+
+    def test_query_batch_unknown_smiles_skipped(self):
+        """query_batch silently skips compounds that are not in the ground truth,
+        consistent with the documented (ValueError, KeyError) catch block."""
+        oracle = _make_oracle()
+        queries = [
+            ("c1ccccc1", QueryType.PRIMARY_SCREEN),  # valid
+            ("C1CC1", QueryType.DOSE_RESPONSE),       # not in ground truth
+        ]
+        records = oracle.query_batch(queries, iteration=0)
+        assert len(records) == 1
+
+
 class TestCustomColumnNames:
     def test_custom_columns_accepted(self):
         """Oracle must work when the DataFrame uses non-default column names."""
