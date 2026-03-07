@@ -143,7 +143,6 @@ class ChemPropLightningModule(L.LightningModule):
             input_dim=hidden_size,
             hidden_dim=ffn_hidden_size,
             n_layers=ffn_num_layers,
-            output_dim=1,
         )
         return MPNN(message_passing=mp, agg=agg, predictor=ffn)
 
