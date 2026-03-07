@@ -50,7 +50,9 @@ def _sigmoid(x: np.ndarray, tau: float) -> np.ndarray:
 
 def _binary_entropy(p: np.ndarray) -> np.ndarray:
     """Binary entropy H(p) in nats."""
-    p = np.clip(p, _EPS, 1 - _EPS)
+    # Cast to float64 so that the clip bounds (1e-9, 1-1e-9) are representable;
+    # float32 rounds 1-1e-9 to exactly 1.0, letting log(0) through despite clipping
+    p = np.clip(p.astype(np.float64), _EPS, 1 - _EPS)
     return -(p * np.log(p) + (1 - p) * np.log(1 - p))
 
 
