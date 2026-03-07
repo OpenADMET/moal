@@ -19,7 +19,7 @@ from rich.progress import (
 from moal.acquisition import CostAwareGreedyAcquisition
 from moal.evaluation import ModelMetric, PipelineEvaluator
 from moal.logging_config import suppress_noisy_loggers
-from moal.model import ChemPropLightningModule
+from moal.model import ChemPropLightningModule, NoisyOracleModel
 from moal.oracle import CostAwareOracle
 from moal.preprocessing import SMILESPreprocessor
 from moal.types import IterationResults, LoopResults, QueryType
@@ -65,7 +65,7 @@ class ActiveLearningLoop:
     def __init__(
         self,
         oracle: CostAwareOracle,
-        model: ChemPropLightningModule,
+        model: ChemPropLightningModule | NoisyOracleModel,
         acquisition: CostAwareGreedyAcquisition,
         evaluator: PipelineEvaluator,
         preprocessor: SMILESPreprocessor | None = None,

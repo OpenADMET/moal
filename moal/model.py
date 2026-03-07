@@ -321,3 +321,89 @@ class ChemPropLightningModule(L.LightningModule):
         trainer = L.Trainer(**kwargs)
         trainer.fit(self, datamodule=dm)
         return self
+
+
+# ---------------------------------------------------------------------------
+# Fast surrogate model
+# ---------------------------------------------------------------------------
+
+
+class NoisyOracleModel:
+    """Noisy oracle surrogate that bypasses CheMeleon entirely.
+
+    Predicts pEC50 by adding Uniform(-noise_scale, +noise_scale) noise to the
+    true ground-truth values. Intended for rapid development, debugging, and
+    integration testing where a real CheMeleon checkpoint is unavailable.
+
+    This model satisfies the same two-method interface as
+    :class:`ChemPropLightningModule` (``predict_smiles`` and ``refit``) so it
+    can be used as a drop-in replacement in :class:`~moal.loop.ActiveLearningLoop`.
+
+    Args:
+        ground_truth: Mapping from canonical SMILES to true pEC50 values.
+            Typically ``oracle._ground_truth``.
+        noise_scale: Half-width of the uniform noise distribution (pEC50
+            log-units). A value of 0.0 returns exact oracle values. Must be
+            non-negative.
+        seed: Seed for the internal RNG, ensuring reproducible predictions
+            across runs with the same configuration.
+    """
+
+    def __init__(
+        self,
+        ground_truth: dict[str, float],
+        noise_scale: float = 0.5,
+        seed: int = 42,
+    ) -> None:
+        if noise_scale < 0:
+            raise ValueError(
+                f"noise_scale must be non-negative, got {noise_scale}"
+            )
+        self._ground_truth = ground_truth
+        self.noise_scale = noise_scale
+        self._rng = np.random.default_rng(seed)
+
+    def predict_smiles(self, smiles_list: list[str], batch_size: int = 256) -> np.ndarray:
+        """Return noisy pEC50 estimates for a list of canonical SMILES.
+
+        Each prediction is sampled as ``true_pec50 + Uniform(-noise_scale, +noise_scale)``.
+        The ``batch_size`` argument is accepted for interface compatibility but
+        has no effect — there is no batched computation.
+
+        Args:
+            smiles_list: Canonical SMILES strings. Each must be present in the
+                ``ground_truth`` dict supplied at construction.
+            batch_size: Ignored; retained for interface compatibility with
+                :class:`ChemPropLightningModule`.
+
+        Returns:
+            NumPy array of shape ``(N,)`` with pEC50 estimates, aligned with
+            ``smiles_list``.
+
+        Raises:
+            KeyError: If any SMILES in ``smiles_list`` is not in ``ground_truth``.
+        """
+        preds = np.empty(len(smiles_list), dtype=np.float32)
+        for i, smi in enumerate(smiles_list):
+            # KeyError propagates if smi is absent, matching ChemPropLightningModule behaviour
+            true_pec50 = self._ground_truth[smi]
+            noise = self._rng.uniform(-self.noise_scale, self.noise_scale)
+            preds[i] = true_pec50 + noise
+        return preds
+
+    def refit(
+        self,
+        records: list[LabelRecord],
+        trainer_kwargs: dict[str, Any] | None = None,
+        datamodule_kwargs: dict[str, Any] | None = None,
+        reset_weights: bool = False,
+    ) -> "NoisyOracleModel":
+        """No-op refit — fast mode has no learnable parameters to update.
+
+        All arguments are accepted for interface compatibility with
+        :class:`ChemPropLightningModule` and silently ignored.
+
+        Returns:
+            self
+        """
+        return self
