@@ -322,6 +322,7 @@ class ActiveLearningLoop:
             f"[steel_blue1]{n_final_ps} PS[/steel_blue1]  |  "
             f"{drc_label}  |  "
             f"Confirmed actives: [cyan]{int(results.final_metrics.get('n_confirmed_actives', 0))}[/cyan]"
+            f" [dim](of {n_true_actives})[/dim]"
         )
         return results
 
