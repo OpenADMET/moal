@@ -27,7 +27,7 @@ Copy and edit the example config to point at your data:
 
 ```bash
 cp examples/default_config.yaml my_campaign.yaml
-# edit my_campaign.yaml: set ground_truth_csv and chempeleon_ckpt_path
+# edit my_campaign.yaml: set data.ground_truth_csv and model.chempeleon_ckpt_path
 moal --config my_campaign.yaml --output-dir results/
 ```
 
@@ -51,10 +51,13 @@ acquisition:
   target_threshold: 7.0
   tau: 0.5
 
-n_iterations: 20
-k_per_iteration: 10
-ground_truth_csv: data/compounds.csv   # columns: smiles, pec50
-output_dir: results/
+data:
+  ground_truth_csv: data/compounds.csv   # columns: smiles, pec50
+  output_dir: results/
+
+active_learning_loop:
+  n_iterations: 20
+  k_per_iteration: 10
 ```
 
 ## Live Dashboard
