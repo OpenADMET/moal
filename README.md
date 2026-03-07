@@ -1,5 +1,7 @@
 ![banner](assets/banner.png)
 
+# MOAL: Multi-Objective Active Learning
+
 A Python pipeline for maximizing the discovery of **active compounds** (pEC50 > 7) from an unrevealed dataset while strictly minimizing labeling cost. The oracle offers two query fidelities:
 
 - **Primary Screen (PS):** Returns an inequality label (`< T` or `>= T`) at a configurable threshold. Cheap.
@@ -10,10 +12,10 @@ The underlying predictive model is **ChemProp** initialized with **CheMeleon** p
 ## Installation
 
 ```bash
-pip install -e ".[dev]"
+pip install -e .
 ```
 
-**Requirements:** Python ≥ 3.10, `chemprop>=2.0`, `lightning>=2.0`, `rdkit`, `pytorch`.
+**Requirements:** `Python≥3.10`, `chemprop>=2.0`, `lightning>=2.0`, `rdkit`, `pytorch`.
 
 ## Quick Start
 
@@ -53,41 +55,6 @@ n_iterations: 20
 k_per_iteration: 10
 ground_truth_csv: data/compounds.csv   # columns: smiles, pec50
 output_dir: results/
-```
-
-## Running Tests
-
-```bash
-# All tests
-pytest
-
-# Single test file
-pytest tests/test_loss.py -v
-
-# Single test
-pytest tests/test_oracle.py::TestDeduplication::test_requery_raises -v
-```
-
-## Architecture
-
-```
-moal/
-├── cli.py              moal entry point (Click command; installed as `moal`)
-├── types.py            QueryType, CensoringType, LabelRecord, LoopResults, IterationResults
-├── preprocessing.py    SMILESPreprocessor (RDKit canonicalization + salt stripping + isomeric SMILES)
-├── oracle.py           CostAwareOracle (ground truth wrapper, dedup, cost tracking, pEC50 validation)
-├── loss.py             CensoredRegressionLoss (Tobit: EXACT / LEFT / INTERVAL; per-fidelity breakdown)
-├── dataset.py          MixedFidelityDataset, MixedFidelityDataModule (configurable seed + val_fraction)
-├── model.py            ChemPropLightningModule (CheMeleon weights, freeze schedule, per-fidelity logging)
-├── acquisition.py      CostAwareGreedyAcquisition
-├── loop.py             ActiveLearningLoop (rich progress bar, dashboard wiring)
-├── evaluation.py       PipelineEvaluator (scaffold split, APD, recall@budget, EF, evaluate_model)
-├── dashboard.py        LiveDashboard (3-panel matplotlib, live-updating or file-only)
-├── logging_config.py   suppress_noisy_loggers() — silences Lightning, RDKit, etc.
-└── config.py           PipelineConfig hierarchy (YAML-serializable)
-
-examples/
-└── default_config.yaml  Fully-documented config with all defaults (start here)
 ```
 
 ## Live Dashboard
@@ -143,3 +110,38 @@ The campaign emits a rich progress bar with `n_iterations × 3` discrete steps:
 | `results/cumulative_actives_curve.csv` | Cumulative actives vs. cost curve |
 | `results/dashboard_final.png` | Final dashboard snapshot |
 | `results/config_used.yaml` | Exact config used for reproducibility |
+
+## Architecture
+
+```
+moal/
+├── cli.py              moal entry point (Click command; installed as `moal`)
+├── types.py            QueryType, CensoringType, LabelRecord, LoopResults, IterationResults
+├── preprocessing.py    SMILESPreprocessor (RDKit canonicalization + salt stripping + isomeric SMILES)
+├── oracle.py           CostAwareOracle (ground truth wrapper, dedup, cost tracking, pEC50 validation)
+├── loss.py             CensoredRegressionLoss (Tobit: EXACT / LEFT / INTERVAL; per-fidelity breakdown)
+├── dataset.py          MixedFidelityDataset, MixedFidelityDataModule (configurable seed + val_fraction)
+├── model.py            ChemPropLightningModule (CheMeleon weights, freeze schedule, per-fidelity logging)
+├── acquisition.py      CostAwareGreedyAcquisition
+├── loop.py             ActiveLearningLoop (rich progress bar, dashboard wiring)
+├── evaluation.py       PipelineEvaluator (scaffold split, APD, recall@budget, EF, evaluate_model)
+├── dashboard.py        LiveDashboard (3-panel matplotlib, live-updating or file-only)
+├── logging_config.py   suppress_noisy_loggers() — silences Lightning, RDKit, etc.
+└── config.py           PipelineConfig hierarchy (YAML-serializable)
+
+examples/
+└── default_config.yaml  Fully-documented config with all defaults (start here)
+```
+
+## Running Tests
+
+```bash
+# All tests
+pytest
+
+# Single test file
+pytest tests/test_loss.py -v
+
+# Single test
+pytest tests/test_oracle.py::TestDeduplication::test_requery_raises -v
+```
