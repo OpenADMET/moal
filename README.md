@@ -1,4 +1,4 @@
-# moal — Cost-Aware Synthetic Active Learning
+![banner](assets/banner.png)
 
 A Python pipeline for maximizing the discovery of **active compounds** (pEC50 > 7) from an unrevealed dataset while strictly minimizing labeling cost. The oracle offers two query fidelities:
 
