@@ -189,13 +189,17 @@ def main(config: str, output_dir: str | None, verbose: bool) -> None:
     curve_df.to_csv(curve_path, index=False)
     logger.info("Cumulative actives curve written to %s", curve_path)
 
+    n_final_upgrades = int(results.final_metrics.get("n_ps_to_drc_upgrades", 0))
+    n_final_drc = int(results.final_metrics.get("n_drc_queries", 0))
+    n_final_ps = int(results.final_metrics.get("n_ps_queries", 0))
+    upgrade_detail = f" ({n_final_upgrades} upgrades)" if n_final_upgrades > 0 else ""
     logger.info(
-        "Campaign complete. Total cost: $%.2f | Labeled: %d | Confirmed actives: %d"
-        " | PS→DRC upgrades: %d",
+        "Campaign complete. Total cost: $%.2f | PS: %d | DRC: %d%s | Confirmed actives: %d",
         results.total_cost,
-        results.total_labeled,
+        n_final_ps,
+        n_final_drc,
+        upgrade_detail,
         int(results.final_metrics.get("n_confirmed_actives", 0)),
-        int(results.final_metrics.get("n_ps_to_drc_upgrades", 0)),
     )
 
 
