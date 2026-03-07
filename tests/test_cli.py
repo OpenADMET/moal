@@ -79,7 +79,47 @@ class TestCLIBadCSV:
         assert result.exit_code == 1
 
 
-class TestExampleConfig:
+class TestCLICustomColumns:
+    def test_custom_column_names_accepted(self, tmp_path):
+        """A config with smiles_column/pec50_column matching the CSV headers must not exit 1
+        at the oracle-init stage (it will fail later at model init, which is fine here)."""
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("mol,potency\nc1ccccc1,5.0\nCCO,7.0\n")
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            f"ground_truth_csv: {csv_file}\n"
+            "smiles_column: mol\n"
+            "pec50_column: potency\n"
+        )
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["--config", str(cfg), "--output-dir", str(tmp_path / "out")],
+        )
+        # The oracle init succeeds with custom columns; any later failure (e.g.,
+        # missing model checkpoint) must not be a column-mismatch error.
+        assert "must contain columns" not in (result.output or "")
+        if result.exception:
+            assert "must contain columns" not in str(result.exception)
+
+    def test_mismatched_column_names_exits_one(self, tmp_path):
+        """A config whose smiles_column doesn't match the CSV headers must exit with code 1."""
+        csv_file = tmp_path / "data.csv"
+        csv_file.write_text("smiles,pec50\nc1ccccc1,5.0\n")
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            f"ground_truth_csv: {csv_file}\n"
+            "smiles_column: nonexistent_col\n"
+        )
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["--config", str(cfg), "--output-dir", str(tmp_path / "out")],
+        )
+        assert result.exit_code == 1
+
+
+
     def test_example_config_is_valid_yaml(self):
         """examples/default_config.yaml must parse as valid YAML."""
         import yaml
@@ -121,3 +161,6 @@ class TestExampleConfig:
         assert cfg.test_set_size == 0.15
         assert cfg.trainer.val_fraction == 0.1
         assert cfg.trainer.split_seed == 42
+        assert cfg.smiles_column == "smiles"
+        assert cfg.pec50_column == "pec50"
+        assert cfg.is_canonical is False

@@ -24,7 +24,7 @@ class CostAwareOracle:
       exact values.
 
     Args:
-        ground_truth_df: DataFrame with columns ``smiles`` and ``pec50``.
+        ground_truth_df: DataFrame containing compound SMILES and pEC50 values.
         cost_ps: Cost in dollars for a Primary Screen query.
         cost_drc: Cost in dollars for a Dose-Response Curve query.
         ps_threshold: The pEC50 threshold used by the primary screen (e.g., 5.0).
@@ -32,6 +32,14 @@ class CostAwareOracle:
             others receive an INTERVAL label.
         upper_bound: Practical upper ceiling for the pEC50 scale (default 11.0),
             used as the upper boundary of INTERVAL labels.
+        smiles_column: Name of the DataFrame column containing SMILES strings.
+        pec50_column: Name of the DataFrame column containing pEC50 values.
+        is_canonical: When False (default), all SMILES in ``ground_truth_df`` are
+            canonicalized up front via RDKit during initialization.  When True,
+            the input SMILES are assumed to already be in canonical form and the
+            preprocessing step is skipped entirely.  If ``is_canonical=True`` is
+            used at init time, query call-sites should also pass
+            ``is_canonical=True`` so that lookup keys remain consistent.
         preprocessor: SMILESPreprocessor instance (or None to use defaults).
     """
 
@@ -42,12 +50,18 @@ class CostAwareOracle:
         cost_drc: float,
         ps_threshold: float,
         upper_bound: float = 11.0,
+        smiles_column: str = "smiles",
+        pec50_column: str = "pec50",
+        is_canonical: bool = False,
         preprocessor: SMILESPreprocessor | None = None,
     ) -> None:
         self.cost_ps = cost_ps
         self.cost_drc = cost_drc
         self.ps_threshold = ps_threshold
         self.upper_bound = upper_bound
+        self.smiles_column = smiles_column
+        self.pec50_column = pec50_column
+        self.is_canonical = is_canonical
 
         self._preprocessor = preprocessor or SMILESPreprocessor()
         self._total_cost: float = 0.0
@@ -60,9 +74,11 @@ class CostAwareOracle:
     # ------------------------------------------------------------------
 
     def _build_ground_truth(self, df: pd.DataFrame) -> dict[str, float]:
-        required = {"smiles", "pec50"}
+        required = {self.smiles_column, self.pec50_column}
         if not required.issubset(df.columns):
-            raise ValueError(f"ground_truth_df must contain columns {required}, got {set(df.columns)}")
+            raise ValueError(
+                f"ground_truth_df must contain columns {required}, got {set(df.columns)}"
+            )
 
         # Physically plausible pEC50 range: 0 (1 M IC50) to 14 (100 fM IC50).
         # Values outside this range almost always indicate data entry errors,
@@ -71,15 +87,14 @@ class CostAwareOracle:
         _PECO50_MIN: float = 0.0
         _PECO50_MAX: float = 14.0
 
-        ground_truth: dict[str, float] = {}
-        failed_smiles: list[str] = []
+        # Pass 1: validate pEC50 values and collect (smiles, pec50) pairs.
+        valid_pairs: list[tuple[str, float]] = []
         invalid_pec50: list[tuple[str, object]] = []
 
         for _, row in df.iterrows():
-            raw_smiles = str(row["smiles"])
-            raw_value = row["pec50"]
+            raw_smiles = str(row[self.smiles_column])
+            raw_value = row[self.pec50_column]
 
-            # Validate pEC50 before storing.
             try:
                 pec50 = float(raw_value)
             except (ValueError, TypeError):
@@ -92,14 +107,31 @@ class CostAwareOracle:
                 invalid_pec50.append((raw_smiles, pec50))
                 continue
 
-            canonical = self._preprocessor.canonicalize(raw_smiles)
-            if canonical is None:
-                failed_smiles.append(raw_smiles)
+            valid_pairs.append((raw_smiles, pec50))
+
+        # Pass 2: optionally canonicalize all valid SMILES up front, then build
+        # the ground truth dict.  Doing this as a separate pass keeps pEC50
+        # validation and SMILES preprocessing as distinct, auditable stages.
+        failed_smiles: list[str] = []
+        ground_truth: dict[str, float] = {}
+
+        if self.is_canonical:
+            # Trust the caller's assertion that SMILES are already canonical.
+            keyed_pairs: list[tuple[str, float]] = valid_pairs
+        else:
+            keyed_pairs = []
+            for raw_smiles, pec50 in valid_pairs:
+                canonical = self._preprocessor.canonicalize(raw_smiles)
+                if canonical is None:
+                    failed_smiles.append(raw_smiles)
+                    continue
+                keyed_pairs.append((canonical, pec50))
+
+        for key, pec50 in keyed_pairs:
+            if key in ground_truth:
+                logger.warning("Duplicate SMILES in ground truth, keeping first: %s", key)
                 continue
-            if canonical in ground_truth:
-                logger.warning("Duplicate canonical SMILES in ground truth, keeping first: %s", canonical)
-                continue
-            ground_truth[canonical] = pec50
+            ground_truth[key] = pec50
 
         if failed_smiles:
             logger.warning(
@@ -124,70 +156,100 @@ class CostAwareOracle:
     # Querying
     # ------------------------------------------------------------------
 
-    def query(self, smiles: str, query_type: QueryType, iteration: int) -> LabelRecord:
+    def query(
+        self,
+        smiles: str,
+        query_type: QueryType,
+        iteration: int,
+        is_canonical: bool = False,
+    ) -> LabelRecord:
         """Query the oracle for a single compound.
 
         Args:
-            smiles: SMILES string (will be canonicalized internally).
+            smiles: SMILES string to query.
             query_type: PRIMARY_SCREEN or DOSE_RESPONSE.
             iteration: Current AL iteration index (0-based).
+            is_canonical: When False (default), the SMILES is canonicalized via
+                RDKit before the ground truth lookup.  When True, the SMILES is
+                used as the lookup key directly — safe when the caller already
+                holds keys returned by :meth:`get_unlabeled_smiles`.  Must be
+                consistent with the ``is_canonical`` setting used at oracle init,
+                otherwise key mismatches will produce ``KeyError``.
 
         Returns:
             A LabelRecord with the appropriate label and cost.
 
         Raises:
-            ValueError: If the compound has already been labeled.
+            ValueError: If ``is_canonical=False`` and the SMILES cannot be parsed,
+                or if the compound has already been labeled.
             KeyError: If the compound is not in the ground truth dataset.
         """
-        canonical = self._preprocessor.canonicalize(smiles)
-        if canonical is None:
-            raise ValueError(f"Cannot parse SMILES: {smiles!r}")
-        if canonical in self._labeled:
+        if is_canonical:
+            key = smiles
+        else:
+            key = self._preprocessor.canonicalize(smiles)
+            if key is None:
+                raise ValueError(f"Cannot parse SMILES: {smiles!r}")
+
+        if key in self._labeled:
             raise ValueError(
-                f"Compound already labeled (canonical: {canonical!r}). "
+                f"Compound already labeled (key: {key!r}). "
                 "Each compound may only be queried once."
             )
-        if canonical not in self._ground_truth:
+        if key not in self._ground_truth:
             raise KeyError(
-                f"Compound not found in ground truth dataset (canonical: {canonical!r})."
+                f"Compound not found in ground truth dataset (key: {key!r})."
             )
 
-        true_pec50 = self._ground_truth[canonical]
+        true_pec50 = self._ground_truth[key]
 
         if query_type == QueryType.PRIMARY_SCREEN:
-            record = self._make_ps_record(smiles, canonical, true_pec50, iteration)
+            record = self._make_ps_record(smiles, key, true_pec50, iteration)
         else:
-            record = self._make_drc_record(smiles, canonical, true_pec50, iteration)
+            record = self._make_drc_record(smiles, key, true_pec50, iteration)
 
-        self._labeled[canonical] = record
+        self._labeled[key] = record
         self._total_cost += record.cost
         return record
 
     def query_batch(
-        self, queries: list[tuple[str, QueryType]], iteration: int
+        self,
+        queries: list[tuple[str, QueryType]],
+        iteration: int,
+        is_canonical: bool = False,
     ) -> list[LabelRecord]:
         """Query the oracle for a batch of (smiles, query_type) pairs.
 
         Duplicates within the batch are detected before any queries are
         dispatched so that cost is never double-counted.
+
+        Args:
+            queries: List of (smiles, query_type) pairs.
+            iteration: Current AL iteration index (0-based).
+            is_canonical: Forwarded to each :meth:`query` call.  When True,
+                SMILES are used as lookup keys directly without canonicalization.
+                See :meth:`query` for key-consistency requirements.
         """
         seen: set[str] = set()
         unique_queries: list[tuple[str, QueryType]] = []
         for smiles, qt in queries:
-            canonical = self._preprocessor.canonicalize(smiles)
-            if canonical is None:
-                logger.warning("Skipping invalid SMILES in batch: %s", smiles)
+            if is_canonical:
+                key = smiles
+            else:
+                key = self._preprocessor.canonicalize(smiles)
+                if key is None:
+                    logger.warning("Skipping invalid SMILES in batch: %s", smiles)
+                    continue
+            if key in seen:
+                logger.warning("Duplicate within acquisition batch, skipping: %s", key)
                 continue
-            if canonical in seen:
-                logger.warning("Duplicate within acquisition batch, skipping: %s", canonical)
-                continue
-            seen.add(canonical)
+            seen.add(key)
             unique_queries.append((smiles, qt))
 
         records: list[LabelRecord] = []
         for smiles, qt in unique_queries:
             try:
-                records.append(self.query(smiles, qt, iteration))
+                records.append(self.query(smiles, qt, iteration, is_canonical=is_canonical))
             except (ValueError, KeyError) as exc:
                 logger.warning("Skipping query (%s, %s): %s", smiles, qt, exc)
         return records

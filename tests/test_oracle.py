@@ -147,9 +147,176 @@ class TestIsActive:
         assert oracle.is_active("c1ccccc1", threshold=7.0) is False
 
 
+class TestCustomColumnNames:
+    def test_custom_columns_accepted(self):
+        """Oracle must work when the DataFrame uses non-default column names."""
+        df = pd.DataFrame(
+            {
+                "compound_smiles": ["c1ccccc1", "CCO", "c1ccc(O)cc1"],
+                "activity": [4.0, 6.0, 7.5],
+            }
+        )
+        oracle = CostAwareOracle(
+            ground_truth_df=df,
+            cost_ps=1.0,
+            cost_drc=10.0,
+            ps_threshold=5.0,
+            smiles_column="compound_smiles",
+            pec50_column="activity",
+        )
+        assert len(oracle) == 3
+
+    def test_custom_columns_query_works(self):
+        """Querying an oracle built from custom-named columns must return correct labels."""
+        df = pd.DataFrame(
+            {
+                "mol": ["c1ccccc1"],
+                "potency": [4.0],
+            }
+        )
+        oracle = CostAwareOracle(
+            ground_truth_df=df,
+            cost_ps=1.0,
+            cost_drc=10.0,
+            ps_threshold=5.0,
+            smiles_column="mol",
+            pec50_column="potency",
+        )
+        rec = oracle.query("c1ccccc1", QueryType.DOSE_RESPONSE, iteration=0)
+        assert rec.value == pytest.approx(4.0)
+
+    def test_wrong_smiles_column_raises(self):
+        """Passing a smiles_column that does not exist must raise ValueError."""
+        df = pd.DataFrame({"smiles": ["c1ccccc1"], "pec50": [5.0]})
+        with pytest.raises(ValueError, match="must contain columns"):
+            CostAwareOracle(
+                ground_truth_df=df,
+                cost_ps=1.0,
+                cost_drc=10.0,
+                ps_threshold=5.0,
+                smiles_column="nonexistent",
+            )
+
+    def test_wrong_pec50_column_raises(self):
+        """Passing a pec50_column that does not exist must raise ValueError."""
+        df = pd.DataFrame({"smiles": ["c1ccccc1"], "pec50": [5.0]})
+        with pytest.raises(ValueError, match="must contain columns"):
+            CostAwareOracle(
+                ground_truth_df=df,
+                cost_ps=1.0,
+                cost_drc=10.0,
+                ps_threshold=5.0,
+                pec50_column="nonexistent",
+            )
+
+    def test_error_message_names_configured_columns(self):
+        """The ValueError message must name the configured column(s), not the defaults."""
+        df = pd.DataFrame({"smiles": ["c1ccccc1"], "pec50": [5.0]})
+        with pytest.raises(ValueError, match="my_smiles"):
+            CostAwareOracle(
+                ground_truth_df=df,
+                cost_ps=1.0,
+                cost_drc=10.0,
+                ps_threshold=5.0,
+                smiles_column="my_smiles",
+            )
+
+
+class TestIsCanonical:
+    # RDKit re-encodes "OCC" to "CCO" — a reliable rewrite to verify skip behavior.
+    _REWRITABLE = "OCC"
+    _REWRITTEN = "CCO"
+
+    def _make_canonical_oracle(self, **kwargs) -> CostAwareOracle:
+        df = pd.DataFrame(
+            {
+                "smiles": [self._REWRITTEN, "c1ccc(O)cc1"],
+                "pec50": [6.0, 7.5],
+            }
+        )
+        defaults = dict(
+            ground_truth_df=df,
+            cost_ps=1.0,
+            cost_drc=10.0,
+            ps_threshold=5.0,
+            is_canonical=True,
+        )
+        defaults.update(kwargs)
+        return CostAwareOracle(**defaults)
+
+    def test_init_with_is_canonical_true_accepted(self):
+        """Oracle must initialize without error when is_canonical=True."""
+        oracle = self._make_canonical_oracle()
+        assert len(oracle) == 2
+
+    def test_is_canonical_true_skips_rewrite(self):
+        """When is_canonical=True, keys in ground truth must equal the raw input strings."""
+        oracle = self._make_canonical_oracle()
+        # The raw key "CCO" must be stored as-is, not re-encoded by RDKit.
+        assert self._REWRITTEN in oracle._ground_truth
+
+    def test_is_canonical_false_rewrites_smiles(self):
+        """When is_canonical=False, a non-canonical SMILES must be rewritten to its
+        canonical form before storage."""
+        df = pd.DataFrame({"smiles": [self._REWRITABLE], "pec50": [6.0]})
+        oracle = CostAwareOracle(
+            ground_truth_df=df,
+            cost_ps=1.0,
+            cost_drc=10.0,
+            ps_threshold=5.0,
+            is_canonical=False,
+        )
+        # "OCC" must have been rewritten to "CCO" at init time.
+        assert self._REWRITTEN in oracle._ground_truth
+        assert self._REWRITABLE not in oracle._ground_truth
+
+    def test_query_with_is_canonical_true_returns_correct_label(self):
+        """query() with is_canonical=True must return the correct label without
+        calling canonicalize()."""
+        oracle = self._make_canonical_oracle()
+        rec = oracle.query(self._REWRITTEN, QueryType.DOSE_RESPONSE, iteration=0, is_canonical=True)
+        assert rec.value == pytest.approx(6.0)
+
+    def test_query_batch_with_is_canonical_true_works(self):
+        """query_batch() with is_canonical=True must label all supplied compounds."""
+        oracle = self._make_canonical_oracle()
+        queries = [
+            (self._REWRITTEN, QueryType.PRIMARY_SCREEN),
+            ("c1ccc(O)cc1", QueryType.DOSE_RESPONSE),
+        ]
+        records = oracle.query_batch(queries, iteration=0, is_canonical=True)
+        assert len(records) == 2
+
+    def test_query_batch_dedup_with_is_canonical_true(self):
+        """Duplicate detection in query_batch must still work when is_canonical=True."""
+        oracle = self._make_canonical_oracle()
+        queries = [
+            (self._REWRITTEN, QueryType.PRIMARY_SCREEN),
+            (self._REWRITTEN, QueryType.DOSE_RESPONSE),  # duplicate
+        ]
+        records = oracle.query_batch(queries, iteration=0, is_canonical=True)
+        assert len(records) == 1
+
+    def test_mismatched_canonical_flag_raises_key_error(self):
+        """Querying with is_canonical=False against an oracle built with
+        is_canonical=True produces a KeyError when RDKit rewrites the key."""
+        # Build oracle with raw "OCC" key (is_canonical=True, no rewrite).
+        df = pd.DataFrame({"smiles": [self._REWRITABLE], "pec50": [6.0]})
+        oracle = CostAwareOracle(
+            ground_truth_df=df,
+            cost_ps=1.0,
+            cost_drc=10.0,
+            ps_threshold=5.0,
+            is_canonical=True,
+        )
+        # Query with is_canonical=False: RDKit rewrites "OCC" → "CCO", which
+        # is not in the ground truth, so a KeyError is expected.
+        with pytest.raises(KeyError):
+            oracle.query(self._REWRITABLE, QueryType.DOSE_RESPONSE, iteration=0, is_canonical=False)
+
+
 class TestPec50Validation:
     def test_nan_pec50_excluded(self):
-        """NaN pEC50 must be silently dropped — not stored as float('nan')."""
         import math
         df = pd.DataFrame({"smiles": ["c1ccccc1", "CCO"], "pec50": [float("nan"), 5.0]})
         oracle = CostAwareOracle(

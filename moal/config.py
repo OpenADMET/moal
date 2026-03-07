@@ -160,7 +160,18 @@ class PipelineConfig:
     model performance tracking. Set to 0.0 to disable test-set evaluation."""
 
     ground_truth_csv: str = ""
-    """Path to CSV with columns 'smiles' and 'pec50'."""
+    """Path to CSV containing compound SMILES and pEC50 values."""
+
+    smiles_column: str = "smiles"
+    """Name of the column in ``ground_truth_csv`` that contains SMILES strings."""
+
+    pec50_column: str = "pec50"
+    """Name of the column in ``ground_truth_csv`` that contains pEC50 values."""
+
+    is_canonical: bool = False
+    """When False (default), all SMILES in ``ground_truth_csv`` are canonicalized
+    via RDKit during oracle initialization.  Set to True if the input SMILES are
+    already in canonical form to skip that preprocessing step."""
 
     output_dir: str = "results"
     """Directory to write campaign outputs (metrics CSV, model checkpoint)."""
@@ -182,6 +193,9 @@ class PipelineConfig:
             k_per_iteration=raw.get("k_per_iteration", 10),
             test_set_size=raw.get("test_set_size", 0.15),
             ground_truth_csv=raw.get("ground_truth_csv", ""),
+            smiles_column=raw.get("smiles_column", "smiles"),
+            pec50_column=raw.get("pec50_column", "pec50"),
+            is_canonical=raw.get("is_canonical", False),
             output_dir=raw.get("output_dir", "results"),
             seed=raw.get("seed", 42),
         )

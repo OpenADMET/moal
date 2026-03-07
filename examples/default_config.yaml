@@ -76,6 +76,9 @@ seed: 42               # Master random seed (scaffold split, tie-breaking)
 # --------------------------------------------------------------------------
 # I/O
 # --------------------------------------------------------------------------
-ground_truth_csv: ""   # REQUIRED: path to CSV with columns "smiles" and "pec50"
+ground_truth_csv: ""   # REQUIRED: path to CSV containing SMILES and pEC50 values
+smiles_column: smiles  # Column name for SMILES strings (default: "smiles")
+pec50_column: pec50    # Column name for pEC50 values (default: "pec50")
+is_canonical: false    # Set to true to skip RDKit canonicalization (input SMILES must already be canonical)
 output_dir: results    # Directory for iteration_metrics.csv, cumulative_actives_curve.csv,
                        # dashboard_final.png, and config_used.yaml

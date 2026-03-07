@@ -76,6 +76,9 @@ def main(config: str, output_dir: str | None, verbose: bool) -> None:
         cost_drc=cfg.oracle.cost_drc,
         ps_threshold=cfg.oracle.ps_threshold,
         upper_bound=cfg.oracle.upper_bound,
+        smiles_column=cfg.smiles_column,
+        pec50_column=cfg.pec50_column,
+        is_canonical=cfg.is_canonical,
         preprocessor=preprocessor,
     )
 
