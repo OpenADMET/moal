@@ -308,17 +308,20 @@ class ActiveLearningLoop:
             iteration=len(results.iterations) - 1,
         )
         n_final_upgrades = int(results.final_metrics.get("n_ps_to_drc_upgrades", 0))
-        upgrade_note = (
-            f"  |  PS→DRC upgrades: [cyan]{n_final_upgrades}[/cyan]"
+        n_final_drc = int(results.final_metrics.get("n_drc_queries", 0))
+        n_final_ps = int(results.final_metrics.get("n_ps_queries", 0))
+        drc_label = (
+            f"[orange1]{n_final_drc} DRC[/orange1] "
+            f"([magenta]{n_final_upgrades} upgrades[/magenta])"
             if n_final_upgrades > 0
-            else ""
+            else f"[orange1]{n_final_drc} DRC[/orange1]"
         )
         _console.print(
             f"[bold green]Campaign complete.[/bold green]  "
             f"Total cost: [cyan]${results.total_cost:.2f}[/cyan]  |  "
-            f"Labeled: [cyan]{results.total_labeled}[/cyan]  |  "
+            f"[steel_blue1]{n_final_ps} PS[/steel_blue1]  |  "
+            f"{drc_label}  |  "
             f"Confirmed actives: [cyan]{int(results.final_metrics.get('n_confirmed_actives', 0))}[/cyan]"
-            f"{upgrade_note}"
         )
         return results
 
