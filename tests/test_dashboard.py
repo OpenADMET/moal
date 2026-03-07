@@ -158,3 +158,64 @@ class TestDashboardMetricHistory:
                   iter_drc_cost=5.0, iter_ps_cost=1.0,
                   model_metric_value=0.5)
         db.close()
+
+
+class TestSaveGif:
+    """Tests for LiveDashboard.save_gif."""
+
+    def test_gif_created_with_correct_frame_count(self, tmp_path):
+        """A GIF produced from N iteration snapshots must contain N frames."""
+        from PIL import Image
+
+        db = LiveDashboard(n_iterations=3, show=False, save_dir=tmp_path)
+        records = _make_records(4)
+        for _ in range(3):
+            db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
+
+        gif_path = tmp_path / "animation.gif"
+        db.save_gif(gif_path)
+        db.close()
+
+        assert gif_path.exists(), "GIF file was not created"
+        with Image.open(gif_path) as img:
+            # Count frames by seeking through the GIF
+            frame_count = 0
+            try:
+                while True:
+                    frame_count += 1
+                    img.seek(frame_count)
+            except EOFError:
+                pass
+        assert frame_count == 3
+
+    def test_gif_is_valid_gif_format(self, tmp_path):
+        """The output file must be a valid GIF that Pillow can open."""
+        from PIL import Image
+
+        db = LiveDashboard(n_iterations=2, show=False, save_dir=tmp_path)
+        records = _make_records(2)
+        db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
+        db.update(records, activity_threshold=7.0, iter_drc_cost=8.0, iter_ps_cost=2.0)
+
+        gif_path = tmp_path / "animation.gif"
+        db.save_gif(gif_path)
+        db.close()
+
+        with Image.open(gif_path) as img:
+            assert img.format == "GIF"
+
+    def test_gif_skipped_when_no_save_dir(self, tmp_path):
+        """No file should be created and no exception raised when save_dir is None."""
+        db = LiveDashboard(n_iterations=2, show=False, save_dir=None)
+        gif_path = tmp_path / "should_not_exist.gif"
+        db.save_gif(gif_path)  # must not raise
+        db.close()
+        assert not gif_path.exists()
+
+    def test_gif_skipped_when_no_snapshots(self, tmp_path):
+        """No GIF should be created when save_dir is set but no updates have been made."""
+        db = LiveDashboard(n_iterations=3, show=False, save_dir=tmp_path)
+        gif_path = tmp_path / "empty.gif"
+        db.save_gif(gif_path)  # must not raise
+        db.close()
+        assert not gif_path.exists()
