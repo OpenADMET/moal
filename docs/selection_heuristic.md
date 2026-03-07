@@ -1,8 +1,20 @@
 # Acquisition selection heuristic
 
+## The three compound pools
+
+The acquisition operates over **three mutually exclusive compound pools** at each iteration:
+
+| Pool | Eligible queries |
+|---|---|
+| **Unlabeled** — never queried | PS *or* DRC (first-pass choice) |
+| **PS-INTERVAL-labeled** — screened, result ≥ ps_threshold | DRC upgrade only |
+| **DRC-labeled** (or PS-LEFT-labeled) | No further queries |
+
+PS-LEFT compounds (pEC50 < `ps_threshold`) are confirmed inactive and are excluded from the upgrade pool. PS-INTERVAL compounds (pEC50 ≥ `ps_threshold`) are potentially active hits and feed directly into the DRC upgrade pool.
+
 ## The two-score competition
 
-For every unlabeled compound, the acquisition computes **two independent scores** — one for DRC, one for PS — and throws them into a single sorted list. The query type is decided purely by which score wins the greedy race to the top-k.
+For every scorable compound, the acquisition computes **two independent scores** — one for DRC and one for PS — sharing the same unit (information or expected value per dollar).
 
 ### DRC score — exploitation
 
@@ -24,14 +36,27 @@ This is **binary entropy of the threshold-crossing probability per dollar**. It 
 
 ## The unified ranking
 
-Both scores share the same unit — **information (or expected value) per dollar** — so they can be compared directly on a single ranked list. `CostAwareGreedyAcquisition.select()` builds:
+Both scores share the same unit, so they can be compared on a single ranked list. `CostAwareGreedyAcquisition.select()` merges candidates from both pools:
 
 ```
-candidates = [(score_DRC[0], 0, DRC), (score_PS[0], 0, PS),
-              (score_DRC[1], 1, DRC), (score_PS[1], 1, PS), ...]
+# Unlabeled compounds: contribute a DRC *and* a PS candidate each
+candidates = [(score_DRC[0], smi_0, DRC), (score_PS[0], smi_0, PS),
+              (score_DRC[1], smi_1, DRC), (score_PS[1], smi_1, PS), ...]
+
+# PS-INTERVAL compounds: contribute a DRC-upgrade candidate only
+candidates += [(score_DRC[j], smi_j, DRC) for j in ps_labeled_smiles]
 ```
 
-sorted descending by score. It then greedily pops entries, skipping any compound index already chosen (each compound can only be queried once per iteration, regardless of fidelity), until k queries are collected.
+The list is sorted descending by score. The greedy procedure pops entries, skipping any SMILES already chosen (each compound is selected at most once regardless of which pool it came from), until k queries are collected.
+
+## The PS → DRC upgrade path
+
+When a compound from the PS-INTERVAL pool is selected, the oracle records a second `LabelRecord` for it — the full dose-response curve — while retaining the original PS record. Both records enter the training set:
+
+- The **PS record** (INTERVAL-censored: pEC50 ≥ `ps_threshold`) constrains the lower bound.
+- The **DRC record** (EXACT: measured pEC50) pins the precise value.
+
+This mirrors the standard two-stage HTS funnel: broad primary screen first, full characterization only for hits that clear the threshold.
 
 ## Practical outcome
 
@@ -39,11 +64,15 @@ sorted descending by score. It then greedily pops entries, skipping any compound
 |---|---|
 | ŷ >> `target_threshold` (7.0) | DRC wins — cheap confirmation of a likely active |
 | ŷ ≈ `ps_threshold` (5.0) | PS wins — cheap resolution of threshold ambiguity |
-| ŷ << both thresholds | PS score is near-zero, DRC score is near-zero; compound is deprioritized entirely |
+| ŷ << both thresholds | Both scores near-zero; compound deprioritized |
+| PS-INTERVAL compound with ŷ >> `target_threshold` | DRC upgrade wins — confirmed hit promoted to full characterization |
+| PS-INTERVAL compound with ŷ ≈ threshold | DRC upgrade still competes; score_DRC is low but no PS candidate is generated |
 | Early iterations (model uncertain, predictions ≈ 6.0 everywhere) | PS dominates — broad exploration is cheap; DRC budget is conserved |
-| Late iterations (model sharp, clear actives identified) | DRC dominates — exploit the high-confidence predictions |
+| Late iterations (model sharp, clear actives identified + PS hits accumulated) | DRC dominates — exploit high-confidence predictions and upgrade PS hits |
 
 ## Worked example
+
+### First pass — selecting from the unlabeled pool
 
 **Campaign settings:** `ps_threshold = 5.0`, `target_threshold = 7.0`, `τ = 0.5`, `cost_PS = $1`, `cost_DRC = $10`.
 
@@ -95,18 +124,44 @@ Working through the formulas for each compound:
 
 Compounds B and D are not queried this iteration. Note that compound A's DRC score (0.092) narrowly beats D's PS score (0.296 / 10... wait — D's PS score is 0.296, which is higher than A's DRC score of 0.092). In a campaign with k = 4 the fourth slot would go to D (PS), not B (DRC, score ≈ 0.038), illustrating how the cost ratio strongly favors PS queries for lower-confidence compounds.
 
+### Subsequent pass — DRC upgrade from the PS-INTERVAL pool
+
+Suppose iteration 4 arrives. Compounds C and E returned INTERVAL PS results (pEC50 ≥ 5.0) and are now in the PS-labeled pool. Compound A has already been DRC-labeled. The remaining unlabeled pool has B and D.
+
+The acquisition scores the combined set:
+
+| Compound | Pool | ŷ | Eligible queries | score_DRC | score_PS |
+|---|---|---|---|---|---|
+| B | unlabeled | 7.1 | DRC or PS | 0.731 / 10 = 0.073 | H(0.976) / 1 ≈ 0.107 |
+| D | unlabeled | 3.8 | DRC or PS | ~0 | 0.296 |
+| C | PS-INTERVAL | 5.1 | DRC upgrade only | 0.002 | — |
+| E | PS-INTERVAL | 6.0 | DRC upgrade only | 0.012 | — |
+
+For k = 2 the ranking is: D/PS (0.296) → B/PS (0.107) → E/DRC (0.012) → C/DRC (0.002) → B/DRC (0.073)... wait — re-sorted:
+
+| Rank | Candidate | Score |
+|---|---|---|
+| 1 | D — PS | 0.296 |
+| 2 | B — PS | 0.107 |
+| 3 | B — DRC | 0.073 |
+| 4 | E — DRC upgrade | 0.012 |
+| 5 | C — DRC upgrade | 0.002 |
+
+With k = 2: D gets a PS query, B gets a PS query (its DRC candidate is skipped since B was already chosen). The DRC upgrades for C and E would not fire until a later iteration with larger k or until B and D are exhausted from the unlabeled pool.
+
 ## The two threshold parameters
 
 `ps_threshold` and `target_threshold` are deliberately separate:
 
-- **`ps_threshold`** — the assay's biological cutoff: what the lab instrument reports as ≥/< T. Drives the PS entropy score.
-- **`target_threshold`** — the campaign's optimization goal (e.g., 7.0 = 100 nM IC50). Drives the DRC exploitation score.
+- **`ps_threshold`** — the assay's biological cutoff: what the lab instrument reports as ≥/< T. Drives the PS entropy score and determines which PS results are INTERVAL-censored (upgrade-eligible) vs. LEFT-censored (confirmed inactive).
+- **`target_threshold`** — the campaign's optimization goal (e.g., 7.0 = 100 nM IC50). Drives the DRC exploitation score, including DRC-upgrade scoring for PS-labeled compounds.
 
 They can and often do differ. Both must be set consistently in `oracle:` and `acquisition:` in the config (see `examples/default_config.yaml`).
 
 ## Relevant source
 
 - Scoring logic: `moal/acquisition.py` — `CostAwareGreedyAcquisition._score_drc`, `_score_ps`, `select`
+- PS upgrade pool: `moal/oracle.py` — `CostAwareOracle.get_ps_labeled_smiles`
 - Config parameters: `moal/config.py` — `AcquisitionConfig`
 
 ---
@@ -188,7 +243,7 @@ The net effect is that the DRC/PS crossover shifts downward as τ decreases:
 
 **Mathematical effect.** This parameter does **not** appear in either score equation; it has no effect on which queries are selected. It is used exclusively by `PipelineEvaluator._is_confirmed_active()` to decide whether a labeled record counts toward the "actives found" dashboard metric.
 
-**Practical effect.** Raising `activity_threshold` makes "confirmed active" harder to achieve — a compound needs a high DRC-measured pEC50 to count. Lowering it inflates the confirmed-active count without changing what the campaign actually measures. The important constraint is that `activity_threshold ≥ ps_threshold`: if activity_threshold were below ps_threshold, a PS INTERVAL label could theoretically span an active but would still never confirm it (the INTERVAL lower bound is `ps_threshold`, not the true value).
+**Practical effect.** Raising `activity_threshold` makes "confirmed active" harder to achieve — a compound needs a high DRC-measured pEC50 to count. Lowering it inflates the confirmed-active count without changing what the campaign actually measures. The important constraint is that `activity_threshold ≥ ps_threshold`: if activity_threshold were below ps_threshold, a PS INTERVAL label could theoretically span an active but would still never confirm it (the INTERVAL lower bound is `ps_threshold`, not the true value). Only EXACT (DRC) labels can produce confirmed actives — which is a structural motivation for the PS → DRC upgrade path.
 
 **Biological interpretation.** This encodes what "hit" means to your project: 100 nM IC50 (pEC50 = 7.0) is a common drug discovery threshold for a lead series. 10 µM (pEC50 = 5.0) is appropriate for a fragment hit. 10 nM (pEC50 = 8.0) suits a late-stage selectivity campaign.
 
@@ -200,7 +255,7 @@ The net effect is that the DRC/PS crossover shifts downward as τ decreases:
 
 **Mathematical effect.** This shifts each compound's prediction by a draw from `Uniform(−noise_scale, +noise_scale)`. Because DRC/PS selection depends on whether ŷ falls above or below the crossover point, noise creates a stochastic boundary: compounds with true pEC50 within `noise_scale` of the crossover flip between DRC and PS from iteration to iteration. The effective DRC-eligible pool shrinks to compounds where `true_pEC50 > crossover + noise_scale` (reliably above) and grows stochastically for the band `[crossover − noise_scale, crossover + noise_scale]`.
 
-**Practical effect.** Lowering `noise_scale` from 0.5 to 0.1 stabilizes DRC selection for borderline compounds. With `τ = 0.2` (crossover ≈ 6.2) and `noise_scale = 0.1`, any compound with true pEC50 > 6.3 will reliably trigger DRC every iteration. With `noise_scale = 0.5`, the reliable threshold rises to 6.7.
+**Practical effect.** Lowering `noise_scale` from 0.5 to 0.1 stabilizes DRC selection for borderline compounds. With `τ = 0.2` (crossover ≈ 6.2) and `noise_scale = 0.1`, any compound with true pEC50 > 6.3 will reliably trigger DRC every iteration. With `noise_scale = 0.5`, the reliable threshold rises to 6.7. In fast mode the PS → DRC upgrade path fires naturally: INTERVAL PS hits accumulated in earlier iterations (where PS dominates) will compete as DRC-upgrade candidates in later iterations once the unlabeled pool shrinks.
 
 **Biological interpretation.** `noise_scale` models the **intra-assay variability** of whatever rapid computational or experimental surrogate you are simulating. It has no direct biological meaning — it is a fast-mode tuning parameter. In a real campaign with CheMeleon, the equivalent uncertainty comes from model prediction error, which naturally decreases as the labeled pool grows.
 
@@ -208,7 +263,7 @@ The net effect is that the DRC/PS crossover shifts downward as τ decreases:
 
 ### Crossover summary: how each parameter shifts the DRC/PS boundary
 
-All else equal, DRC selection increases when:
+All else equal, DRC selection increases (and the upgrade path fires more readily) when:
 
 | Change | Effect on crossover ŷ | Recommended when |
 |---|---|---|
@@ -217,4 +272,5 @@ All else equal, DRC selection increases when:
 | Lower `cost_drc` / raise `cost_ps` | Shifts down (same effect as changing ratio) | DRC assay is cheaper than assumed |
 | Lower `ps_threshold` (e.g., 5.0 → 3.5) | Collapses PS for active region entirely | Rarely appropriate (changes assay biology) |
 | Lower `noise_scale` (fast mode only) | Stabilizes existing crossover | Fast mode iteration stability |
+| Run more iterations / larger k | PS-INTERVAL pool grows → more DRC upgrade candidates | Natural campaign progression |
 

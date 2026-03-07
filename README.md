@@ -4,8 +4,8 @@
 
 A Python pipeline for maximizing the discovery of **active compounds** (pEC50 > 7) from an unrevealed dataset while strictly minimizing labeling cost. The oracle offers two query fidelities:
 
-- **Primary Screen (PS):** Returns an inequality label (`< T` or `>= T`) at a configurable threshold. Cheap.
-- **Dose-Response Curve (DRC):** Returns the exact continuous pEC50 value. Expensive.
+- **Primary Screen (PS):** Returns an inequality label (`< T` or `>= T`) at a configurable threshold. Cheap. A hit (`>= T`) is an INTERVAL-censored label — eligible for a DRC upgrade in a later iteration.
+- **Dose-Response Curve (DRC):** Returns the exact continuous pEC50 value. Expensive. Can be run as a first-pass query *or* as a follow-up upgrade on a PS hit.
 
 The underlying predictive model is **ChemProp** initialized with **CheMeleon** pretrained weights, trained with a **Tobit (censored regression) loss** that correctly handles both label types. The framework is **PyTorch Lightning**.
 
@@ -91,9 +91,9 @@ The campaign emits a rich progress bar with `n_iterations × 3` discrete steps:
 - Primary screen hit threshold T (`ps_threshold`): pEC50 ≈ 5.0
 - Optimization target (`activity_threshold`): pEC50 = 7.0
 
-**Acquisition strategy (greedy):**
-- `score(x, DRC) = sigmoid((ŷ - 7.0) / τ) / cost_DRC` — exploits likely actives
-- `score(x, PS) = H_binary(sigmoid((ŷ - T) / τ)) / cost_PS` — cheaply resolves threshold ambiguity
+**Acquisition strategy (greedy):** Each iteration scores two pools — unqueried compounds (eligible for PS or DRC) and PS-INTERVAL-labeled hits (eligible for DRC upgrade only) — on the same cost-normalised scale:
+- `score(x, DRC) = sigmoid((ŷ - 7.0) / τ) / cost_DRC` — exploits likely actives; applies equally to first-pass DRC and upgrade-DRC candidates
+- `score(x, PS) = H_binary(sigmoid((ŷ - T) / τ)) / cost_PS` — cheaply resolves threshold ambiguity; only generated for unqueried compounds
 
 **CheMeleon weight loading:** Uses `strict=True`. Atom feature constants are hardcoded in `model.py` and asserted at initialization to catch silent feature mismatches.
 
@@ -146,5 +146,5 @@ pytest
 pytest tests/test_loss.py -v
 
 # Single test
-pytest tests/test_oracle.py::TestDeduplication::test_requery_raises -v
+pytest tests/test_oracle.py::TestDeduplication::test_ps_after_ps_raises -v
 ```
