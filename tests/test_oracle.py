@@ -167,6 +167,65 @@ class TestPSUpgrade:
         assert QueryType.PRIMARY_SCREEN in fidelities
         assert QueryType.DOSE_RESPONSE in fidelities
 
+    def test_labeled_records_sorted_by_iteration(self):
+        """labeled_records must be ordered by (iteration, PS-before-DRC) regardless of insertion order."""
+        oracle = _make_oracle()
+        # Query three distinct compounds across two iterations.
+        oracle.query("CCO", QueryType.PRIMARY_SCREEN, iteration=0)         # iter 0 PS
+        oracle.query("c1ccc(O)cc1", QueryType.PRIMARY_SCREEN, iteration=0) # iter 0 PS
+        oracle.query("CCO", QueryType.DOSE_RESPONSE, iteration=1)          # iter 1 DRC (upgrade)
+        oracle.query("c1ccc(O)cc1", QueryType.DOSE_RESPONSE, iteration=1)  # iter 1 DRC (upgrade)
+        oracle.query("c1ccccc1", QueryType.PRIMARY_SCREEN, iteration=2)    # iter 2 PS
+
+        records = oracle.labeled_records
+        assert len(records) == 5
+        # All records must be non-decreasing in iteration.
+        iterations = [r.iteration for r in records]
+        assert iterations == sorted(iterations), "Records must be ordered by iteration"
+        # Within iteration 1, both records are DRC (no PS in iter 1 here) — just verify
+        # the two iteration-0 PS records both precede the iteration-1 DRC records.
+        iter0 = [r for r in records if r.iteration == 0]
+        iter1 = [r for r in records if r.iteration == 1]
+        assert all(r.fidelity == QueryType.PRIMARY_SCREEN for r in iter0)
+        assert all(r.fidelity == QueryType.DOSE_RESPONSE for r in iter1)
+
+    def test_labeled_records_ps_before_drc_within_same_iteration(self):
+        """When PS and DRC upgrades share the same iteration index, PS must come first."""
+        oracle = _make_oracle()
+        # Force both the PS and the DRC to carry iteration=0 to test intra-iteration ordering.
+        oracle.query("c1ccc(O)cc1", QueryType.PRIMARY_SCREEN, iteration=0)
+        oracle.query("c1ccc(O)cc1", QueryType.DOSE_RESPONSE, iteration=0)
+        records = oracle.labeled_records
+        assert len(records) == 2
+        assert records[0].fidelity == QueryType.PRIMARY_SCREEN
+        assert records[1].fidelity == QueryType.DOSE_RESPONSE
+
+    def test_training_records_excludes_ps_when_drc_present(self):
+        """training_records must omit the PS record for a compound that has been upgraded to DRC."""
+        oracle = _make_oracle()
+        oracle.query("c1ccc(O)cc1", QueryType.PRIMARY_SCREEN, iteration=0)
+        oracle.query("c1ccc(O)cc1", QueryType.DOSE_RESPONSE, iteration=1)
+        records = oracle.training_records
+        # Only the EXACT DRC record should survive.
+        assert len(records) == 1
+        assert records[0].fidelity == QueryType.DOSE_RESPONSE
+        assert records[0].censoring_type == CensoringType.EXACT
+
+    def test_training_records_keeps_ps_without_drc(self):
+        """training_records must retain PS records for compounds that have not been upgraded."""
+        oracle = _make_oracle()
+        oracle.query("c1ccc(O)cc1", QueryType.PRIMARY_SCREEN, iteration=0)
+        records = oracle.training_records
+        assert len(records) == 1
+        assert records[0].fidelity == QueryType.PRIMARY_SCREEN
+
+    def test_training_records_identical_to_labeled_when_no_upgrades(self):
+        """Without any upgrades, training_records must equal labeled_records."""
+        oracle = _make_oracle()
+        oracle.query("c1ccccc1", QueryType.PRIMARY_SCREEN, iteration=0)
+        oracle.query("CCO", QueryType.DOSE_RESPONSE, iteration=0)
+        assert oracle.training_records == oracle.labeled_records
+
     def test_cost_accumulates_for_both_assays(self):
         oracle = _make_oracle()
         oracle.query("c1ccc(O)cc1", QueryType.PRIMARY_SCREEN, iteration=0)

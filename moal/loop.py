@@ -225,7 +225,7 @@ class ActiveLearningLoop:
                 )
                 if new_records:
                     self.model.refit(
-                        records=self.oracle.labeled_records,
+                        records=self.oracle.training_records,
                         trainer_kwargs=self.trainer_kwargs,
                         datamodule_kwargs=self.datamodule_kwargs,
                     )

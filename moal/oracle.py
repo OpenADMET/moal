@@ -319,7 +319,47 @@ class CostAwareOracle:
 
     @property
     def labeled_records(self) -> list[LabelRecord]:
-        return [r for records in self._labeled.values() for r in records]
+        """All labeled records in chronological acquisition order.
+
+        Within each iteration PS records precede DRC records, reflecting the
+        order in which assays were physically run.  Chronological ordering is
+        required for ``cumulative_actives_curve``, ``recall_at_budget``, and
+        ``enrichment_factor`` to produce correct values when PS→DRC upgrades
+        are present — without sorting, upgrade records would appear at the
+        wrong position in the running totals.
+        """
+        flat = [r for records in self._labeled.values() for r in records]
+        # Sort key: (iteration, fidelity rank) where PS=0 < DRC=1 so that
+        # within the same iteration the PS record precedes the DRC upgrade.
+        return sorted(
+            flat,
+            key=lambda r: (r.iteration, 0 if r.fidelity == QueryType.PRIMARY_SCREEN else 1),
+        )
+
+    @property
+    def training_records(self) -> list[LabelRecord]:
+        """Labeled records suitable for model training.
+
+        Identical to ``labeled_records`` except that PS INTERVAL records are
+        excluded for any compound that also has a DRC record.  Keeping the
+        redundant INTERVAL label alongside its EXACT counterpart adds no
+        gradient information and inflates the compound's effective loss weight
+        by ``w_ps`` (typically 0.3×), which biases gradient updates toward
+        the most-upgraded scaffold clusters over many iterations.
+        """
+        upgraded_smiles: set[str] = {
+            key
+            for key, records in self._labeled.items()
+            if any(r.fidelity == QueryType.DOSE_RESPONSE for r in records)
+        }
+        return [
+            r
+            for r in self.labeled_records
+            if not (
+                r.fidelity == QueryType.PRIMARY_SCREEN
+                and r.canonical_smiles in upgraded_smiles
+            )
+        ]
 
     def get_unlabeled_smiles(self) -> list[str]:
         """Return ground-truth keys for all compounds not yet queried with any assay.
