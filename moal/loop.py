@@ -151,14 +151,29 @@ class ActiveLearningLoop:
                 queries = pending_queries  # prepared at end of previous iter
 
                 # ---- Step 1: Query oracle --------------------------------
+                # Snapshot the PS-labeled pool before querying so planned DRC
+                # queries can be classified as upgrades vs. first-pass in the
+                # progress display without waiting for oracle results.
+                ps_labeled_before = set(self.oracle.get_ps_labeled_smiles())
                 n_drc = sum(1 for _, qt in queries if qt == QueryType.DOSE_RESPONSE)
                 n_ps  = sum(1 for _, qt in queries if qt == QueryType.PRIMARY_SCREEN)
+                n_drc_upgrade_planned = sum(
+                    1 for smi, qt in queries
+                    if qt == QueryType.DOSE_RESPONSE and smi in ps_labeled_before
+                )
+                n_drc_new_planned = n_drc - n_drc_upgrade_planned
+                upgrade_drc_label = (
+                    f" ([magenta]{n_drc_upgrade_planned} upgrades[/magenta])"
+                    if n_drc_upgrade_planned > 0
+                    else ""
+                )
                 progress.update(
                     task,
                     description=(
                         f"[cyan]Iter {iteration + 1}/{n_iterations}[/cyan]  "
-                        f"Querying oracle — [orange1]{n_drc} DRCs[/orange1], "
-                        f"[steel_blue1]{n_ps} primary screens[/steel_blue1]"
+                        f"Querying oracle — [orange1]{n_drc_new_planned} DRC[/orange1]"
+                        f"{upgrade_drc_label}"
+                        f", [steel_blue1]{n_ps} PS[/steel_blue1]"
                     ),
                 )
                 # Forward is_canonical so query_batch uses the same key strategy
@@ -180,19 +195,32 @@ class ActiveLearningLoop:
                 progress.advance(task)
 
                 # ---- Step 2: Refit model ---------------------------------
-                n_labeled = len(self.oracle.labeled_records)
+                all_labeled = self.oracle.labeled_records
+                n_labeled = len(all_labeled)
                 n_labeled_drc = sum(
-                    1 for r in self.oracle.labeled_records
-                    if r.fidelity == QueryType.DOSE_RESPONSE
+                    1 for r in all_labeled if r.fidelity == QueryType.DOSE_RESPONSE
                 )
-                n_labeled_ps = n_labeled - n_labeled_drc
+                n_labeled_ps = sum(
+                    1 for r in all_labeled if r.fidelity == QueryType.PRIMARY_SCREEN
+                )
+                # Count cumulative upgrades from the evaluator breakdown so the
+                # refit message is consistent with the metrics that get logged.
+                n_cumulative_upgrades = int(
+                    self.evaluator.fidelity_breakdown(all_labeled).get("upgrades", 0)
+                )
+                upgrade_suffix = (
+                    f", [magenta]{n_cumulative_upgrades} upgrades[/magenta]"
+                    if n_cumulative_upgrades > 0
+                    else ""
+                )
                 progress.update(
                     task,
                     description=(
                         f"[yellow]Iter {iteration + 1}/{n_iterations}[/yellow]  "
-                        f"Retraining model — {n_labeled} labeled "
+                        f"Retraining model — {n_labeled} records "
                         f"([orange1]{n_labeled_drc} DRC[/orange1], "
-                        f"[steel_blue1]{n_labeled_ps} PS[/steel_blue1])"
+                        f"[steel_blue1]{n_labeled_ps} PS[/steel_blue1]"
+                        f"{upgrade_suffix})"
                     ),
                 )
                 if new_records:
@@ -212,16 +240,18 @@ class ActiveLearningLoop:
                 progress.advance(task)
 
                 # ---- Step 3: Select next compounds ----------------------
+                remaining_unlabeled = self.oracle.get_unlabeled_smiles()
+                remaining_ps_labeled = self.oracle.get_ps_labeled_smiles()
+                all_remaining = remaining_unlabeled + remaining_ps_labeled
                 progress.update(
                     task,
                     description=(
                         f"[green]Iter {iteration + 1}/{n_iterations}[/green]  "
-                        f"Selecting next {k_per_iteration} compounds…"
+                        f"Selecting next {k_per_iteration} — "
+                        f"{len(remaining_unlabeled)} unqueried, "
+                        f"[magenta]{len(remaining_ps_labeled)} PS hits[/magenta] eligible for upgrade"
                     ),
                 )
-                remaining_unlabeled = self.oracle.get_unlabeled_smiles()
-                remaining_ps_labeled = self.oracle.get_ps_labeled_smiles()
-                all_remaining = remaining_unlabeled + remaining_ps_labeled
                 if all_remaining:
                     all_preds = self.model.predict_smiles(all_remaining)
                     unlabeled_preds = all_preds[:len(remaining_unlabeled)]
@@ -277,11 +307,18 @@ class ActiveLearningLoop:
             n_true_actives=n_true_actives,
             iteration=len(results.iterations) - 1,
         )
+        n_final_upgrades = int(results.final_metrics.get("n_ps_to_drc_upgrades", 0))
+        upgrade_note = (
+            f"  |  PS→DRC upgrades: [cyan]{n_final_upgrades}[/cyan]"
+            if n_final_upgrades > 0
+            else ""
+        )
         _console.print(
             f"[bold green]Campaign complete.[/bold green]  "
             f"Total cost: [cyan]${results.total_cost:.2f}[/cyan]  |  "
             f"Labeled: [cyan]{results.total_labeled}[/cyan]  |  "
             f"Confirmed actives: [cyan]{int(results.final_metrics.get('n_confirmed_actives', 0))}[/cyan]"
+            f"{upgrade_note}"
         )
         return results
 
