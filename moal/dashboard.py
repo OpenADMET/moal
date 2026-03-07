@@ -16,10 +16,9 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.axes import Axes
-from matplotlib.figure import Figure
 
 from moal.evaluation import ModelMetric
-from moal.types import LabelRecord, QueryType
+from moal.types import LabelRecord
 
 if TYPE_CHECKING:
     pass
@@ -31,10 +30,10 @@ logging.getLogger("matplotlib").setLevel(logging.WARNING)
 logging.getLogger("matplotlib.font_manager").setLevel(logging.WARNING)
 
 # Colour palette
-_COLOUR_DRC = "#E07B39"   # orange
-_COLOUR_PS  = "#4C9BE8"   # blue
-_COLOUR_ACT = "#2CA02C"   # green
-_COLOUR_MET = "#9467BD"   # purple
+_COLOUR_DRC = "#E07B39"  # orange
+_COLOUR_PS = "#4C9BE8"  # blue
+_COLOUR_ACT = "#2CA02C"  # green
+_COLOUR_MET = "#9467BD"  # purple
 
 
 class LiveDashboard:
@@ -74,7 +73,9 @@ class LiveDashboard:
         self._fig, (self._ax1, self._ax2, self._ax3) = plt.subplots(
             1, 3, figsize=figsize
         )
-        self._fig.suptitle("Active Learning Campaign Dashboard", fontsize=11, fontweight="bold")
+        self._fig.suptitle(
+            "Active Learning Campaign Dashboard", fontsize=11, fontweight="bold"
+        )
         self._fig.tight_layout(pad=2.5)
 
         self._init_axes()
@@ -85,14 +86,16 @@ class LiveDashboard:
                 plt.pause(0.05)
                 self._interactive = True
             except (OSError, RuntimeError):
-                logger.debug("Interactive display unavailable; using file-save-only mode.")
+                logger.debug(
+                    "Interactive display unavailable; using file-save-only mode."
+                )
                 self._interactive = False
 
         # Data accumulators
-        self._cum_costs:   list[float] = []
-        self._cum_actives: list[int]   = []
+        self._cum_costs: list[float] = []
+        self._cum_actives: list[int] = []
         self._iter_drc_costs: list[float] = []
-        self._iter_ps_costs:  list[float] = []
+        self._iter_ps_costs: list[float] = []
         self._model_metric_values: list[float] = []
 
         # Twin y-axis for the cost panel — created once, reused on every update.
@@ -123,10 +126,15 @@ class LiveDashboard:
 
         # If no test set, render a placeholder annotation.
         self._no_test_annotation = self._ax3.text(
-            0.5, 0.5, "No test set provided",
+            0.5,
+            0.5,
+            "No test set provided",
             transform=self._ax3.transAxes,
-            ha="center", va="center", fontsize=9,
-            color="grey", fontstyle="italic",
+            ha="center",
+            va="center",
+            fontsize=9,
+            color="grey",
+            fontstyle="italic",
         )
 
     # ------------------------------------------------------------------
@@ -206,11 +214,12 @@ class LiveDashboard:
 
         xs = np.array(self._cum_costs)
         ys = np.array(self._cum_actives)
-        ax.plot(xs, ys, color=_COLOUR_ACT, linewidth=1.5, zorder=2)
-        ax.scatter(xs[:-1], ys[:-1], s=18, color=_COLOUR_ACT, alpha=0.5, zorder=3)
-        # Highlight the most recent point.
-        ax.scatter([xs[-1]], [ys[-1]], s=60, color=_COLOUR_ACT, zorder=4,
-                   edgecolors="white", linewidths=1.2)
+        ax.fill_between(xs, ys, color=_COLOUR_ACT, zorder=2, alpha=0.2)
+        ax.plot(xs, ys, color=_COLOUR_ACT, linewidth=2, zorder=3, marker="")
+        # ax.scatter(xs[:-1], ys[:-1], s=18, color=_COLOUR_ACT, alpha=0.5, zorder=3)
+        # # Highlight the most recent point.
+        # ax.scatter([xs[-1]], [ys[-1]], s=60, color=_COLOUR_ACT, zorder=4,
+        #            edgecolors="white", linewidths=1.2)
         ax.set_xlim(left=0)
         ax.set_ylim(bottom=0)
 
@@ -225,6 +234,8 @@ class LiveDashboard:
         ax.grid(True, linestyle="--", alpha=0.4, axis="y")
         ax2r.set_ylabel("Cumulative Cost ($)", fontsize=8)
         ax2r.tick_params(axis="y", labelsize=7)
+        ax2r.yaxis.set_label_position("right")
+        ax2r.yaxis.set_ticks_position("right")
 
         n = len(self._iter_drc_costs)
         if n == 0:
@@ -232,19 +243,25 @@ class LiveDashboard:
 
         iters = np.arange(1, n + 1)
         drc_arr = np.array(self._iter_drc_costs)
-        ps_arr  = np.array(self._iter_ps_costs)
+        ps_arr = np.array(self._iter_ps_costs)
 
         ax.bar(iters, drc_arr, color=_COLOUR_DRC, label="DRC", zorder=2)
         ax.bar(iters, ps_arr, bottom=drc_arr, color=_COLOUR_PS, label="PS", zorder=2)
 
         cum_total = np.cumsum(drc_arr + ps_arr)
-        ax2r.plot(iters, cum_total, color="black", linewidth=1.5,
-                  linestyle="--", label="Cumulative", zorder=3)
+        ax2r.plot(
+            iters,
+            cum_total,
+            color="black",
+            linewidth=1.5,
+            linestyle="--",
+            label="Cumulative",
+            zorder=3,
+        )
 
         handles1, labels1 = ax.get_legend_handles_labels()
         handles2, labels2 = ax2r.get_legend_handles_labels()
-        ax.legend(handles1 + handles2, labels1 + labels2,
-                  fontsize=7, loc="upper left")
+        ax.legend(handles1 + handles2, labels1 + labels2, fontsize=7, loc="upper left")
         ax.set_xlim(0.5, max(n + 0.5, self.n_iterations + 0.5))
         ax.set_ylim(bottom=0)
 
@@ -258,18 +275,40 @@ class LiveDashboard:
         ax.grid(True, linestyle="--", alpha=0.4)
 
         if not self._model_metric_values:
-            ax.text(0.5, 0.5, "No test set provided",
-                    transform=ax.transAxes, ha="center", va="center",
-                    fontsize=9, color="grey", fontstyle="italic")
+            ax.text(
+                0.5,
+                0.5,
+                "No test set provided",
+                transform=ax.transAxes,
+                ha="center",
+                va="center",
+                fontsize=9,
+                color="grey",
+                fontstyle="italic",
+            )
             return
 
         iters = np.arange(1, len(self._model_metric_values) + 1)
-        vals  = np.array(self._model_metric_values)
-        ax.plot(iters, vals, color=_COLOUR_MET, linewidth=1.5, marker="o",
-                markersize=5, zorder=2)
+        vals = np.array(self._model_metric_values)
+        ax.plot(
+            iters,
+            vals,
+            color=_COLOUR_MET,
+            linewidth=1.5,
+            marker="o",
+            markersize=5,
+            zorder=2,
+        )
         # Highlight latest.
-        ax.scatter([iters[-1]], [vals[-1]], s=60, color=_COLOUR_MET, zorder=3,
-                   edgecolors="white", linewidths=1.2)
+        ax.scatter(
+            [iters[-1]],
+            [vals[-1]],
+            s=60,
+            color=_COLOUR_MET,
+            zorder=3,
+            edgecolors="white",
+            linewidths=1.2,
+        )
         ax.set_xlim(0.5, max(len(iters) + 0.5, self.n_iterations + 0.5))
 
     # ------------------------------------------------------------------
@@ -279,6 +318,7 @@ class LiveDashboard:
     @staticmethod
     def _record_is_active(rec: LabelRecord, threshold: float) -> bool:
         from moal.types import CensoringType
+
         if rec.censoring_type == CensoringType.EXACT:
             return rec.value >= threshold
         if rec.censoring_type == CensoringType.INTERVAL:
