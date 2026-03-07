@@ -17,6 +17,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.axes import Axes
+from matplotlib.ticker import MaxNLocator
 
 from moal.evaluation import ModelMetric
 from moal.types import LabelRecord
@@ -260,6 +261,8 @@ class LiveDashboard:
         ax.legend(handles1 + handles2, labels1 + labels2, fontsize=7, loc="upper left")
         ax.set_xlim(0.5, max(n + 0.5, self.n_iterations + 0.5))
         ax.set_ylim(bottom=0)
+        # Force integer-only tick positions so labels never display as floats
+        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
 
     def _draw_metric_panel(self) -> None:
         ax: Axes = self._ax3
@@ -306,6 +309,8 @@ class LiveDashboard:
             linewidths=1.2,
         )
         ax.set_xlim(0.5, max(len(iters) + 0.5, self.n_iterations + 0.5))
+        # Force integer-only tick positions so labels never display as floats
+        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
 
     # ------------------------------------------------------------------
     # Helpers
