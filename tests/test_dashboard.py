@@ -219,3 +219,44 @@ class TestSaveGif:
         db.save_gif(gif_path)  # must not raise
         db.close()
         assert not gif_path.exists()
+
+    def test_last_frame_held_longer_than_other_frames(self, tmp_path):
+        """The final frame must carry the last_frame_duration_ms delay, not frame_duration_ms."""
+        from PIL import Image
+
+        db = LiveDashboard(n_iterations=3, show=False, save_dir=tmp_path)
+        records = _make_records(4)
+        for _ in range(3):
+            db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
+
+        gif_path = tmp_path / "animation.gif"
+        db.save_gif(gif_path, frame_duration_ms=500, last_frame_duration_ms=5000)
+        db.close()
+
+        with Image.open(gif_path) as img:
+            frame_durations = []
+            try:
+                while True:
+                    frame_durations.append(img.info.get("duration"))
+                    img.seek(img.tell() + 1)
+            except EOFError:
+                pass
+
+        assert len(frame_durations) == 3
+        assert frame_durations[-1] == 5000, "Last frame must use last_frame_duration_ms"
+        assert all(d == 500 for d in frame_durations[:-1]), "Non-final frames must use frame_duration_ms"
+
+    def test_single_frame_gif_uses_last_frame_duration(self, tmp_path):
+        """A single-frame GIF should still apply last_frame_duration_ms to that frame."""
+        from PIL import Image
+
+        db = LiveDashboard(n_iterations=1, show=False, save_dir=tmp_path)
+        records = _make_records(2)
+        db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
+
+        gif_path = tmp_path / "single.gif"
+        db.save_gif(gif_path, frame_duration_ms=500, last_frame_duration_ms=3000)
+        db.close()
+
+        with Image.open(gif_path) as img:
+            assert img.info.get("duration") == 3000
