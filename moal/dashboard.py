@@ -300,6 +300,54 @@ class LiveDashboard:
         """Explicitly save the current figure to a file."""
         self._fig.savefig(path, dpi=120, bbox_inches="tight")
 
+    def save_gif(self, path: str | Path, frame_duration_ms: int = 1000) -> None:
+        """Assemble all saved PNG snapshots into an animated GIF.
+
+        Reads every ``dashboard_XXXX.png`` written by :meth:`_save_snapshot`
+        in sorted (chronological) order and encodes them into a looping GIF.
+        This method is a no-op (with a warning) when ``save_dir`` was not set
+        at construction time or when no snapshots have been written yet.
+
+        Args:
+            path: Destination file path for the GIF.
+            frame_duration_ms: Display duration of each frame in milliseconds.
+                Defaults to 1000 (one second per iteration frame).
+        """
+        if not self.save_dir:
+            logger.warning("save_gif called but save_dir is not set; skipping")
+            return
+
+        frame_paths = sorted(self.save_dir.glob("dashboard_*.png"))
+        if not frame_paths:
+            logger.warning(
+                "No dashboard snapshots found in %s; skipping GIF", self.save_dir
+            )
+            return
+
+        try:
+            from PIL import Image  # Pillow is a declared dependency
+
+            frames = [Image.open(p).convert("RGB") for p in frame_paths]
+            # convert("P") gives an 8-bit palette GIF; quantize reduces colour
+            # depth without visible banding at typical dashboard colour counts
+            palette_frames = [f.convert("P", dither=Image.Dither.NONE) for f in frames]
+            palette_frames[0].save(
+                path,
+                format="GIF",
+                save_all=True,
+                append_images=palette_frames[1:],
+                duration=frame_duration_ms,
+                loop=0,  # 0 = loop forever
+                optimize=False,
+            )
+            logger.info(
+                "Dashboard animation (%d frames) saved to %s",
+                len(frame_paths),
+                path,
+            )
+        except Exception as exc:
+            logger.warning("Could not save dashboard GIF: %s", exc)
+
     def close(self) -> None:
         """Close the matplotlib figure and release resources."""
         plt.close(self._fig)

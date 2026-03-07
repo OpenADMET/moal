@@ -169,6 +169,12 @@ def main(config: str, output_dir: str | None, verbose: bool) -> None:
         final_path = out_dir / "dashboard_final.png"
         dashboard.save(final_path)
         logger.info("Final dashboard saved to %s", final_path)
+
+        # Assemble per-iteration snapshots into a looping GIF when save_dir is set.
+        if dashboard.save_dir:
+            gif_path = dashboard.save_dir / "dashboard_animation.gif"
+            dashboard.save_gif(gif_path)
+
         dashboard.close()
 
     # Write per-iteration metrics to CSV.
