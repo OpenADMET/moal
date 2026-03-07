@@ -25,7 +25,7 @@ from moal.loop import ActiveLearningLoop
 from moal.model import ChemPropLightningModule
 from moal.oracle import CostAwareOracle
 from moal.preprocessing import SMILESPreprocessor
-from moal.types import LabelRecord
+from moal.types import LabelRecord, QueryType
 
 
 # ---------------------------------------------------------------------------
@@ -161,25 +161,35 @@ class TestLoopExecution:
         assert all(costs[i] <= costs[i + 1] for i in range(len(costs) - 1))
         assert results.total_cost == pytest.approx(costs[-1])
 
-    def test_no_compound_labeled_twice(self, loop, oracle):
+    def test_no_compound_labeled_twice_same_fidelity(self, loop, oracle):
+        """Each (smiles, fidelity) pair may appear at most once in labeled_records.
+
+        A compound may have two records if it was upgraded from PS to DRC, but
+        must never have two records with the same fidelity.
+        """
         loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
-        canonical_smiles = [r.canonical_smiles for r in oracle.labeled_records]
-        assert len(canonical_smiles) == len(set(canonical_smiles))
+        pairs = [(r.canonical_smiles, r.fidelity) for r in oracle.labeled_records]
+        assert len(pairs) == len(set(pairs))
 
     def test_model_refit_called_each_iteration(self, loop, mock_model):
         loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
         assert mock_model.refit.call_count == N_ITERATIONS
 
-    def test_predict_smiles_never_receives_labeled_compounds(self, loop, mock_model):
-        """The unlabeled pool passed to predict_smiles must shrink each iteration,
-        confirming that already-labeled compounds are excluded before scoring."""
+    def test_predict_smiles_pool_never_grows(self, loop, mock_model):
+        """The combined unlabeled + ps-labeled pool sent to predict_smiles must
+        be non-increasing across iterations.
+
+        The pool can stay flat in an iteration where every query is a new PS
+        (compound moves from unlabeled to ps-labeled, pool size unchanged).
+        It can only strictly shrink when a DRC query is made (compound leaves
+        both pools entirely).  It must never grow.
+        """
         loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
         call_sizes = [
             len(c.args[0]) for c in mock_model.predict_smiles.call_args_list
         ]
-        # Each iteration removes K newly-labeled compounds from the pool
-        assert all(s1 > s2 for s1, s2 in zip(call_sizes, call_sizes[1:])), (
-            f"Pool must strictly shrink between iterations; got sizes {call_sizes}"
+        assert all(s1 >= s2 for s1, s2 in zip(call_sizes, call_sizes[1:])), (
+            f"Scorable pool grew between iterations; sizes: {call_sizes}"
         )
 
 
@@ -227,7 +237,12 @@ class TestEarlyStop:
         loop = ActiveLearningLoop(oracle=oracle, model=mock, acquisition=acq, evaluator=ev)
 
         results = loop.run(n_iterations=100, k_per_iteration=5)
-        assert results.total_labeled <= 10
+        # At most 10 unique compounds could be queried; each may contribute 2 records
+        # (PS + DRC upgrade), so total_labeled can exceed pool_size.  Check unique compounds.
+        unique_labeled = len(oracle._labeled)
+        assert unique_labeled <= 10
+        # Loop must have stopped early (well before 100 × 5 iterations)
+        assert results.total_cost < 10 * 11  # upper bound: 10 DRCs
 
 
 class TestDashboardIntegration:
@@ -382,8 +397,79 @@ class TestIsCanonicalForwarding:
         # The oracle must have labeled compounds — if the bug were present,
         # every query would have been silently skipped and the pool would be empty.
         assert oracle.labeled_records, "No compounds were labeled — query_batch likely skipped all"
-        # No labeled compound should be a duplicate.
-        keys = [r.canonical_smiles for r in oracle.labeled_records]
-        assert len(keys) == len(set(keys))
+        # Each (SMILES, fidelity) pair must be unique — a compound may have both
+        # PS and DRC records after an upgrade, but never two of the same fidelity.
+        key_fidelity_pairs = [(r.canonical_smiles, r.fidelity) for r in oracle.labeled_records]
+        assert len(key_fidelity_pairs) == len(set(key_fidelity_pairs))
         # Total cost must be positive (at least one successful query).
         assert results.total_cost > 0
+
+
+class TestPSUpgradeInLoop:
+    """Integration tests: PS → DRC upgrade path fires correctly inside the loop."""
+
+    @pytest.fixture
+    def upgrade_oracle(self):
+        """Small pool where several compounds will get INTERVAL PS labels."""
+        # pEC50 values chosen so: phenol (7.8) and naphthalene (8.1) are
+        # above ps_threshold=5.0 → INTERVAL censoring → eligible for DRC upgrade.
+        data = pd.DataFrame({
+            "smiles": ["c1ccccc1", "c1ccc(O)cc1", "c1ccc2ccccc2c1",
+                       "c1ccc(N)cc1", "CCO", "CC(=O)O"],
+            "pec50": [4.0, 7.8, 8.1, 5.5, 6.0, 3.0],
+        })
+        return CostAwareOracle(
+            ground_truth_df=data,
+            cost_ps=1.0, cost_drc=10.0,
+            ps_threshold=5.0, upper_bound=11.0,
+        )
+
+    @pytest.fixture
+    def upgrade_loop(self, upgrade_oracle):
+        from moal.model import NoisyOracleModel
+        model = NoisyOracleModel(upgrade_oracle._ground_truth, noise_scale=0.0, seed=0)
+        acquisition = CostAwareGreedyAcquisition(
+            cost_ps=1.0, cost_drc=10.0, ps_threshold=5.0,
+            target_threshold=7.0, tau=0.5,
+        )
+        evaluator = PipelineEvaluator(activity_threshold=7.0, upper_bound=11.0)
+        return ActiveLearningLoop(
+            oracle=upgrade_oracle, model=model,
+            acquisition=acquisition, evaluator=evaluator,
+        )
+
+    def test_upgrade_produces_both_records(self, upgrade_loop, upgrade_oracle):
+        """Running enough iterations must produce at least one compound with
+        both a PS and a DRC record (confirming the upgrade path fires)."""
+        upgrade_loop.run(n_iterations=6, k_per_iteration=2)
+        records = upgrade_oracle.labeled_records
+        # Group by canonical SMILES
+        from collections import defaultdict
+        by_smiles: dict = defaultdict(list)
+        for r in records:
+            by_smiles[r.canonical_smiles].append(r.fidelity)
+        upgraded = {
+            smi for smi, fids in by_smiles.items()
+            if QueryType.PRIMARY_SCREEN in fids and QueryType.DOSE_RESPONSE in fids
+        }
+        assert upgraded, "Expected at least one compound to have both PS and DRC records"
+
+    def test_no_duplicate_fidelity_pairs(self, upgrade_loop, upgrade_oracle):
+        """Each (smiles, fidelity) pair must appear at most once in labeled_records."""
+        upgrade_loop.run(n_iterations=4, k_per_iteration=2)
+        pairs = [(r.canonical_smiles, r.fidelity) for r in upgrade_oracle.labeled_records]
+        assert len(pairs) == len(set(pairs))
+
+    def test_cost_includes_both_ps_and_drc(self, upgrade_loop, upgrade_oracle):
+        """Total cost must reflect both PS and DRC assays when upgrades occur."""
+        upgrade_loop.run(n_iterations=6, k_per_iteration=2)
+        manual_cost = sum(r.cost for r in upgrade_oracle.labeled_records)
+        assert upgrade_oracle.total_cost == pytest.approx(manual_cost)
+
+    def test_ps_labeled_pool_shrinks_as_upgrades_happen(self, upgrade_loop, upgrade_oracle):
+        """After enough iterations, the PS-labeled pool should shrink to zero
+        as all INTERVAL-censored hits are upgraded to DRC."""
+        # Run enough iterations to exhaust the whole pool
+        upgrade_loop.run(n_iterations=10, k_per_iteration=2)
+        # All compounds labeled; none remain eligible for PS→DRC upgrade
+        assert upgrade_oracle.get_ps_labeled_smiles() == []

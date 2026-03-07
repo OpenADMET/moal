@@ -17,10 +17,16 @@ DRC and PS serve structurally different roles:
   when the model is most uncertain whether the compound clears the threshold.
   Cheaply resolves ambiguous cases without consuming DRC budget.
 
+Two compound pools feed into ``select()``:
+- Unqueried compounds: eligible for either PS or DRC.
+- PS-INTERVAL-labeled compounds: already screened; eligible for DRC upgrade
+  only.  DRC-upgrade candidates compete on the same score as first-pass DRC
+  candidates, so the acquisition naturally escalates promising hits.
+
 The two scores are on the same scale (information per dollar) and can be
-compared directly. A compound contributes two candidates to the ranked list;
-the greedy procedure picks top-k while ensuring each compound is selected at
-most once.
+compared directly. A compound contributes at most two candidates to the
+ranked list; the greedy procedure picks top-k while ensuring each compound
+is selected at most once.
 """
 
 from __future__ import annotations
@@ -102,19 +108,37 @@ class CostAwareGreedyAcquisition:
         unlabeled_smiles: list[str],
         predictions: np.ndarray,
         k: int,
+        ps_labeled_smiles: list[str] | None = None,
+        ps_labeled_predictions: np.ndarray | None = None,
     ) -> list[tuple[str, QueryType]]:
         """Greedily select k (compound, fidelity) pairs.
 
+        Two pools are considered:
+
+        - *Unqueried* compounds (``unlabeled_smiles``): eligible for either PS or
+          DRC.  Both candidates enter the unified ranked list.
+        - *PS-labeled* compounds (``ps_labeled_smiles``): already screened with
+          PS; eligible for a DRC upgrade only.  Only a DRC candidate is
+          generated for each.
+
         Args:
-            unlabeled_smiles: List of canonical SMILES for all unlabeled compounds.
-            predictions: Model pEC50 point estimates, shape (N,), aligned with
-                unlabeled_smiles.
+            unlabeled_smiles: Ground-truth keys for all unqueried compounds.
+            predictions: Model pEC50 point estimates, shape ``(N,)``, aligned
+                with ``unlabeled_smiles``.
             k: Number of queries to select.
+            ps_labeled_smiles: Ground-truth keys for compounds that have a PS
+                label but no DRC label (i.e., INTERVAL-censored hits eligible
+                for a full dose-response follow-up).  Defaults to empty.
+            ps_labeled_predictions: Model pEC50 estimates, shape ``(M,)``,
+                aligned with ``ps_labeled_smiles``.  Required when
+                ``ps_labeled_smiles`` is non-empty.
 
         Returns:
             Ordered list of (smiles, QueryType) pairs, highest-scoring first.
         """
-        if len(unlabeled_smiles) == 0:
+        ps_labeled_smiles = list(ps_labeled_smiles or [])
+
+        if len(unlabeled_smiles) == 0 and len(ps_labeled_smiles) == 0:
             logger.warning("No unlabeled compounds available for acquisition.")
             return []
 
@@ -127,32 +151,45 @@ class CostAwareGreedyAcquisition:
             f"predictions length ({len(predictions)})."
         )
 
-        scores_drc = self._score_drc(predictions)
-        scores_ps = self._score_ps(predictions)
+        # Candidates are (score, smiles, QueryType); SMILES is the dedup key so
+        # both pools can be merged without index-space collisions.
+        candidates: list[tuple[float, str, QueryType]] = []
 
-        # Build a unified candidate list: [(score, idx, QueryType)]
-        candidates: list[tuple[float, int, QueryType]] = []
-        for i in range(len(unlabeled_smiles)):
-            candidates.append((float(scores_drc[i]), i, QueryType.DOSE_RESPONSE))
-            candidates.append((float(scores_ps[i]), i, QueryType.PRIMARY_SCREEN))
+        if unlabeled_smiles:
+            scores_drc = self._score_drc(predictions)
+            scores_ps = self._score_ps(predictions)
+            for i, smi in enumerate(unlabeled_smiles):
+                candidates.append((float(scores_drc[i]), smi, QueryType.DOSE_RESPONSE))
+                candidates.append((float(scores_ps[i]), smi, QueryType.PRIMARY_SCREEN))
+
+        # PS-labeled INTERVAL compounds contribute only a DRC-upgrade candidate
+        if ps_labeled_smiles:
+            psl_preds = np.asarray(ps_labeled_predictions, dtype=np.float32)
+            assert len(ps_labeled_smiles) == len(psl_preds), (
+                f"ps_labeled_smiles length ({len(ps_labeled_smiles)}) must match "
+                f"ps_labeled_predictions length ({len(psl_preds)})."
+            )
+            scores_drc_upgrade = self._score_drc(psl_preds)
+            for j, smi in enumerate(ps_labeled_smiles):
+                candidates.append((float(scores_drc_upgrade[j]), smi, QueryType.DOSE_RESPONSE))
 
         candidates.sort(key=lambda x: x[0], reverse=True)
 
         selected: list[tuple[str, QueryType]] = []
-        selected_indices: set[int] = set()
-        for score, idx, qt in candidates:
-            if idx in selected_indices:
+        selected_smiles: set[str] = set()
+        for score, smi, qt in candidates:
+            if smi in selected_smiles:
                 continue
-            selected.append((unlabeled_smiles[idx], qt))
-            selected_indices.add(idx)
+            selected.append((smi, qt))
+            selected_smiles.add(smi)
             if len(selected) >= k:
                 break
 
         if len(selected) < k:
             logger.warning(
                 "Could only select %d queries (requested %d); "
-                "%d unlabeled compounds available.",
-                len(selected), k, len(unlabeled_smiles),
+                "%d unqueried and %d PS-labeled compounds available.",
+                len(selected), k, len(unlabeled_smiles), len(ps_labeled_smiles),
             )
         return selected
 

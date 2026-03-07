@@ -101,23 +101,30 @@ class TestCostTracking:
 
 
 class TestDeduplication:
-    def test_requery_raises(self):
+    def test_ps_after_ps_raises(self):
         oracle = _make_oracle()
         oracle.query("c1ccccc1", QueryType.PRIMARY_SCREEN, iteration=0)
-        with pytest.raises(ValueError, match="already labeled"):
+        with pytest.raises(ValueError, match="already has a PS label"):
             oracle.query("c1ccccc1", QueryType.PRIMARY_SCREEN, iteration=1)
 
-    def test_requery_different_fidelity_raises(self):
+    def test_ps_after_drc_raises(self):
+        """Downgrading from DRC to PS must be blocked; DRC supersedes PS."""
         oracle = _make_oracle()
-        oracle.query("c1ccccc1", QueryType.PRIMARY_SCREEN, iteration=0)
-        with pytest.raises(ValueError, match="already labeled"):
+        oracle.query("c1ccccc1", QueryType.DOSE_RESPONSE, iteration=0)
+        with pytest.raises(ValueError, match="already has a DRC label"):
+            oracle.query("c1ccccc1", QueryType.PRIMARY_SCREEN, iteration=1)
+
+    def test_drc_after_drc_raises(self):
+        oracle = _make_oracle()
+        oracle.query("c1ccccc1", QueryType.DOSE_RESPONSE, iteration=0)
+        with pytest.raises(ValueError, match="already has a DRC label"):
             oracle.query("c1ccccc1", QueryType.DOSE_RESPONSE, iteration=1)
 
     def test_batch_dedup_within_batch(self):
         oracle = _make_oracle()
         queries = [
             ("c1ccccc1", QueryType.PRIMARY_SCREEN),
-            ("c1ccccc1", QueryType.DOSE_RESPONSE),  # duplicate
+            ("c1ccccc1", QueryType.DOSE_RESPONSE),  # duplicate key in same batch
         ]
         records = oracle.query_batch(queries, iteration=0)
         assert len(records) == 1
@@ -135,6 +142,71 @@ class TestUnlabeledPool:
         oracle.query("c1ccccc1", QueryType.PRIMARY_SCREEN, iteration=0)
         after = len(oracle.get_unlabeled_smiles())
         assert after == before - 1
+
+
+class TestPSUpgrade:
+    """PS → DRC two-stage upgrade: confirm a PS hit with a full dose-response curve."""
+
+    def test_drc_after_interval_ps_succeeds(self):
+        """DRC on a compound that previously yielded an INTERVAL PS must succeed."""
+        oracle = _make_oracle()
+        # c1ccc(O)cc1 (phenol) has pEC50=7.5 >= ps_threshold=5.0 → INTERVAL
+        ps_rec = oracle.query("c1ccc(O)cc1", QueryType.PRIMARY_SCREEN, iteration=0)
+        assert ps_rec.censoring_type == CensoringType.INTERVAL
+        drc_rec = oracle.query("c1ccc(O)cc1", QueryType.DOSE_RESPONSE, iteration=1)
+        assert drc_rec.censoring_type == CensoringType.EXACT
+
+    def test_both_records_in_labeled_records(self):
+        """After a PS→DRC upgrade, labeled_records must contain both records."""
+        oracle = _make_oracle()
+        oracle.query("c1ccc(O)cc1", QueryType.PRIMARY_SCREEN, iteration=0)
+        oracle.query("c1ccc(O)cc1", QueryType.DOSE_RESPONSE, iteration=1)
+        records = oracle.labeled_records
+        assert len(records) == 2
+        fidelities = {r.fidelity for r in records}
+        assert QueryType.PRIMARY_SCREEN in fidelities
+        assert QueryType.DOSE_RESPONSE in fidelities
+
+    def test_cost_accumulates_for_both_assays(self):
+        oracle = _make_oracle()
+        oracle.query("c1ccc(O)cc1", QueryType.PRIMARY_SCREEN, iteration=0)
+        oracle.query("c1ccc(O)cc1", QueryType.DOSE_RESPONSE, iteration=1)
+        assert oracle.total_cost == pytest.approx(_COST_PS + _COST_DRC)
+
+    def test_ps_labeled_smiles_initially_empty(self):
+        oracle = _make_oracle()
+        assert oracle.get_ps_labeled_smiles() == []
+
+    def test_interval_ps_appears_in_ps_labeled_smiles(self):
+        """An INTERVAL-censored PS record must appear in get_ps_labeled_smiles."""
+        oracle = _make_oracle()
+        oracle.query("c1ccc(O)cc1", QueryType.PRIMARY_SCREEN, iteration=0)  # INTERVAL
+        assert len(oracle.get_ps_labeled_smiles()) == 1
+
+    def test_left_ps_excluded_from_ps_labeled_smiles(self):
+        """A LEFT-censored PS record (confirmed inactive) must NOT appear in get_ps_labeled_smiles."""
+        oracle = _make_oracle()
+        # c1ccccc1 (benzene) has pEC50=4.0 < ps_threshold=5.0 → LEFT
+        ps_rec = oracle.query("c1ccccc1", QueryType.PRIMARY_SCREEN, iteration=0)
+        assert ps_rec.censoring_type == CensoringType.LEFT
+        assert oracle.get_ps_labeled_smiles() == []
+
+    def test_ps_labeled_smiles_removed_after_drc_upgrade(self):
+        """After a DRC upgrade, the compound must leave the PS-labeled pool."""
+        oracle = _make_oracle()
+        oracle.query("c1ccc(O)cc1", QueryType.PRIMARY_SCREEN, iteration=0)
+        assert len(oracle.get_ps_labeled_smiles()) == 1
+        oracle.query("c1ccc(O)cc1", QueryType.DOSE_RESPONSE, iteration=1)
+        assert oracle.get_ps_labeled_smiles() == []
+
+    def test_ps_labeled_smiles_excludes_unlabeled(self):
+        """get_ps_labeled_smiles must not include compounds with no label at all."""
+        oracle = _make_oracle()
+        assert oracle.get_ps_labeled_smiles() == []
+        oracle.query("c1ccccc1", QueryType.PRIMARY_SCREEN, iteration=0)   # LEFT — excluded
+        oracle.query("c1ccc(O)cc1", QueryType.PRIMARY_SCREEN, iteration=0) # INTERVAL — included
+        oracle.query("CCO", QueryType.PRIMARY_SCREEN, iteration=0)          # ethanol pEC50=6.0 → INTERVAL
+        assert len(oracle.get_ps_labeled_smiles()) == 2
 
 
 class TestIsActive:
