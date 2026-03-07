@@ -67,9 +67,14 @@ class ModelConfig:
     """When True, bypass CheMeleon and use NoisyOracleModel instead.
     No checkpoint is required. Intended for rapid experimentation and testing."""
 
-    noise_scale: float = 0.5
-    """Magnitude of the Uniform(-noise_scale, +noise_scale) noise added to true
-    pEC50 values in fast mode (pEC50 log-units)."""
+    initial_error: float = 0.7
+    """Starting noise magnitude (pEC50 log-units) for the error ramp in fast mode.
+    Uniform(-initial_error, +initial_error) noise is applied at iteration 0."""
+
+    final_error: float = 0.5
+    """Ending noise magnitude (pEC50 log-units) for the error ramp in fast mode.
+    The ramp linearly interpolates from initial_error to final_error over all iterations.
+    Set equal to initial_error for a constant noise level."""
 
 
 @dataclass(frozen=True)

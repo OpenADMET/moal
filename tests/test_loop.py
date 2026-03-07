@@ -382,14 +382,15 @@ class TestIsCanonicalForwarding:
         )
 
         # NoisyOracleModel gets the same dict, so lookups in predict_smiles match.
-        model = NoisyOracleModel(oracle._ground_truth, noise_scale=0.0, seed=0)
+        model = NoisyOracleModel(oracle._ground_truth, seed=0)
         acquisition = CostAwareGreedyAcquisition(
             cost_ps=1.0, cost_drc=10.0, ps_threshold=5.0,
             target_threshold=7.0, tau=0.5,
         )
         evaluator = PipelineEvaluator(activity_threshold=7.0, upper_bound=11.0)
         loop = ActiveLearningLoop(
-            oracle=oracle, model=model, acquisition=acquisition, evaluator=evaluator
+            oracle=oracle, model=model, acquisition=acquisition, evaluator=evaluator,
+            initial_error=0.0, final_error=0.0,
         )
 
         results = loop.run(n_iterations=2, k_per_iteration=2)
@@ -427,7 +428,7 @@ class TestPSUpgradeInLoop:
     @pytest.fixture
     def upgrade_loop(self, upgrade_oracle):
         from moal.model import NoisyOracleModel
-        model = NoisyOracleModel(upgrade_oracle._ground_truth, noise_scale=0.0, seed=0)
+        model = NoisyOracleModel(upgrade_oracle._ground_truth, seed=0)
         acquisition = CostAwareGreedyAcquisition(
             cost_ps=1.0, cost_drc=10.0, ps_threshold=5.0,
             target_threshold=7.0, tau=0.5,
@@ -436,6 +437,7 @@ class TestPSUpgradeInLoop:
         return ActiveLearningLoop(
             oracle=upgrade_oracle, model=model,
             acquisition=acquisition, evaluator=evaluator,
+            initial_error=0.0, final_error=0.0,
         )
 
     def test_upgrade_produces_both_records(self, upgrade_loop, upgrade_oracle):
