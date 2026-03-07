@@ -63,6 +63,14 @@ class ModelConfig:
     w_ps: float = 0.3
     learnable_sigma: bool = False
 
+    fast: bool = False
+    """When True, bypass CheMeleon and use NoisyOracleModel instead.
+    No checkpoint is required. Intended for rapid experimentation and testing."""
+
+    noise_scale: float = 0.5
+    """Magnitude of the Uniform(-noise_scale, +noise_scale) noise added to true
+    pEC50 values in fast mode (pEC50 log-units)."""
+
 
 @dataclass(frozen=True)
 class AcquisitionConfig:
@@ -140,24 +148,8 @@ class DashboardConfig:
 
 
 @dataclass(frozen=True)
-class PipelineConfig:
-    """Top-level configuration for a full active learning campaign."""
-
-    oracle: OracleConfig = field(default_factory=OracleConfig)
-    model: ModelConfig = field(default_factory=ModelConfig)
-    acquisition: AcquisitionConfig = field(default_factory=AcquisitionConfig)
-    trainer: TrainerConfig = field(default_factory=TrainerConfig)
-    dashboard: DashboardConfig = field(default_factory=DashboardConfig)
-
-    n_iterations: int = 20
-    """Number of active learning iterations (m)."""
-
-    k_per_iteration: int = 10
-    """Number of queries per iteration (k)."""
-
-    test_set_size: float = 0.15
-    """Fraction of the compound pool held out as a scaffold-split test set for
-    model performance tracking. Set to 0.0 to disable test-set evaluation."""
+class DataConfig:
+    """I/O paths and SMILES preprocessing settings for the compound dataset."""
 
     ground_truth_csv: str = ""
     """Path to CSV containing compound SMILES and pEC50 values."""
@@ -174,7 +166,38 @@ class PipelineConfig:
     already in canonical form to skip that preprocessing step."""
 
     output_dir: str = "results"
-    """Directory to write campaign outputs (metrics CSV, model checkpoint)."""
+    """Directory to write campaign outputs (metrics CSV, dashboard PNG,
+    config snapshot)."""
+
+
+@dataclass(frozen=True)
+class ActiveLearningLoopConfig:
+    """Parameters controlling the active learning iteration loop."""
+
+    n_iterations: int = 20
+    """Number of active learning iterations (m)."""
+
+    k_per_iteration: int = 10
+    """Number of oracle queries issued per iteration (k)."""
+
+
+@dataclass(frozen=True)
+class PipelineConfig:
+    """Top-level configuration for a full active learning campaign."""
+
+    oracle: OracleConfig = field(default_factory=OracleConfig)
+    model: ModelConfig = field(default_factory=ModelConfig)
+    acquisition: AcquisitionConfig = field(default_factory=AcquisitionConfig)
+    trainer: TrainerConfig = field(default_factory=TrainerConfig)
+    dashboard: DashboardConfig = field(default_factory=DashboardConfig)
+    data: DataConfig = field(default_factory=DataConfig)
+    active_learning_loop: ActiveLearningLoopConfig = field(
+        default_factory=ActiveLearningLoopConfig
+    )
+
+    test_set_size: float = 0.15
+    """Fraction of the compound pool held out as a scaffold-split test set for
+    model performance tracking. Set to 0.0 to disable test-set evaluation."""
 
     seed: int = 42
 
@@ -189,14 +212,11 @@ class PipelineConfig:
             acquisition=AcquisitionConfig(**raw.get("acquisition", {})),
             trainer=TrainerConfig(**raw.get("trainer", {})),
             dashboard=DashboardConfig(**raw.get("dashboard", {})),
-            n_iterations=raw.get("n_iterations", 20),
-            k_per_iteration=raw.get("k_per_iteration", 10),
+            data=DataConfig(**raw.get("data", {})),
+            active_learning_loop=ActiveLearningLoopConfig(
+                **raw.get("active_learning_loop", {})
+            ),
             test_set_size=raw.get("test_set_size", 0.15),
-            ground_truth_csv=raw.get("ground_truth_csv", ""),
-            smiles_column=raw.get("smiles_column", "smiles"),
-            pec50_column=raw.get("pec50_column", "pec50"),
-            is_canonical=raw.get("is_canonical", False),
-            output_dir=raw.get("output_dir", "results"),
             seed=raw.get("seed", 42),
         )
 

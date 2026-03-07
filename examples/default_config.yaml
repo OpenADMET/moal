@@ -22,7 +22,7 @@ oracle:
 # ChemProp / CheMeleon model
 # --------------------------------------------------------------------------
 model:
-  chempeleon_ckpt_path: ""   # REQUIRED: path to CheMeleon pretrained checkpoint (.pt / .ckpt)
+  chempeleon_ckpt_path: ""   # REQUIRED (unless fast: true): path to CheMeleon pretrained checkpoint (.pt / .ckpt)
   hidden_size: 300
   depth: 3
   ffn_hidden_size: 300
@@ -34,6 +34,8 @@ model:
   w_drc: 1.0                 # Loss weight for DRC (exact) labels
   w_ps: 0.3                  # Loss weight for PS (inequality) labels
   learnable_sigma: false     # If true, sigma is a learned parameter
+  fast: false                # When true, bypass CheMeleon and use a noisy oracle predictor (no checkpoint needed)
+  noise_scale: 0.5           # Uniform noise magnitude (pEC50 units) applied in fast mode
 
 # --------------------------------------------------------------------------
 # Acquisition function
@@ -65,20 +67,26 @@ dashboard:
   show: true                # Set to false for headless/server environments
 
 # --------------------------------------------------------------------------
-# Campaign loop
+# Dataset and I/O
 # --------------------------------------------------------------------------
-n_iterations: 20       # Number of active learning iterations (m)
-k_per_iteration: 10    # Number of queries selected per iteration (k)
+data:
+  ground_truth_csv: ""   # REQUIRED: path to CSV containing SMILES and pEC50 values
+  smiles_column: smiles  # Column name for SMILES strings (default: "smiles")
+  pec50_column: pec50    # Column name for pEC50 values (default: "pec50")
+  is_canonical: false    # Set to true to skip RDKit canonicalization (input SMILES must already be canonical)
+  output_dir: results    # Directory for iteration_metrics.csv, cumulative_actives_curve.csv,
+                         # dashboard_final.png, and config_used.yaml
+
+# --------------------------------------------------------------------------
+# Active learning loop
+# --------------------------------------------------------------------------
+active_learning_loop:
+  n_iterations: 20       # Number of active learning iterations (m)
+  k_per_iteration: 10    # Number of queries selected per iteration (k)
+
+# --------------------------------------------------------------------------
+# Campaign-level settings
+# --------------------------------------------------------------------------
 test_set_size: 0.15    # Fraction of compounds held out as scaffold-split test set for model
                        # performance tracking. Set to 0.0 to disable.
 seed: 42               # Master random seed (scaffold split, tie-breaking)
-
-# --------------------------------------------------------------------------
-# I/O
-# --------------------------------------------------------------------------
-ground_truth_csv: ""   # REQUIRED: path to CSV containing SMILES and pEC50 values
-smiles_column: smiles  # Column name for SMILES strings (default: "smiles")
-pec50_column: pec50    # Column name for pEC50 values (default: "pec50")
-is_canonical: false    # Set to true to skip RDKit canonicalization (input SMILES must already be canonical)
-output_dir: results    # Directory for iteration_metrics.csv, cumulative_actives_curve.csv,
-                       # dashboard_final.png, and config_used.yaml

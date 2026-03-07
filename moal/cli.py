@@ -44,30 +44,30 @@ def main(config: str, output_dir: str | None, verbose: bool) -> None:
     from moal.config import PipelineConfig
     from moal.evaluation import ModelMetric, PipelineEvaluator, scaffold_split
     from moal.loop import ActiveLearningLoop
-    from moal.model import ChemPropLightningModule
+    from moal.model import ChemPropLightningModule, NoisyOracleModel
     from moal.oracle import CostAwareOracle
     from moal.preprocessing import SMILESPreprocessor
 
     cfg = PipelineConfig.from_yaml(config)
     logger.info("Loaded config from %s", config)
 
-    out_dir = Path(output_dir or cfg.output_dir)
+    out_dir = Path(output_dir or cfg.data.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     cfg.to_yaml(out_dir / "config_used.yaml")
 
-    if not cfg.ground_truth_csv:
-        logger.error("ground_truth_csv must be set in the config.")
+    if not cfg.data.ground_truth_csv:
+        logger.error("data.ground_truth_csv must be set in the config.")
         sys.exit(1)
 
     try:
-        ground_truth_df = pd.read_csv(cfg.ground_truth_csv)
+        ground_truth_df = pd.read_csv(cfg.data.ground_truth_csv)
     except FileNotFoundError:
-        logger.error("ground_truth_csv not found: %s", cfg.ground_truth_csv)
+        logger.error("data.ground_truth_csv not found: %s", cfg.data.ground_truth_csv)
         sys.exit(1)
     except (OSError, pd.errors.ParserError) as exc:
-        logger.error("Failed to read ground_truth_csv %s: %s", cfg.ground_truth_csv, exc)
+        logger.error("Failed to read data.ground_truth_csv %s: %s", cfg.data.ground_truth_csv, exc)
         sys.exit(1)
-    logger.info("Loaded %d compounds from %s", len(ground_truth_df), cfg.ground_truth_csv)
+    logger.info("Loaded %d compounds from %s", len(ground_truth_df), cfg.data.ground_truth_csv)
 
     preprocessor = SMILESPreprocessor()
     oracle = CostAwareOracle(
@@ -76,26 +76,37 @@ def main(config: str, output_dir: str | None, verbose: bool) -> None:
         cost_drc=cfg.oracle.cost_drc,
         ps_threshold=cfg.oracle.ps_threshold,
         upper_bound=cfg.oracle.upper_bound,
-        smiles_column=cfg.smiles_column,
-        pec50_column=cfg.pec50_column,
-        is_canonical=cfg.is_canonical,
+        smiles_column=cfg.data.smiles_column,
+        pec50_column=cfg.data.pec50_column,
+        is_canonical=cfg.data.is_canonical,
         preprocessor=preprocessor,
     )
 
-    model = ChemPropLightningModule(
-        chempeleon_ckpt_path=cfg.model.chempeleon_ckpt_path,
-        hidden_size=cfg.model.hidden_size,
-        depth=cfg.model.depth,
-        ffn_hidden_size=cfg.model.ffn_hidden_size,
-        ffn_num_layers=cfg.model.ffn_num_layers,
-        freeze_epochs=cfg.model.freeze_epochs,
-        lr_encoder=cfg.model.lr_encoder,
-        lr_head=cfg.model.lr_head,
-        sigma=cfg.model.sigma,
-        w_drc=cfg.model.w_drc,
-        w_ps=cfg.model.w_ps,
-        learnable_sigma=cfg.model.learnable_sigma,
-    )
+    if cfg.model.fast:
+        model = NoisyOracleModel(
+            ground_truth=oracle._ground_truth,
+            noise_scale=cfg.model.noise_scale,
+            seed=cfg.seed,
+        )
+        logger.info(
+            "Fast mode enabled — using NoisyOracleModel with noise_scale=%.3f",
+            cfg.model.noise_scale,
+        )
+    else:
+        model = ChemPropLightningModule(
+            chempeleon_ckpt_path=cfg.model.chempeleon_ckpt_path,
+            hidden_size=cfg.model.hidden_size,
+            depth=cfg.model.depth,
+            ffn_hidden_size=cfg.model.ffn_hidden_size,
+            ffn_num_layers=cfg.model.ffn_num_layers,
+            freeze_epochs=cfg.model.freeze_epochs,
+            lr_encoder=cfg.model.lr_encoder,
+            lr_head=cfg.model.lr_head,
+            sigma=cfg.model.sigma,
+            w_drc=cfg.model.w_drc,
+            w_ps=cfg.model.w_ps,
+            learnable_sigma=cfg.model.learnable_sigma,
+        )
 
     acquisition = CostAwareGreedyAcquisition(
         cost_ps=cfg.oracle.cost_ps,
@@ -127,7 +138,7 @@ def main(config: str, output_dir: str | None, verbose: bool) -> None:
         from moal.dashboard import LiveDashboard
 
         dashboard = LiveDashboard(
-            n_iterations=cfg.n_iterations,
+            n_iterations=cfg.active_learning_loop.n_iterations,
             model_metric=ModelMetric(cfg.dashboard.model_metric),
             save_dir=cfg.dashboard.save_dir or None,
             figsize=cfg.dashboard.figsize,
@@ -150,8 +161,8 @@ def main(config: str, output_dir: str | None, verbose: bool) -> None:
     )
 
     results = loop.run(
-        n_iterations=cfg.n_iterations,
-        k_per_iteration=cfg.k_per_iteration,
+        n_iterations=cfg.active_learning_loop.n_iterations,
+        k_per_iteration=cfg.active_learning_loop.k_per_iteration,
     )
 
     if dashboard is not None:
