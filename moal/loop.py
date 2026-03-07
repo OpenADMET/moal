@@ -339,10 +339,10 @@ class ActiveLearningLoop:
         )
         _console.print(
             f"[bold green]Campaign complete.[/bold green]  "
-            f"Total cost: [cyan]${results.total_cost:.2f}[/cyan]  |  "
+            f"Total cost: [bold]${results.total_cost:.2f}[/bold]  |  "
             f"[steel_blue1]{n_final_ps} PS[/steel_blue1]  |  "
             f"{drc_label}  |  "
-            f"Confirmed actives: [cyan]{int(results.final_metrics.get('n_confirmed_actives', 0))}[/cyan]"
+            f"Confirmed actives: [green]{int(results.final_metrics.get('n_confirmed_actives', 0))}[/green]"
             f" [dim](of {n_true_actives})[/dim]"
         )
         return results
