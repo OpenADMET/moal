@@ -9,7 +9,6 @@ import numpy as np
 from rich.console import Console
 from rich.progress import (
     BarColumn,
-    MofNCompleteColumn,
     Progress,
     SpinnerColumn,
     TextColumn,
@@ -185,7 +184,7 @@ class ActiveLearningLoop:
             SpinnerColumn(),
             TextColumn("[bold]{task.description}"),
             BarColumn(),
-            MofNCompleteColumn(),
+            TextColumn("{task.percentage:>3.0f}%"),
             TimeElapsedColumn(),
             console=_console,
             transient=False,
