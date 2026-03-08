@@ -310,7 +310,7 @@ class ActiveLearningLoop:
                     description=(
                         f"[green]Iter {iteration + 1}/{n_iterations}[/green]  "
                         f"Selecting next {k_per_iteration} — "
-                        f"{len(remaining_unlabeled)} unqueried, "
+                        f"[white]{len(remaining_unlabeled)} unqueried[/white], "
                         f"[magenta]{len(remaining_ps_labeled)} PS hits[/magenta] eligible for upgrade"
                     ),
                 )
@@ -393,7 +393,7 @@ class ActiveLearningLoop:
         )
         _console.print(
             f"[bold green]Campaign complete.[/bold green]  "
-            f"Total cost: [bold]${results.total_cost:.2f}[/bold]  |  "
+            f"[bold]Total cost:[/bold] [bold]${results.total_cost:.2f}[/bold]  |  "
             f"[steel_blue1]{n_final_ps} PS[/steel_blue1]  |  "
             f"{drc_label}  |  "
             f"Confirmed actives: [green]{int(results.final_metrics.get('n_confirmed_actives', 0))}[/green]"
