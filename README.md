@@ -27,9 +27,12 @@ Copy and edit the example config to point at your data:
 
 ```bash
 cp examples/default_config.yaml my_campaign.yaml
-# edit my_campaign.yaml: set data.ground_truth_csv and model.chempeleon_ckpt_path
+# edit my_campaign.yaml: set data.ground_truth_csv
 moal --config my_campaign.yaml --output-dir results/
 ```
+
+CheMeleon pretrained weights are downloaded automatically from Zenodo on first
+run and cached at `~/.chemprop/chemeleon_mp.pt` for subsequent use.
 
 The full set of options (with defaults and documentation) is in `examples/default_config.yaml`. A minimal config looks like:
 
@@ -41,7 +44,6 @@ oracle:
   activity_threshold: 7.0
 
 model:
-  chempeleon_ckpt_path: /path/to/chempeleon.pt
   freeze_epochs: 10
   lr_encoder: 1.0e-5
   lr_head: 1.0e-3

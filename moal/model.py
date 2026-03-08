@@ -183,25 +183,9 @@ class ChemPropLightningModule(L.LightningModule):
         return MPNN(message_passing=mp, agg=agg, predictor=ffn)
 
     def _load_chemeleon_weights(self) -> None:
-        logger.info(
-            "Please cite DOI: 10.48550/arXiv.2506.15792 when using CheMeleon in published work"
-        )
+        download_chemeleon()
 
-        # Download CheMeleon if needed
-        ckpt_dir = Path().home() / ".chemprop"
-        ckpt_dir.mkdir(exist_ok=True)
-        ckpt_path = ckpt_dir / "chemeleon_mp.pt"
-        if not ckpt_path.exists():
-            logger.info(
-                f"Downloading CheMeleon Foundation model from Zenodo (https://zenodo.org/records/15460715) to {ckpt_path}"
-            )
-            urlretrieve(
-                r"https://zenodo.org/records/15460715/files/chemeleon_mp.pt",
-                ckpt_path,
-            )
-        else:
-            logger.info(f"Loading cached CheMeleon from {ckpt_path}")
-
+        ckpt_path = Path().home() / ".chemprop" / "chemeleon_mp.pt"
         _assert_feature_dims(self.model)
 
         checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=True)
@@ -404,8 +388,9 @@ class NoisyOracleModel:
     """Noisy oracle surrogate that bypasses CheMeleon entirely.
 
     Predicts pEC50 by adding Uniform(-noise_scale, +noise_scale) noise to the
-    true ground-truth values. Intended for rapid development, debugging, and
-    integration testing where a real CheMeleon checkpoint is unavailable.
+    true ground-truth values. Intended for rapid campaign prototyping,
+    debugging, and integration testing without downloading or loading the
+    CheMeleon foundation model.
 
     This model satisfies the same two-method interface as
     :class:`ChemPropLightningModule` (``predict_smiles`` and ``refit``) so it

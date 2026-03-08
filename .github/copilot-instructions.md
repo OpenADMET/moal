@@ -111,7 +111,7 @@ All campaign parameters live in `moal/config.py` as frozen dataclasses. The YAML
 | YAML key | Dataclass | Notable fields |
 |---|---|---|
 | `oracle:` | `OracleConfig` | `cost_ps`, `cost_drc`, `ps_threshold`, `upper_bound`, `activity_threshold` |
-| `model:` | `ModelConfig` | `chempeleon_ckpt_path`, `hidden_size`, `depth`, `ffn_hidden_size`, `ffn_num_layers`, `freeze_epochs`, `lr_encoder`, `lr_head`, `sigma`, `w_drc`, `w_ps`, `learnable_sigma`, **`fast`**, **`initial_error`**, **`final_error`** |
+| `model:` | `ModelConfig` | `hidden_size`, `depth`, `ffn_hidden_size`, `ffn_num_layers`, `freeze_epochs`, `lr_encoder`, `lr_head`, `sigma`, `w_drc`, `w_ps`, `learnable_sigma`, **`fast`**, **`initial_error`**, **`final_error`** |
 | `acquisition:` | `AcquisitionConfig` | `ps_threshold`, `target_threshold`, **`tau`** |
 | `trainer:` | `TrainerConfig` | `max_epochs`, `accelerator`, `enable_progress_bar`, `enable_model_summary`, `val_fraction`, `split_seed` |
 | `dashboard:` | `DashboardConfig` | `enabled`, `model_metric`, `figsize`, `show` |
