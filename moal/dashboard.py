@@ -114,6 +114,7 @@ class LiveDashboard:
         self._cum_actives: list[int] = []
         self._iter_drc_costs: list[float] = []
         self._iter_ps_costs: list[float] = []
+        self._iter_upgrade_costs: list[float] = []
         self._model_metric_values: list[float] = []
 
         # Twin y-axis for the cost panel — created once, reused on every update.
@@ -169,6 +170,7 @@ class LiveDashboard:
         activity_threshold: float,
         iter_drc_cost: float,
         iter_ps_cost: float,
+        iter_upgrade_cost: float = 0.0,
         model_metric_value: float | None = None,
     ) -> None:
         """Redraw all panels with the latest campaign state.
@@ -181,9 +183,13 @@ class LiveDashboard:
         activity_threshold : float
             pEC50 threshold defining a confirmed active.
         iter_drc_cost : float
-            Total DRC cost incurred in the *current* iteration.
+            Total DRC cost incurred in the *current* iteration (includes
+            upgrade costs).
         iter_ps_cost : float
             Total PS cost incurred in the *current* iteration.
+        iter_upgrade_cost : float, optional
+            Portion of ``iter_drc_cost`` that came from PS→DRC upgrades.
+            Defaults to 0.0 (no upgrade distinction).
         model_metric_value : float, optional
             Metric value from ``evaluate_model()`` for this iteration, or None
             if no test set is available.
@@ -193,6 +199,7 @@ class LiveDashboard:
         # Accumulate per-iteration cost data.
         self._iter_drc_costs.append(iter_drc_cost)
         self._iter_ps_costs.append(iter_ps_cost)
+        self._iter_upgrade_costs.append(iter_upgrade_cost)
 
         # Build cumulative actives/cost from records.
         cum_cost = 0.0
@@ -272,8 +279,19 @@ class LiveDashboard:
         iters = np.arange(1, n + 1)
         drc_arr = np.array(self._iter_drc_costs)
         ps_arr = np.array(self._iter_ps_costs)
+        upgrade_arr = np.array(self._iter_upgrade_costs)
+        # First-pass DRC is total DRC minus the upgrade portion
+        drc_new_arr = drc_arr - upgrade_arr
 
-        ax.bar(iters, drc_arr, color=_COLOUR_DRC, label="DRC", zorder=2)
+        ax.bar(iters, drc_new_arr, color=_COLOUR_DRC, label="DRC", zorder=2)
+        ax.bar(
+            iters,
+            upgrade_arr,
+            bottom=drc_new_arr,
+            color=_COLOUR_UPGRADE,
+            label="PS→DRC",
+            zorder=2,
+        )
         ax.bar(iters, ps_arr, bottom=drc_arr, color=_COLOUR_PS, label="PS", zorder=2)
 
         cum_total = np.cumsum(drc_arr + ps_arr)

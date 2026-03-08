@@ -240,6 +240,14 @@ class ActiveLearningLoop:
                     for r in new_records
                     if r.fidelity == QueryType.PRIMARY_SCREEN
                 )
+                # Upgrades are DRC queries for compounds already in the PS pool;
+                # ps_labeled_before was captured before this iteration's queries.
+                iter_upgrade_cost = sum(
+                    r.cost
+                    for r in new_records
+                    if r.fidelity == QueryType.DOSE_RESPONSE
+                    and r.canonical_smiles in ps_labeled_before
+                )
                 progress.advance(task)
 
                 # --- Refit model --------------------------------------
@@ -357,6 +365,7 @@ class ActiveLearningLoop:
                         activity_threshold=self.evaluator.activity_threshold,
                         iter_drc_cost=iter_drc_cost,
                         iter_ps_cost=iter_ps_cost,
+                        iter_upgrade_cost=iter_upgrade_cost,
                         model_metric_value=model_metric_value,
                     )
 
