@@ -17,6 +17,7 @@ python -m pytest tests/test_loss.py::TestLossBreakdown
 python -m pytest tests/test_loss.py::TestLossBreakdown::test_forward_consistent_with_breakdown
 
 # CLI entry point
+moal --config examples/default_config.yaml
 moal --config examples/default_config.yaml --output-dir results/
 moal --config examples/default_config.yaml --verbose
 ```
@@ -39,28 +40,43 @@ CostAwareOracle ──────── ground_truth_df (CSV, pec50 validated [
     │  query_batch()
     ▼
 LabelRecord (frozen dataclass)
-    │   fidelity: PS → LEFT/INTERVAL label
+    │   fidelity: PS → LEFT (inactive) or INTERVAL (active) label
     │   fidelity: DRC → EXACT label
+    │   PS→DRC upgrade: oracle.get_ps_labeled_smiles() feeds upgrade candidates
+    ▼
+oracle.training_records ── excludes INTERVAL PS for compounds with DRC
+    │   (prevents double-weighting of upgraded compounds)
     ▼
 MixedFidelityDataModule ── train/val split (scaffold-unaware random split)
     │
     ▼
-ChemPropLightningModule.refit()
+ChemPropLightningModule.refit()   ← or NoisyOracleModel (fast=True)
     │  CensoredRegressionLoss (Tobit: EXACT / LEFT / INTERVAL branches)
     │  Freeze/unfreeze schedule: FFN head only for freeze_epochs, then encoder
     ▼
-model.predict_smiles(unlabeled)  →  pEC50 point estimates (no uncertainty)
+model.predict_smiles(unlabeled + ps_labeled)  →  pEC50 point estimates
     │
     ▼
-CostAwareGreedyAcquisition.select(unlabeled, predictions, k)
-    │  DRC score = p_active(ŷ) / cost_DRC   [exploitation]
-    │  PS  score = H(p_cross(ŷ, T)) / cost_PS  [threshold exploration]
+CostAwareGreedyAcquisition.select(unlabeled, predictions, k,
+                                  ps_labeled_smiles, ps_labeled_predictions)
+    │  DRC score = p_active(ŷ) / cost_DRC                [exploitation]
+    │  PS  score = H_binary(p_cross(ŷ, T)) / cost_PS     [exploration]
+    │  PS-labeled compounds: DRC-upgrade candidates only (no PS re-query)
     │  Greedy top-k, one query per compound
     ▼
 ActiveLearningLoop.run()  →  LoopResults
     │  3 Rich progress steps per iteration: query → refit → select
+    │  NoisyOracleModel: noise_scale ramps linearly initial_error → final_error
     ▼
 LiveDashboard (matplotlib, 3 panels: actives curve, cost stacks, model metric)
+    │  PNG snapshot after every update; save_gif() exports animated GIF
+    ▼
+output_dir/
+    ├── config_used.yaml
+    ├── dashboard_final.png
+    ├── dashboard_animation.gif
+    ├── iteration_metrics.csv
+    └── cumulative_actives_curve.csv
 ```
 
 ### Three distinct threshold parameters
@@ -78,8 +94,9 @@ These are separate and must not be conflated:
 - **PS `>= T` labels are INTERVAL-censored `[T, upper_bound]`**, not right-censored at T. Right-censoring inverts gradients for active compounds. See `CensoringType.INTERVAL` in `types.py` and the `INTERVAL` branch in `loss.py`.
 - **pEC50 values outside `[0.0, 14.0]`** (and NaN/inf) are excluded by `oracle._build_ground_truth()` before they reach the loss function. Silently passing NaN would corrupt entire training batches.
 - **`Chem.MolToSmiles(mol, isomericSmiles=True)`** is explicit in `preprocessing.py`. Do not remove this — RDKit's default has changed historically and chirality must be preserved.
-- **`TrainerConfig.to_dict()`** returns only `L.Trainer`-compatible keys. `val_fraction` and `split_seed` are consumed by `MixedFidelityDataModule` via `to_datamodule_kwargs()`. Passing them to `L.Trainer` raises `TypeError`.
+- **`TrainerConfig.to_dict()`** returns only `L.Trainer`-compatible keys (`max_epochs`, `accelerator`, `enable_progress_bar`, `enable_model_summary`). `val_fraction` and `split_seed` are consumed by `MixedFidelityDataModule` via `to_datamodule_kwargs()` which returns `{val_fraction, seed}`. Passing them to `L.Trainer` raises `TypeError`.
 - **`logging.basicConfig`** must only be called inside `cli.main()`, never at module scope. Module-level calls fire on import and reconfigure the root logger during test collection.
+- **`oracle.training_records`** (not `oracle.labeled_records`) must be passed to `model.refit()`. It excludes PS INTERVAL records for compounds that have a DRC record, preventing double-weighting of upgraded compounds.
 
 ---
 
@@ -87,11 +104,30 @@ These are separate and must not be conflated:
 
 ### Config hierarchy
 
-All campaign parameters live in `moal/config.py` as frozen dataclasses. The YAML config maps directly to the nested hierarchy (`oracle:`, `model:`, `acquisition:`, `trainer:`, `dashboard:`, and top-level fields). `PipelineConfig.from_yaml()` is the single entry point for deserialization. When adding a new parameter, add it to the appropriate `@dataclass(frozen=True)` class and to `from_yaml()`.
+All campaign parameters live in `moal/config.py` as frozen dataclasses. The YAML config maps directly to the nested hierarchy below. `PipelineConfig.from_yaml()` is the single entry point for deserialization; `PipelineConfig.to_yaml()` serializes back. When adding a new parameter, add it to the appropriate `@dataclass(frozen=True)` class and to `from_yaml()`.
+
+**YAML sections and their dataclasses:**
+
+| YAML key | Dataclass | Notable fields |
+|---|---|---|
+| `oracle:` | `OracleConfig` | `cost_ps`, `cost_drc`, `ps_threshold`, `upper_bound`, `activity_threshold` |
+| `model:` | `ModelConfig` | `chempeleon_ckpt_path`, `hidden_size`, `depth`, `ffn_hidden_size`, `ffn_num_layers`, `freeze_epochs`, `lr_encoder`, `lr_head`, `sigma`, `w_drc`, `w_ps`, `learnable_sigma`, **`fast`**, **`initial_error`**, **`final_error`** |
+| `acquisition:` | `AcquisitionConfig` | `ps_threshold`, `target_threshold`, **`tau`** |
+| `trainer:` | `TrainerConfig` | `max_epochs`, `accelerator`, `enable_progress_bar`, `enable_model_summary`, `val_fraction`, `split_seed` |
+| `dashboard:` | `DashboardConfig` | `enabled`, `model_metric`, `figsize`, `show` |
+| `data:` | `DataConfig` | `ground_truth_csv`, `smiles_column`, `pec50_column`, `is_canonical`, `output_dir` |
+| `active_learning_loop:` | `ActiveLearningLoopConfig` | `n_iterations`, `k_per_iteration` |
+| *(top-level)* | `PipelineConfig` | `test_set_size`, `seed` |
+
+### Fast mode (NoisyOracleModel)
+
+When `model.fast = true` in the config, `ActiveLearningLoop` uses `NoisyOracleModel` instead of `ChemPropLightningModule`. This surrogate looks up true pEC50 values from the oracle's ground truth and adds uniform noise, skipping all neural network training. The noise scale ramps linearly from `model.initial_error` down to `model.final_error` across iterations. Use fast mode for rapid campaign prototyping and integration tests; never for real experiments.
 
 ### Label records
 
-`LabelRecord` (frozen dataclass in `types.py`) is the canonical unit of labeled data throughout the pipeline. It carries the censoring type, fidelity, cost, and iteration alongside the SMILES. All training, evaluation, and dashboard code operates on `list[LabelRecord]` — do not pass raw floats between components.
+`LabelRecord` (frozen dataclass in `types.py`) is the canonical unit of labeled data throughout the pipeline. It carries the censoring type, fidelity, cost, and iteration alongside the SMILES and bounds. All training, evaluation, and dashboard code operates on `list[LabelRecord]` — do not pass raw floats between components.
+
+`IterationResults` and `LoopResults` are also defined in `types.py`. `IterationResults` carries an optional `model_metric_value` (None when no test set is configured).
 
 ### Logging
 
@@ -99,7 +135,7 @@ All modules use `logger = logging.getLogger(__name__)`. The `suppress_noisy_logg
 
 ### Loss breakdown
 
-`CensoredRegressionLoss.forward_with_breakdown()` returns a `LossBreakdown` NamedTuple with `total`, `drc_loss`, and `ps_loss`. The per-fidelity fields are `nan` (not zero) when no samples of that fidelity are in the batch — Lightning skips `nan` log values, which is intentional. `forward()` delegates to `forward_with_breakdown()`.
+`CensoredRegressionLoss.forward_with_breakdown()` returns a `LossBreakdown` NamedTuple with `total`, `drc_loss`, and `ps_loss`. The per-fidelity fields are `nan` (not zero) when no samples of that fidelity are in the batch — Lightning skips `nan` log values, which is intentional. `forward()` delegates to `forward_with_breakdown()`. The INTERVAL branch uses direct CDF subtraction clamped to `1e-12` to avoid `log(0)`.
 
 ### Freeze/unfreeze schedule
 
@@ -107,7 +143,11 @@ All modules use `logger = logging.getLogger(__name__)`. The `suppress_noisy_logg
 
 ### Scaffold split
 
-`scaffold_split()` in `evaluation.py` uses Bemis-Murcko scaffolds, assigns groups largest-first to the test set, and may slightly exceed the requested `test_size` if the first scaffold group is large. This is acceptable — scaffold groups cannot be split. This split is used only for the held-out model evaluation test set; the train/val split inside `MixedFidelityDataModule` is a plain random split.
+`scaffold_split()` in `evaluation.py` uses Bemis-Murcko scaffolds, assigns groups largest-first to the test set, and may slightly exceed the requested `test_size` if the first scaffold group is large. This is acceptable — scaffold groups cannot be split. This split is used only for the held-out model evaluation test set (built in `cli.main()` when `test_set_size > 0`); the train/val split inside `MixedFidelityDataModule` is a plain random split.
+
+### Model evaluation metrics
+
+`PipelineEvaluator` in `evaluation.py` supports five model metrics via the `ModelMetric` enum: `MAE`, `RMSE`, `KENDALL_TAU`, `SPEARMAN_R`, `R2`. The metric is configured via `dashboard.model_metric` in the YAML and displayed in the third dashboard panel. `evaluate_model()` accepts an optional `noise_scale` argument for use with `NoisyOracleModel`.
 
 ### CLI filesystem isolation in tests
 
