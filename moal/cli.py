@@ -65,9 +65,15 @@ def main(config: str, output_dir: str | None, verbose: bool) -> None:
         logger.error("data.ground_truth_csv not found: %s", cfg.data.ground_truth_csv)
         sys.exit(1)
     except (OSError, pd.errors.ParserError) as exc:
-        logger.error("Failed to read data.ground_truth_csv %s: %s", cfg.data.ground_truth_csv, exc)
+        logger.error(
+            "Failed to read data.ground_truth_csv %s: %s",
+            cfg.data.ground_truth_csv,
+            exc,
+        )
         sys.exit(1)
-    logger.info("Loaded %d compounds from %s", len(ground_truth_df), cfg.data.ground_truth_csv)
+    logger.info(
+        "Loaded %d compounds from %s", len(ground_truth_df), cfg.data.ground_truth_csv
+    )
 
     preprocessor = SMILESPreprocessor()
     oracle = CostAwareOracle(
@@ -128,7 +134,9 @@ def main(config: str, output_dir: str | None, verbose: bool) -> None:
     all_smiles = oracle.get_unlabeled_smiles()
     test_set = None
     if all_smiles and cfg.test_set_size > 0:
-        _, test_idx = scaffold_split(all_smiles, test_size=cfg.test_set_size, seed=cfg.seed)
+        _, test_idx = scaffold_split(
+            all_smiles, test_size=cfg.test_set_size, seed=cfg.seed
+        )
         if test_idx:
             test_smiles = [all_smiles[i] for i in test_idx]
             test_pec50 = [oracle._ground_truth[s] for s in test_smiles]
