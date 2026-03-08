@@ -1,4 +1,4 @@
-![banner](assets/banner.png)
+![banner](assets/banner_no_text.png)
 
 # moal: multi-objective active learning
 
