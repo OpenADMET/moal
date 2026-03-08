@@ -59,15 +59,22 @@ def _binary_entropy(p: np.ndarray) -> np.ndarray:
 class CostAwareGreedyAcquisition:
     """Select k (compound, fidelity) query pairs per active-learning iteration.
 
-    Args:
-        cost_ps: Cost of a Primary Screen query (dollars).
-        cost_drc: Cost of a Dose-Response Curve query (dollars).
-        ps_threshold: The pEC50 threshold used by the primary screen.
-            Drives the PS entropy score: maximum information at ŷ ≈ ps_threshold.
-        target_threshold: The pEC50 definition of an "active" compound (e.g., 7.0).
-            Drives the DRC exploitation score: maximum value at ŷ >> target_threshold.
-        tau: Sigmoid temperature controlling exploitation sharpness.
-            Smaller τ → more sharply exploit the highest-scoring compounds.
+    Parameters
+    ----------
+    cost_ps : float
+        Cost of a Primary Screen query (dollars).
+    cost_drc : float
+        Cost of a Dose-Response Curve query (dollars).
+    ps_threshold : float, optional
+        The pEC50 threshold used by the primary screen. Drives the PS entropy
+        score: maximum information at ŷ ≈ ps_threshold. Default is 5.0.
+    target_threshold : float, optional
+        The pEC50 definition of an "active" compound (e.g., 7.0). Drives the
+        DRC exploitation score: maximum value at ŷ >> target_threshold.
+        Default is 7.0.
+    tau : float, optional
+        Sigmoid temperature controlling exploitation sharpness. Smaller τ
+        means more sharply exploit the highest-scoring compounds. Default is 0.5.
     """
 
     def __init__(
@@ -123,19 +130,27 @@ class CostAwareGreedyAcquisition:
           PS; eligible for a DRC upgrade only.  Only a DRC candidate is
           generated for each.
 
-        Args:
-            unlabeled_smiles: Ground-truth keys for all unqueried compounds.
-            predictions: Model pEC50 point estimates, shape ``(N,)``, aligned
-                with ``unlabeled_smiles``.
-            k: Number of queries to select.
-            ps_labeled_smiles: Ground-truth keys for compounds that have a PS
-                label but no DRC label (i.e., INTERVAL-censored hits eligible
-                for a full dose-response follow-up).  Defaults to empty.
-            ps_labeled_predictions: Model pEC50 estimates, shape ``(M,)``,
-                aligned with ``ps_labeled_smiles``.  Required when
-                ``ps_labeled_smiles`` is non-empty.
+        Parameters
+        ----------
+        unlabeled_smiles : list[str]
+            Ground-truth keys for all unqueried compounds.
+        predictions : np.ndarray
+            Model pEC50 point estimates, shape ``(N,)``, aligned with
+            ``unlabeled_smiles``.
+        k : int
+            Number of queries to select.
+        ps_labeled_smiles : list[str], optional
+            Ground-truth keys for compounds that have a PS label but no DRC
+            label (i.e., INTERVAL-censored hits eligible for a full
+            dose-response follow-up). Defaults to empty.
+        ps_labeled_predictions : np.ndarray, optional
+            Model pEC50 estimates, shape ``(M,)``, aligned with
+            ``ps_labeled_smiles``. Required when ``ps_labeled_smiles`` is
+            non-empty.
 
-        Returns:
+        Returns
+        -------
+        list[tuple[str, QueryType]]
             Ordered list of (smiles, QueryType) pairs, highest-scoring first.
         """
         ps_labeled_smiles = list(ps_labeled_smiles or [])
@@ -207,7 +222,22 @@ class CostAwareGreedyAcquisition:
     def score_summary(
         self, unlabeled_smiles: list[str], predictions: np.ndarray
     ) -> list[dict]:
-        """Return per-compound score breakdown for inspection/logging."""
+        """Return per-compound score breakdown for inspection and logging.
+
+        Parameters
+        ----------
+        unlabeled_smiles : list[str]
+            Ground-truth keys for the compounds to score.
+        predictions : np.ndarray
+            Model pEC50 point estimates, shape ``(N,)``, aligned with
+            ``unlabeled_smiles``.
+
+        Returns
+        -------
+        list[dict]
+            One dict per compound with keys ``smiles``, ``y_hat``,
+            ``p_active``, ``p_cross_threshold``, ``score_drc``, ``score_ps``.
+        """
         predictions = np.asarray(predictions, dtype=np.float32)
         rows = []
         for smi, y_hat in zip(unlabeled_smiles, predictions):

@@ -46,14 +46,21 @@ _COLOUR_UNQUERIED = "#D3D3D3"  # light gray
 class LiveDashboard:
     """Four-panel live-updating campaign dashboard (2×2 grid).
 
-    Args:
-        n_iterations: Total planned iterations (used to pre-size x-axes).
-        n_compounds: Total number of compounds in the pool (used to compute
-            the unqueried count in the compound status panel).
-        model_metric: Metric to display in the model performance panel.
-        figsize: Overall figure size (width, height) in inches.
-        show: If True, attempt interactive ``plt.ion()`` mode. If False (or if
-            the display is unavailable), fall back to file-save-only mode.
+    Parameters
+    ----------
+    n_iterations : int
+        Total planned iterations (used to pre-size x-axes).
+    n_compounds : int, optional
+        Total number of compounds in the pool (used to compute the unqueried
+        count in the compound status panel). Default is 0.
+    model_metric : ModelMetric, optional
+        Metric to display in the model performance panel. Default is MAE.
+    figsize : tuple[int, int], optional
+        Overall figure size (width, height) in inches. Default is (14, 8).
+    show : bool, optional
+        If True, attempt interactive ``plt.ion()`` mode. If False (or if the
+        display is unavailable), fall back to file-save-only mode.
+        Default is True.
     """
 
     def __init__(
@@ -162,16 +169,22 @@ class LiveDashboard:
         iter_ps_cost: float,
         model_metric_value: float | None = None,
     ) -> None:
-        """Redraw all three panels with the latest campaign state.
+        """Redraw all panels with the latest campaign state.
 
-        Args:
-            labeled_records: All oracle-labeled records accumulated so far
-                (ordered by acquisition time).
-            activity_threshold: pEC50 threshold defining a confirmed active.
-            iter_drc_cost: Total DRC cost incurred in the *current* iteration.
-            iter_ps_cost: Total PS cost incurred in the *current* iteration.
-            model_metric_value: Metric value from ``evaluate_model()`` for this
-                iteration, or None if no test set is available.
+        Parameters
+        ----------
+        labeled_records : list[LabelRecord]
+            All oracle-labeled records accumulated so far, ordered by
+            acquisition time.
+        activity_threshold : float
+            pEC50 threshold defining a confirmed active.
+        iter_drc_cost : float
+            Total DRC cost incurred in the *current* iteration.
+        iter_ps_cost : float
+            Total PS cost incurred in the *current* iteration.
+        model_metric_value : float, optional
+            Metric value from ``evaluate_model()`` for this iteration, or None
+            if no test set is available.
         """
         self._update_count += 1
 
@@ -403,7 +416,13 @@ class LiveDashboard:
     # ------------------------------------------------------------------
 
     def save(self, path: str | Path) -> None:
-        """Explicitly save the current figure to a file."""
+        """Save the current figure to a file.
+
+        Parameters
+        ----------
+        path : str or Path
+            Destination file path (format inferred from extension).
+        """
         self._fig.savefig(path, dpi=120, bbox_inches="tight")
 
     def save_gif(
@@ -418,13 +437,17 @@ class LiveDashboard:
         every :meth:`update` call. This method is a no-op (with a warning) when
         no updates have been made yet.
 
-        Args:
-            path: Destination file path for the GIF.
-            frame_duration_ms: Display duration of each frame in milliseconds.
-                Defaults to 500 (half a second per iteration frame).
-            last_frame_duration_ms: Display duration of the final frame in
-                milliseconds, allowing the viewer to read the completed state
-                before the animation loops. Defaults to 5000 (5 seconds).
+        Parameters
+        ----------
+        path : str or Path
+            Destination file path for the GIF.
+        frame_duration_ms : int, optional
+            Display duration of each frame in milliseconds. Default is 500
+            (half a second per iteration frame).
+        last_frame_duration_ms : int, optional
+            Display duration of the final frame in milliseconds, allowing the
+            viewer to read the completed state before the animation loops.
+            Default is 5000 (5 seconds).
         """
         if not self._frames:
             logger.warning("No frames captured; skipping GIF")

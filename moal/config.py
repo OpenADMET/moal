@@ -109,11 +109,17 @@ class TrainerConfig:
     Changing this produces a different val set without touching the oracle."""
 
     def to_dict(self) -> dict[str, Any]:
-        """Return only the kwargs that lightning.Trainer accepts.
+        """Return only the kwargs that ``lightning.Trainer`` accepts.
 
         ``val_fraction`` and ``split_seed`` are consumed by
         ``MixedFidelityDataModule`` and must not be forwarded to
         ``L.Trainer``.
+
+        Returns
+        -------
+        dict[str, Any]
+            Dictionary with keys ``max_epochs``, ``accelerator``,
+            ``enable_progress_bar``, and ``enable_model_summary``.
         """
         return {
             "max_epochs": self.max_epochs,
@@ -123,7 +129,13 @@ class TrainerConfig:
         }
 
     def to_datamodule_kwargs(self) -> dict[str, Any]:
-        """Return kwargs for MixedFidelityDataModule."""
+        """Return kwargs for ``MixedFidelityDataModule``.
+
+        Returns
+        -------
+        dict[str, Any]
+            Dictionary with keys ``val_fraction`` and ``seed``.
+        """
         return {
             "val_fraction": self.val_fraction,
             "seed": self.split_seed,
@@ -205,7 +217,18 @@ class PipelineConfig:
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "PipelineConfig":
-        """Load a PipelineConfig from a YAML file."""
+        """Load a ``PipelineConfig`` from a YAML file.
+
+        Parameters
+        ----------
+        path : str or Path
+            Path to the YAML configuration file.
+
+        Returns
+        -------
+        PipelineConfig
+            Fully populated pipeline configuration instance.
+        """
         with open(path) as f:
             raw = yaml.safe_load(f)
         return cls(
@@ -223,7 +246,13 @@ class PipelineConfig:
         )
 
     def to_yaml(self, path: str | Path) -> None:
-        """Serialize this config to a YAML file."""
+        """Serialize this config to a YAML file.
+
+        Parameters
+        ----------
+        path : str or Path
+            Destination file path for the serialized YAML.
+        """
         import dataclasses
 
         def _to_dict(obj: Any) -> Any:

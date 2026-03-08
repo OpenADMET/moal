@@ -21,10 +21,29 @@ class SMILESPreprocessor:
     """
 
     def __init__(self, remove_salts: bool = True) -> None:
+        """
+        Parameters
+        ----------
+        remove_salts : bool, optional
+            When True (default), strip counterions and salts via RDKit's
+            ``SaltRemover`` before canonicalization.
+        """
         self._remove_salts = remove_salts
 
     def canonicalize(self, smiles: str) -> str | None:
-        """Return the RDKit-canonical, salt-stripped SMILES, or None on failure."""
+        """Return the RDKit-canonical, salt-stripped SMILES, or None on failure.
+
+        Parameters
+        ----------
+        smiles : str
+            Input SMILES string (may be non-canonical or salt-containing).
+
+        Returns
+        -------
+        str or None
+            Canonical SMILES string, or None if the molecule could not be
+            parsed or was reduced to an empty structure after salt stripping.
+        """
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
             logger.warning("Invalid SMILES (could not parse): %s", smiles)
@@ -41,10 +60,18 @@ class SMILESPreprocessor:
     ) -> tuple[list[str], list[str]]:
         """Canonicalize a batch of SMILES.
 
-        Returns:
-            canonical: list of successfully canonicalized SMILES (same length as
-                valid entries in smiles_list).
-            failed: list of original SMILES strings that could not be processed.
+        Parameters
+        ----------
+        smiles_list : list[str]
+            Input SMILES strings to process.
+
+        Returns
+        -------
+        canonical : list[str]
+            Successfully canonicalized SMILES (same length as valid entries in
+            ``smiles_list``).
+        failed : list[str]
+            Original SMILES strings that could not be processed.
         """
         canonical: list[str] = []
         failed: list[str] = []

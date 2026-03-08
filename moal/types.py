@@ -26,10 +26,31 @@ class CensoringType(str, Enum):
 class LabelRecord:
     """A single labeled observation from the oracle.
 
-    For EXACT labels, value = true pEC50 and upper_bound = value.
-    For LEFT labels, value = censoring threshold T; true pEC50 < T.
-    For INTERVAL labels, value = lower bound T, upper_bound = practical ceiling
-    (e.g., 11.0); true pEC50 in [T, upper_bound].
+    Attributes
+    ----------
+    smiles : str
+        Original (possibly non-canonical) SMILES string as supplied to the
+        oracle.
+    canonical_smiles : str
+        RDKit-canonical, salt-stripped SMILES used as the ground-truth lookup
+        key.
+    value : float
+        For EXACT labels, the true pEC50. For LEFT labels, the censoring
+        threshold T (true pEC50 < T). For INTERVAL labels, the lower bound T
+        (true pEC50 in [T, upper_bound]).
+    upper_bound : float
+        For EXACT labels, equals ``value``. For INTERVAL labels, the practical
+        pEC50 ceiling (e.g., 11.0). Unused for LEFT labels.
+    censoring_type : CensoringType
+        How the label is censored relative to the true continuous pEC50.
+    fidelity : QueryType
+        Whether this record came from a Primary Screen or Dose-Response Curve
+        assay.
+    cost : float
+        Dollar cost of the oracle query that produced this record.
+    iteration : int
+        Zero-based active learning iteration index at which this record was
+        acquired.
     """
 
     smiles: str
@@ -67,7 +88,27 @@ class LoopResults:
     total_labeled: int = 0
 
     def costs(self) -> list[float]:
+        """Return cumulative cost at the end of each iteration.
+
+        Returns
+        -------
+        list[float]
+            Cumulative cost values, one per completed iteration.
+        """
         return [r.cumulative_cost for r in self.iterations]
 
     def metric_history(self, key: str) -> list[float]:
+        """Return the value of a named metric across all iterations.
+
+        Parameters
+        ----------
+        key : str
+            Metric name (as stored in ``IterationResults.metrics``).
+
+        Returns
+        -------
+        list[float]
+            Metric values, one per completed iteration. Missing values are
+            represented as ``float("nan")``.
+        """
         return [r.metrics.get(key, float("nan")) for r in self.iterations]
