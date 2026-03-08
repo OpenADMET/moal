@@ -119,7 +119,7 @@ class LiveDashboard:
 
         # Twin y-axis for the cost panel — created once, reused on every update.
         self._ax2r: Axes = self._ax2.twinx()
-        self._ax2r.set_ylabel("Cumulative Cost ($)", fontsize=8)
+        self._ax2r.set_ylabel("Cumulative Cost ($k)", fontsize=8)
         self._ax2r.tick_params(axis="y", labelsize=7)
 
     # ------------------------------------------------------------------
@@ -244,19 +244,31 @@ class LiveDashboard:
         ax.set_ylabel("Confirmed Actives Found")
         ax.grid(True, linestyle="--", alpha=0.4)
 
+        # Set initial y-axis limit to 1.05 to ensure the first active found is visible
+        ax.set_ylim(0, 1.05)
+
+        # If no actives found yet, skip plotting the curve (but keep axes/labels visible)
         if not self._cum_costs:
             return
 
+        # Convert to numpy arrays for plotting
         xs = np.array(self._cum_costs)
         ys = np.array(self._cum_actives)
+
+        # Fill area under the curve with a semi-transparent color, then plot the line on top
         ax.fill_between(xs, ys, color=_COLOUR_ACT, zorder=2, alpha=0.2)
         ax.plot(xs, ys, color=_COLOUR_ACT, linewidth=2, zorder=3, marker="")
-        # ax.scatter(xs[:-1], ys[:-1], s=18, color=_COLOUR_ACT, alpha=0.5, zorder=3)
-        # # Highlight the most recent point.
-        # ax.scatter([xs[-1]], [ys[-1]], s=60, color=_COLOUR_ACT, zorder=4,
-        #            edgecolors="white", linewidths=1.2)
+
+        # Set x-axis limit
         ax.set_xlim(left=0)
-        ax.set_ylim(bottom=0)
+
+        # Set y-axis limit slightly above the max actives found (or 1 if none)
+        y_top = max(int(np.max(ys)) * 1.05, 1.05)
+        ax.set_ylim(0, y_top)
+
+        # Force integer-only tick positions so labels never display as floats
+        ax.yaxis.set_major_locator(MaxNLocator(nbins=4, integer=True))
+        ax.xaxis.set_major_locator(MaxNLocator(nbins=4, integer=True))
 
     def _draw_cost_panel(self) -> None:
         ax: Axes = self._ax2
@@ -267,22 +279,29 @@ class LiveDashboard:
         ax.set_xlabel("Iteration")
         ax.set_ylabel("Cost ($)")
         ax.grid(True, linestyle="--", alpha=0.4, axis="y")
-        ax2r.set_ylabel("Cumulative Cost ($)", fontsize=8)
+        ax2r.set_ylabel("Cumulative Cost ($k)", fontsize=8)
         ax2r.tick_params(axis="y", labelsize=7)
         ax2r.yaxis.set_label_position("right")
         ax2r.yaxis.set_ticks_position("right")
 
+        # Set initial right y-axis limit to 1.05k to ensure the first iteration's cost is visible
+        ax2r.set_ylim(0, 1.05)
+
+        # If no cost data yet, skip plotting (but keep axes/labels visible)
         n = len(self._iter_drc_costs)
         if n == 0:
             return
 
+        # Convert to numpy arrays for plotting
         iters = np.arange(1, n + 1)
         drc_arr = np.array(self._iter_drc_costs)
         ps_arr = np.array(self._iter_ps_costs)
         upgrade_arr = np.array(self._iter_upgrade_costs)
+
         # First-pass DRC is total DRC minus the upgrade portion
         drc_new_arr = drc_arr - upgrade_arr
 
+        # Stacked bars: first-pass DRC on the bottom, PS on top, and upgrades stacked on top of DRC
         ax.bar(iters, drc_new_arr, color=_COLOUR_DRC, label="DRC", zorder=2)
         ax.bar(
             iters,
@@ -294,10 +313,11 @@ class LiveDashboard:
         )
         ax.bar(iters, ps_arr, bottom=drc_arr, color=_COLOUR_PS, label="PS", zorder=2)
 
-        cum_total = np.cumsum(drc_arr + ps_arr)
+        # Cumulative total cost line (DRC + PS) on the secondary y-axis, converted to thousands of dollars
+        cum_total_k = np.cumsum(drc_arr + ps_arr) / 1000
         ax2r.plot(
             iters,
-            cum_total,
+            cum_total_k,
             color="black",
             linewidth=1.5,
             linestyle="--",
@@ -305,13 +325,21 @@ class LiveDashboard:
             zorder=3,
         )
 
+        # Combine legends from both axes
         handles1, labels1 = ax.get_legend_handles_labels()
         handles2, labels2 = ax2r.get_legend_handles_labels()
         ax.legend(handles1 + handles2, labels1 + labels2, fontsize=7, loc="upper left")
         ax.set_xlim(0.5, max(n + 0.5, self.n_iterations + 0.5))
         ax.set_ylim(bottom=0)
+
+        # Set right y-axis limit
+        y_top = max(np.max(cum_total_k) * 1.05, 1.05)
+        ax2r.set_ylim(0, y_top)
+
         # Force integer-only tick positions so labels never display as floats
         ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+        ax2r.yaxis.set_major_locator(MaxNLocator(nbins=4, integer=True))
+        ax.yaxis.set_major_locator(MaxNLocator(nbins=4, integer=True))
 
     def _draw_metric_panel(self) -> None:
         ax: Axes = self._ax3
@@ -360,6 +388,10 @@ class LiveDashboard:
         ax.set_xlim(0.5, max(len(iters) + 0.5, self.n_iterations + 0.5))
         # Force integer-only tick positions so labels never display as floats
         ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+        # Snap y ticks to multiples of 0.1 so 1dp labels are always unique.
+        ax.yaxis.set_major_locator(
+            MaxNLocator(nbins=4, steps=[1, 2, 5, 10], prune="both")
+        )
 
     def _draw_compound_status_panel(self, labeled_records: list[LabelRecord]) -> None:
         ax: Axes = self._ax4
@@ -380,17 +412,20 @@ class LiveDashboard:
             for r in labeled_records
             if r.fidelity == QueryType.DOSE_RESPONSE
         }
+
+        # Determine counts for each category
         n_upgrades = len(ps_smiles & drc_smiles)
         n_ps_only = len(ps_smiles) - n_upgrades
         n_drc_new = len(drc_smiles) - n_upgrades
-        # Unique queried = PS-only + all DRC (upgrades are counted in DRC, not PS-only)
         n_queried = n_ps_only + len(drc_smiles)
         n_unqueried = max(self.n_compounds - n_queried, 0)
         n_all = n_ps_only + n_drc_new + n_upgrades + n_unqueried
 
+        # Definie categories and their x positions
         categories = ["PS", "DRC", "Unqueried"]
         x = np.arange(len(categories))
 
+        # PS bar: PS-only on the bottom, upgrades stacked on top (but not counted in PS-only)
         ax.bar([x[0]], [n_ps_only], color=_COLOUR_PS, zorder=2, label="PS")
         ax.bar(
             [x[0]],
@@ -411,14 +446,24 @@ class LiveDashboard:
             zorder=2,
             label="PS→DRC",
         )
+
+        # Unqueried bar
         ax.bar(
             [x[2]], [n_unqueried], color=_COLOUR_UNQUERIED, zorder=2, label="Unqueried"
         )
 
+        # Set x-ticks and labels
         ax.set_xticks(x)
         ax.set_xticklabels(categories, fontsize=8)
+
+        # Set y-axis limit slightly above the total compound count to ensure all bars are fully visible
         ax.set_ylim(bottom=0, top=n_all * 1.05)
+
+        # Draw legend
         ax.legend(fontsize=7, loc="upper right")
+
+        # Force integer-only tick positions so labels never display as floats
+        ax.yaxis.set_major_locator(MaxNLocator(nbins=4, integer=True))
 
     # ------------------------------------------------------------------
     # Helpers
