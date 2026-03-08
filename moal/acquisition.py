@@ -152,6 +152,11 @@ class CostAwareGreedyAcquisition:
             f"SMILES list length ({len(unlabeled_smiles)}) must match "
             f"predictions length ({len(predictions)})."
         )
+        if len(predictions) > 0 and not np.all(np.isfinite(predictions)):
+            raise ValueError(
+                "predictions must contain only finite values; NaN or inf values "
+                "produce undefined sort order and must be filtered before acquisition."
+            )
 
         # Candidates are (score, smiles, QueryType); SMILES is the dedup key so
         # both pools can be merged without index-space collisions.
