@@ -7,6 +7,7 @@ Install the package (``pip install -e .``) to get the ``moal`` command::
 
 from __future__ import annotations
 
+import importlib
 import logging
 import sys
 from pathlib import Path
@@ -50,7 +51,12 @@ def main(config: str, output_dir: str | None, verbose: bool) -> None:
 
     # Print terminal banner
     with open(Path(__file__).parent.parent / "assets" / "terminal.txt") as f:
-        print(f.read())
+        print(f.read() + "\n")
+
+    version = importlib.metadata.version("moal")
+    print(
+        f"Welcome to moal-v{version}: multi-objective active learning for drug discovery!\n"
+    )
 
     cfg = PipelineConfig.from_yaml(config)
     logger.info("Loaded config from %s", config)
