@@ -372,7 +372,6 @@ class TestCompoundStatusPanel:
 
         records = [
             _rec("A", QueryType.PRIMARY_SCREEN),
-            _rec("A", QueryType.DOSE_RESPONSE),
             _rec("B", QueryType.PRIMARY_SCREEN),
             _rec("B", QueryType.DOSE_RESPONSE),
             _rec("C", QueryType.DOSE_RESPONSE),
@@ -389,7 +388,7 @@ class TestCompoundStatusPanel:
 
         # PS-only: A → 1
         assert heights[0] == 1, f"Expected PS-only=1, got {heights[0]}"
-        # Upgrades: A → 1 (top of PS bar)
+        # Upgrades: B → 1 (top of PS bar)
         assert heights[1] == 1, f"Expected PS→DRC=1, got {heights[1]}"
         # DRC-new: C → 1 (bottom of DRC bar)
         assert heights[2] == 1, f"Expected DRC-new=1, got {heights[2]}"
