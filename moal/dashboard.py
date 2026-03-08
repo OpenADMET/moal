@@ -38,7 +38,7 @@ logging.getLogger("matplotlib.font_manager").setLevel(logging.WARNING)
 _COLOUR_DRC = "#E07B39"  # orange
 _COLOUR_PS = "#4C9BE8"  # blue
 _COLOUR_ACT = "#2CA02C"  # green
-_COLOUR_MET = "#9467BD"  # purple
+_COLOUR_MET = "#D62728"  # red
 _COLOUR_UPGRADE = (
     "#9B59B6"  # purple-magenta (PS→DRC upgrades, matches terminal [magenta])
 )
