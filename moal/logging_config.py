@@ -38,6 +38,7 @@ def suppress_noisy_loggers() -> None:
 
 
 def _silence_rdkit() -> None:
+    """Disable RDKit's C++ logger and set the Python rdkit logger to WARNING."""
     try:
         from rdkit import RDLogger
         RDLogger.DisableLog("rdApp.*")
@@ -48,5 +49,14 @@ def _silence_rdkit() -> None:
 
 
 def _set_level(level: int, names: list[str]) -> None:
+    """Set the logging level for a list of logger names.
+
+    Parameters
+    ----------
+    level : int
+        Logging level constant (e.g., ``logging.WARNING``).
+    names : list[str]
+        Logger names to configure.
+    """
     for name in names:
         logging.getLogger(name).setLevel(level)

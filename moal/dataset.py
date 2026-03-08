@@ -36,11 +36,14 @@ class MixedFidelityDataset(Dataset):
     Each item is a (MolGraph, LabelRecord) pair. The MolGraph is built
     lazily and cached on first access.
 
-    Args:
-        records: Labeled observations from the oracle.
-        featurizer: A chemprop MoleculeFeaturizer (e.g.,
-            SimpleMoleculeMolGraphFeaturizer). If None, a default instance
-            is created.
+    Parameters
+    ----------
+    records : list[LabelRecord]
+        Labeled observations from the oracle.
+    featurizer : any, optional
+        A chemprop MoleculeFeaturizer (e.g.,
+        ``SimpleMoleculeMolGraphFeaturizer``). If None, a default instance
+        is created.
     """
 
     def __init__(
@@ -68,8 +71,10 @@ class MixedFidelityDataset(Dataset):
     def collate_fn(batch: list[tuple[Any, LabelRecord]]) -> tuple[Any, list[LabelRecord]]:
         """Collate a list of (MolGraph, LabelRecord) into a batch.
 
-        Returns:
-            (BatchMolGraph, list[LabelRecord])
+        Returns
+        -------
+        tuple[BatchMolGraph, list[LabelRecord]]
+            Batched molecular graph and corresponding label records.
         """
         from chemprop.data import BatchMolGraph
 
@@ -80,12 +85,20 @@ class MixedFidelityDataset(Dataset):
 class MixedFidelityDataModule(L.LightningDataModule):
     """LightningDataModule for mixed-fidelity labeled data.
 
-    Args:
-        records: All labeled observations (train + val pool).
-        featurizer: chemprop MoleculeFeaturizer.
-        batch_size: Number of samples per mini-batch.
-        val_fraction: Fraction of records held out for validation.
-        num_workers: DataLoader worker count (0 = main process).
+    Parameters
+    ----------
+    records : list[LabelRecord]
+        All labeled observations (train + val pool).
+    featurizer : any, optional
+        chemprop MoleculeFeaturizer. If None, a default instance is created.
+    batch_size : int, optional
+        Number of samples per mini-batch. Default is 64.
+    val_fraction : float, optional
+        Fraction of records held out for validation. Default is 0.1.
+    num_workers : int, optional
+        DataLoader worker count (0 = main process). Default is 0.
+    seed : int, optional
+        Random seed for the train/val split. Default is 42.
     """
 
     def __init__(
@@ -153,8 +166,16 @@ class MixedFidelityDataModule(L.LightningDataModule):
 
 
 class _SubsetWrapper(Dataset):
-    """Thin wrapper that preserves MixedFidelityDataset collate semantics
-    when working with a random_split Subset."""
+    """Thin wrapper that preserves ``MixedFidelityDataset`` collate semantics
+    when working with a ``random_split`` Subset.
+
+    Parameters
+    ----------
+    subset : Subset
+        A PyTorch ``random_split`` subset referencing the full dataset.
+    full_dataset : MixedFidelityDataset
+        The underlying dataset the subset was derived from.
+    """
 
     def __init__(self, subset: Any, full_dataset: MixedFidelityDataset) -> None:
         self._subset = subset

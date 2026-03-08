@@ -18,29 +18,42 @@ class CostAwareOracle:
 
     This class is the **sole** interface between the active learning pipeline
     and true pEC50 values. It enforces:
+
     - Deduplication: each compound may only be queried once.
     - Cost tracking: every query increments the total cost.
     - Label correctness: PS queries return inequality labels; DRC queries return
       exact values.
 
-    Args:
-        ground_truth_df: DataFrame containing compound SMILES and pEC50 values.
-        cost_ps: Cost in dollars for a Primary Screen query.
-        cost_drc: Cost in dollars for a Dose-Response Curve query.
-        ps_threshold: The pEC50 threshold used by the primary screen (e.g., 5.0).
-            Compounds with true pEC50 < ps_threshold receive a LEFT label;
-            others receive an INTERVAL label.
-        upper_bound: Practical upper ceiling for the pEC50 scale (default 11.0),
-            used as the upper boundary of INTERVAL labels.
-        smiles_column: Name of the DataFrame column containing SMILES strings.
-        pec50_column: Name of the DataFrame column containing pEC50 values.
-        is_canonical: When False (default), all SMILES in ``ground_truth_df`` are
-            canonicalized up front via RDKit during initialization.  When True,
-            the input SMILES are assumed to already be in canonical form and the
-            preprocessing step is skipped entirely.  If ``is_canonical=True`` is
-            used at init time, query call-sites should also pass
-            ``is_canonical=True`` so that lookup keys remain consistent.
-        preprocessor: SMILESPreprocessor instance (or None to use defaults).
+    Parameters
+    ----------
+    ground_truth_df : pd.DataFrame
+        DataFrame containing compound SMILES and pEC50 values.
+    cost_ps : float
+        Cost in dollars for a Primary Screen query.
+    cost_drc : float
+        Cost in dollars for a Dose-Response Curve query.
+    ps_threshold : float
+        The pEC50 threshold used by the primary screen (e.g., 5.0). Compounds
+        with true pEC50 < ps_threshold receive a LEFT label; others receive an
+        INTERVAL label.
+    upper_bound : float, optional
+        Practical upper ceiling for the pEC50 scale used as the upper boundary
+        of INTERVAL labels. Default is 11.0.
+    smiles_column : str, optional
+        Name of the DataFrame column containing SMILES strings. Default is
+        ``"smiles"``.
+    pec50_column : str, optional
+        Name of the DataFrame column containing pEC50 values. Default is
+        ``"pec50"``.
+    is_canonical : bool, optional
+        When False (default), all SMILES in ``ground_truth_df`` are
+        canonicalized up front via RDKit during initialization. When True, the
+        input SMILES are assumed to already be in canonical form and the
+        preprocessing step is skipped entirely. If ``is_canonical=True`` is
+        used at init time, query call-sites should also pass
+        ``is_canonical=True`` so that lookup keys remain consistent.
+    preprocessor : SMILESPreprocessor, optional
+        ``SMILESPreprocessor`` instance (or None to use defaults).
     """
 
     def __init__(
@@ -167,24 +180,34 @@ class CostAwareOracle:
     ) -> LabelRecord:
         """Query the oracle for a single compound.
 
-        Args:
-            smiles: SMILES string to query.
-            query_type: PRIMARY_SCREEN or DOSE_RESPONSE.
-            iteration: Current AL iteration index (0-based).
-            is_canonical: When False (default), the SMILES is canonicalized via
-                RDKit before the ground truth lookup.  When True, the SMILES is
-                used as the lookup key directly — safe when the caller already
-                holds keys returned by :meth:`get_unlabeled_smiles`.  Must be
-                consistent with the ``is_canonical`` setting used at oracle init,
-                otherwise key mismatches will produce ``KeyError``.
+        Parameters
+        ----------
+        smiles : str
+            SMILES string to query.
+        query_type : QueryType
+            ``PRIMARY_SCREEN`` or ``DOSE_RESPONSE``.
+        iteration : int
+            Current AL iteration index (0-based).
+        is_canonical : bool, optional
+            When False (default), the SMILES is canonicalized via RDKit before
+            the ground truth lookup. When True, the SMILES is used as the
+            lookup key directly — safe when the caller already holds keys
+            returned by :meth:`get_unlabeled_smiles`. Must be consistent with
+            the ``is_canonical`` setting used at oracle init, otherwise key
+            mismatches will produce ``KeyError``.
 
-        Returns:
-            A LabelRecord with the appropriate label and cost.
+        Returns
+        -------
+        LabelRecord
+            A label record with the appropriate label and cost.
 
-        Raises:
-            ValueError: If ``is_canonical=False`` and the SMILES cannot be parsed,
-                or if the compound has already been labeled.
-            KeyError: If the compound is not in the ground truth dataset.
+        Raises
+        ------
+        ValueError
+            If ``is_canonical=False`` and the SMILES cannot be parsed, or if
+            the compound has already been labeled.
+        KeyError
+            If the compound is not in the ground truth dataset.
         """
         if is_canonical:
             key = smiles
@@ -234,12 +257,22 @@ class CostAwareOracle:
         Duplicates within the batch are detected before any queries are
         dispatched so that cost is never double-counted.
 
-        Args:
-            queries: List of (smiles, query_type) pairs.
-            iteration: Current AL iteration index (0-based).
-            is_canonical: Forwarded to each :meth:`query` call.  When True,
-                SMILES are used as lookup keys directly without canonicalization.
-                See :meth:`query` for key-consistency requirements.
+        Parameters
+        ----------
+        queries : list[tuple[str, QueryType]]
+            List of (smiles, query_type) pairs.
+        iteration : int
+            Current AL iteration index (0-based).
+        is_canonical : bool, optional
+            Forwarded to each :meth:`query` call. When True, SMILES are used
+            as lookup keys directly without canonicalization. See :meth:`query`
+            for key-consistency requirements.
+
+        Returns
+        -------
+        list[LabelRecord]
+            Successfully obtained label records (invalid or duplicate queries
+            are skipped with a warning).
         """
         seen: set[str] = set()
         unique_queries: list[tuple[str, QueryType]] = []

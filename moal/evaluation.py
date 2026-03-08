@@ -57,14 +57,22 @@ def scaffold_split(
     prevents test-set compounds from sharing ring systems with train compounds,
     providing a realistic estimate of generalization to novel chemotypes.
 
-    Args:
-        smiles_list: List of canonical SMILES.
-        test_size: Target fraction of compounds in the test set.
-        seed: Random seed for deterministic scaffold group assignment when
-            there are ties.
+    Parameters
+    ----------
+    smiles_list : list[str]
+        List of canonical SMILES.
+    test_size : float, optional
+        Target fraction of compounds in the test set. Default is 0.2.
+    seed : int, optional
+        Random seed for deterministic scaffold group assignment when there
+        are ties. Default is 42.
 
-    Returns:
-        (train_indices, test_indices)
+    Returns
+    -------
+    train_indices : list[int]
+        Indices into ``smiles_list`` assigned to the training set.
+    test_indices : list[int]
+        Indices into ``smiles_list`` assigned to the test set.
     """
     rng = np.random.default_rng(seed)
 
@@ -101,10 +109,13 @@ def scaffold_split(
 class PipelineEvaluator:
     """Computes efficiency metrics for a cost-aware active learning campaign.
 
-    Args:
-        activity_threshold: pEC50 threshold defining an "active" compound (default 7.0).
-        upper_bound: Practical pEC50 ceiling (used to estimate actives from
-            INTERVAL labels when exact values are unavailable). Default 11.0.
+    Parameters
+    ----------
+    activity_threshold : float, optional
+        pEC50 threshold defining an "active" compound. Default is 7.0.
+    upper_bound : float, optional
+        Practical pEC50 ceiling used to estimate actives from INTERVAL labels
+        when exact values are unavailable. Default is 11.0.
     """
 
     def __init__(
@@ -139,7 +150,22 @@ class PipelineEvaluator:
     def actives_per_dollar(
         self, labeled: list[LabelRecord], n_true_actives: int | None = None
     ) -> float:
-        """Confirmed actives found divided by total cost spent."""
+        """Return the number of confirmed actives found divided by total cost.
+
+        Parameters
+        ----------
+        labeled : list[LabelRecord]
+            All labeled records accumulated so far.
+        n_true_actives : int, optional
+            Total number of true actives in the pool (unused; retained for
+            interface compatibility).
+
+        Returns
+        -------
+        float
+            Actives-per-dollar efficiency metric. Returns 0.0 when no cost has
+            been incurred.
+        """
         total_cost = sum(r.cost for r in labeled)
         if total_cost == 0:
             return 0.0
@@ -152,10 +178,22 @@ class PipelineEvaluator:
         n_true_actives: int,
         budget: float,
     ) -> float:
-        """Fraction of all true actives found within the first *budget* dollars.
+        """Return the fraction of all true actives found within a cost budget.
 
-        Records are assumed to be ordered by acquisition (i.e., records[i]
-        was acquired before records[j] when i < j).
+        Parameters
+        ----------
+        labeled : list[LabelRecord]
+            All labeled records ordered by acquisition time (records[i] was
+            acquired before records[j] when i < j).
+        n_true_actives : int
+            Total number of true actives in the full compound pool.
+        budget : float
+            Maximum cumulative dollar cost to consider.
+
+        Returns
+        -------
+        float
+            Recall in [0, 1]. Returns 1.0 when ``n_true_actives`` is 0.
         """
         if n_true_actives == 0:
             return 1.0
@@ -176,9 +214,25 @@ class PipelineEvaluator:
         n_true_actives: int,
         fraction: float = 0.1,
     ) -> float:
-        """Enrichment factor at *fraction* of the total compound pool.
+        """Compute the enrichment factor at a given fraction of the compound pool.
 
-        EF@fraction = (actives in top-fraction / expected actives by random).
+        EF@fraction = (actives in top-fraction) / (expected actives by random).
+
+        Parameters
+        ----------
+        labeled : list[LabelRecord]
+            Labeled records in acquisition order.
+        n_total : int
+            Total number of compounds in the pool (labeled + unlabeled).
+        n_true_actives : int
+            Ground-truth count of actives in the full pool.
+        fraction : float, optional
+            Fraction of the pool to consider for the top set. Default is 0.1.
+
+        Returns
+        -------
+        float
+            Enrichment factor. Returns 0.0 when the pool or active count is 0.
         """
         if n_true_actives == 0 or n_total == 0:
             return 0.0
@@ -192,8 +246,16 @@ class PipelineEvaluator:
     ) -> pd.DataFrame:
         """Build a DataFrame tracking actives and cost cumulatively.
 
-        Columns: iteration, n_labeled, cumulative_cost, cumulative_actives,
-                 actives_per_dollar.
+        Parameters
+        ----------
+        labeled : list[LabelRecord]
+            All labeled records in acquisition order.
+
+        Returns
+        -------
+        pd.DataFrame
+            One row per record with columns: ``iteration``, ``n_labeled``,
+            ``cumulative_cost``, ``cumulative_actives``, ``actives_per_dollar``.
         """
         rows = []
         cumulative_cost = 0.0
@@ -220,6 +282,16 @@ class PipelineEvaluator:
         A PS→DRC upgrade is a compound that has both a PS and a DRC record —
         the DRC was run as a follow-up to a primary screen hit rather than as
         a first-pass query.
+
+        Parameters
+        ----------
+        labeled : list[LabelRecord]
+            All labeled records to analyze.
+
+        Returns
+        -------
+        dict[str, int]
+            Dictionary with keys ``"DRC"``, ``"PS"``, and ``"upgrades"``.
         """
         counts: dict[str, int] = {"DRC": 0, "PS": 0, "upgrades": 0}
         fidelities_by_smiles: dict[str, set] = defaultdict(set)
@@ -246,11 +318,24 @@ class PipelineEvaluator:
     ) -> dict[str, float]:
         """Return a flat dict of scalar metrics for logging.
 
-        Args:
-            labeled: All labeled records accumulated so far.
-            n_total: Total number of compounds in the pool (labeled + unlabeled).
-            n_true_actives: Ground-truth count of actives in the full pool.
-            iteration: Current iteration index (0-based).
+        Parameters
+        ----------
+        labeled : list[LabelRecord]
+            All labeled records accumulated so far.
+        n_total : int
+            Total number of compounds in the pool (labeled + unlabeled).
+        n_true_actives : int
+            Ground-truth count of actives in the full pool.
+        iteration : int
+            Current iteration index (0-based).
+
+        Returns
+        -------
+        dict[str, float]
+            Scalar metrics including ``iteration``, ``n_labeled``,
+            ``n_confirmed_actives``, ``total_cost``, ``actives_per_dollar``,
+            ``recall``, ``enrichment_factor_10pct``, ``n_drc_queries``,
+            ``n_ps_queries``, and ``n_ps_to_drc_upgrades``.
         """
         total_cost = sum(r.cost for r in labeled)
         n_confirmed = sum(1 for r in labeled if self._is_confirmed_active(r))
@@ -286,18 +371,24 @@ class PipelineEvaluator:
     ) -> float:
         """Evaluate model predictive performance on a held-out test set.
 
-        Args:
-            model: A ``ChemPropLightningModule`` or ``NoisyOracleModel`` (or
-                any object with a compatible ``predict_smiles`` method).
-            test_smiles: Canonical SMILES for held-out test compounds.
-            test_pec50: True pEC50 values aligned with ``test_smiles``.
-            metric: Which scalar metric to compute.
-            noise_scale: Noise half-width for ``NoisyOracleModel`` (fast mode).
-                Must be provided when ``model`` is a ``NoisyOracleModel``;
-                ignored otherwise.
+        Parameters
+        ----------
+        model : ChemPropLightningModule or NoisyOracleModel
+            Any object with a compatible ``predict_smiles`` method.
+        test_smiles : list[str]
+            Canonical SMILES for held-out test compounds.
+        test_pec50 : np.ndarray
+            True pEC50 values aligned with ``test_smiles``.
+        metric : ModelMetric
+            Which scalar metric to compute.
+        noise_scale : float, optional
+            Noise half-width for ``NoisyOracleModel`` (fast mode). Must be
+            provided when ``model`` is a ``NoisyOracleModel``; ignored otherwise.
 
-        Returns:
-            Scalar metric value (float).
+        Returns
+        -------
+        float
+            Scalar metric value.
         """
         if len(test_smiles) == 0:
             return float("nan")

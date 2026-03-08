@@ -48,25 +48,41 @@ class ActiveLearningLoop:
     This separation makes it possible to pre-compute the next iteration's
     candidate list while the user inspects the dashboard.
 
-    Args:
-        oracle: CostAwareOracle wrapping the ground-truth dataset.
-        model: ChemPropLightningModule to be iteratively fine-tuned.
-        acquisition: CostAwareGreedyAcquisition for query selection.
-        evaluator: PipelineEvaluator for metric computation.
-        preprocessor: SMILESPreprocessor (used for pre-flight checks).
-        trainer_kwargs: Forwarded to ``lightning.Trainer`` at each refit.
-        dashboard: Optional LiveDashboard; updated after every iteration.
-        test_set: Optional ``(smiles_list, pec50_array)`` held-out scaffold
-            split for model performance tracking.  If provided, the model
-            metric is computed after every refit and shown in the dashboard.
-        model_metric: Which metric to track for the model performance curve.
-        initial_error: Starting noise magnitude (pEC50 log-units) for the
-            error ramp when using NoisyOracleModel in fast mode. Ignored for
-            ChemPropLightningModule.
-        final_error: Ending noise magnitude (pEC50 log-units) for the error
-            ramp. A linear schedule from ``initial_error`` to ``final_error``
-            is applied over all iterations. Set equal to ``initial_error`` for
-            constant noise.
+    Parameters
+    ----------
+    oracle : CostAwareOracle
+        Oracle wrapping the ground-truth dataset.
+    model : ChemPropLightningModule or NoisyOracleModel
+        Model to be iteratively fine-tuned.
+    acquisition : CostAwareGreedyAcquisition
+        Acquisition function for query selection.
+    evaluator : PipelineEvaluator
+        Evaluator for metric computation.
+    preprocessor : SMILESPreprocessor, optional
+        Used for pre-flight SMILES checks. A default instance is created if
+        None is provided.
+    trainer_kwargs : dict[str, Any], optional
+        Forwarded to ``lightning.Trainer`` at each refit.
+    datamodule_kwargs : dict[str, Any], optional
+        Forwarded to ``MixedFidelityDataModule`` at each refit (e.g.,
+        ``val_fraction``, ``seed``).
+    dashboard : LiveDashboard, optional
+        If provided, updated after every iteration.
+    test_set : tuple[list[str], np.ndarray], optional
+        ``(smiles_list, pec50_array)`` held-out scaffold split for model
+        performance tracking. If provided, the model metric is computed after
+        every refit and shown in the dashboard.
+    model_metric : ModelMetric, optional
+        Which metric to track for the model performance curve. Default is MAE.
+    initial_error : float, optional
+        Starting noise magnitude (pEC50 log-units) for the error ramp when
+        using ``NoisyOracleModel`` in fast mode. Ignored for
+        ``ChemPropLightningModule``. Default is 0.7.
+    final_error : float, optional
+        Ending noise magnitude (pEC50 log-units) for the error ramp. A linear
+        schedule from ``initial_error`` to ``final_error`` is applied over all
+        iterations. Set equal to ``initial_error`` for constant noise.
+        Default is 0.5.
     """
 
     def __init__(
@@ -104,12 +120,17 @@ class ActiveLearningLoop:
     def run(self, n_iterations: int, k_per_iteration: int) -> LoopResults:
         """Execute the full active learning campaign.
 
-        Args:
-            n_iterations: Total number of AL iterations (m).
-            k_per_iteration: Number of oracle queries per iteration (k).
+        Parameters
+        ----------
+        n_iterations : int
+            Total number of AL iterations (m).
+        k_per_iteration : int
+            Number of oracle queries per iteration (k).
 
-        Returns:
-            LoopResults containing per-iteration history and final metrics.
+        Returns
+        -------
+        LoopResults
+            Per-iteration history and final metrics.
         """
         suppress_noisy_loggers()
 
@@ -167,7 +188,7 @@ class ActiveLearningLoop:
             for iteration in range(n_iterations):
                 queries = pending_queries  # prepared at end of previous iter
 
-                # ---- Step 1: Query oracle --------------------------------
+                # --- Query oracle -------------------------------------
                 # Snapshot the PS-labeled pool before querying so planned DRC
                 # queries can be classified as upgrades vs. first-pass in the
                 # progress display without waiting for oracle results.
@@ -211,7 +232,7 @@ class ActiveLearningLoop:
                 )
                 progress.advance(task)
 
-                # ---- Step 2: Refit model ---------------------------------
+                # --- Refit model --------------------------------------
                 all_labeled = self.oracle.labeled_records
                 n_labeled = len(all_labeled)
                 n_labeled_drc = sum(
@@ -257,7 +278,7 @@ class ActiveLearningLoop:
                     )
                 progress.advance(task)
 
-                # ---- Step 3: Select next compounds ----------------------
+                # --- Select next compounds ----------------------------
                 remaining_unlabeled = self.oracle.get_unlabeled_smiles()
                 remaining_ps_labeled = self.oracle.get_ps_labeled_smiles()
                 all_remaining = remaining_unlabeled + remaining_ps_labeled
@@ -352,7 +373,24 @@ class ActiveLearningLoop:
     # ------------------------------------------------------------------
 
     def _predict(self, smiles_list: list[str], noise_scale: float | None = None) -> np.ndarray:
-        """Route inference, injecting noise_scale for NoisyOracleModel per-iteration error scheduling."""
+        """Route inference to the appropriate model backend.
+
+        Passes ``noise_scale`` to ``NoisyOracleModel`` to support per-iteration
+        error scheduling; ignored for ``ChemPropLightningModule``.
+
+        Parameters
+        ----------
+        smiles_list : list[str]
+            Canonical SMILES strings to score.
+        noise_scale : float, optional
+            Noise half-width for ``NoisyOracleModel``. Must be set when the
+            active model is a ``NoisyOracleModel``; ignored otherwise.
+
+        Returns
+        -------
+        np.ndarray
+            Array of shape ``(N,)`` with pEC50 point estimates.
+        """
         if isinstance(self.model, NoisyOracleModel):
             # noise_scale is always set from the schedule when NoisyOracleModel is active
             return self.model.predict_smiles(smiles_list, noise_scale)  # type: ignore[arg-type]

@@ -43,7 +43,14 @@ _CHEMPELEON_BOND_FDIM: int = 14   # as used in CheMeleon / default chemprop v2
 
 
 def _assert_feature_dims(model: nn.Module) -> None:
-    """Verify that the model's input feature dimensions match CheMeleon's."""
+    """Verify that the model's input feature dimensions match CheMeleon's.
+
+    Parameters
+    ----------
+    model : nn.Module
+        ChemProp MPNN model whose ``message_passing.W_i`` input dimension is
+        checked against ``_CHEMPELEON_ATOM_FDIM + _CHEMPELEON_BOND_FDIM``.
+    """
     try:
         atom_fdim = model.message_passing.W_i.in_features  # type: ignore[attr-defined]
     except AttributeError:
@@ -64,22 +71,36 @@ def _assert_feature_dims(model: nn.Module) -> None:
 class ChemPropLightningModule(L.LightningModule):
     """ChemProp MPNN fine-tuned from CheMeleon pretrained weights.
 
-    Args:
-        chempeleon_ckpt_path: Path to the CheMeleon pretrained checkpoint
-            (.pt or .ckpt file). Must contain a ``state_dict`` loadable by
-            ChemProp v2.x's MPNN with ``strict=True``.
-        hidden_size: MPNN hidden dimension (must match CheMeleon checkpoint).
-        depth: Number of message-passing steps.
-        ffn_hidden_size: FFN head hidden dimension.
-        freeze_epochs: Number of epochs to train only the FFN head before
-            unfreezing the encoder.
-        lr_encoder: Learning rate for the message-passing encoder after
-            unfreezing.
-        lr_head: Learning rate for the FFN head.
-        sigma: Fixed noise scale for CensoredRegressionLoss.
-        w_drc: DRC loss weight.
-        w_ps: Primary screen loss weight.
-        learnable_sigma: If True, σ is a learned parameter.
+    Parameters
+    ----------
+    chempeleon_ckpt_path : str or Path
+        Path to the CheMeleon pretrained checkpoint (.pt or .ckpt file). Must
+        contain a ``state_dict`` loadable by ChemProp v2.x's MPNN with
+        ``strict=True``.
+    hidden_size : int, optional
+        MPNN hidden dimension (must match CheMeleon checkpoint). Default is 300.
+    depth : int, optional
+        Number of message-passing steps. Default is 3.
+    ffn_hidden_size : int, optional
+        FFN head hidden dimension. Default is 300.
+    ffn_num_layers : int, optional
+        Number of FFN layers. Default is 2.
+    freeze_epochs : int, optional
+        Number of epochs to train only the FFN head before unfreezing the
+        encoder. Default is 10.
+    lr_encoder : float, optional
+        Learning rate for the message-passing encoder after unfreezing.
+        Default is 1e-5.
+    lr_head : float, optional
+        Learning rate for the FFN head. Default is 1e-3.
+    sigma : float, optional
+        Fixed noise scale for ``CensoredRegressionLoss``. Default is 0.5.
+    w_drc : float, optional
+        DRC loss weight. Default is 1.0.
+    w_ps : float, optional
+        Primary screen loss weight. Default is 0.3.
+    learnable_sigma : bool, optional
+        If True, σ is a learned parameter. Default is False.
     """
 
     def __init__(
@@ -240,20 +261,25 @@ class ChemPropLightningModule(L.LightningModule):
 
     @torch.no_grad()
     def predict_smiles(self, smiles_list: list[str], batch_size: int = 256) -> np.ndarray:
-        """Batch inference over a list of canonical SMILES.
+        """Run batch inference over a list of canonical SMILES.
 
-        Args:
-            smiles_list: **Must be RDKit-canonical, salt-stripped SMILES.** Passing
-                non-canonical or salt-containing SMILES produces silently incorrect
-                graph representations because the featurizer does not canonicalize
-                internally. All SMILES in the active learning loop are pre-canonicalized
-                by ``SMILESPreprocessor`` before reaching this method. If calling this
-                method directly from user code, run each SMILES through
-                ``SMILESPreprocessor().canonicalize(smi)`` first.
-            batch_size: Number of molecules processed per forward pass.
+        Parameters
+        ----------
+        smiles_list : list[str]
+            **Must be RDKit-canonical, salt-stripped SMILES.** Passing
+            non-canonical or salt-containing SMILES produces silently incorrect
+            graph representations because the featurizer does not canonicalize
+            internally. All SMILES in the active learning loop are
+            pre-canonicalized by ``SMILESPreprocessor`` before reaching this
+            method. If calling this method directly from user code, run each
+            SMILES through ``SMILESPreprocessor().canonicalize(smi)`` first.
+        batch_size : int, optional
+            Number of molecules processed per forward pass. Default is 256.
 
-        Returns:
-            NumPy array of shape ``(N,)`` with pEC50 point estimates, aligned with
+        Returns
+        -------
+        np.ndarray
+            Array of shape ``(N,)`` with pEC50 point estimates, aligned with
             ``smiles_list``.
         """
         from chemprop.data import BatchMolGraph, MoleculeDatapoint
@@ -282,23 +308,29 @@ class ChemPropLightningModule(L.LightningModule):
     ) -> "ChemPropLightningModule":
         """Refit the model on a (growing) labeled pool.
 
-        Args:
-            records: All labeled records accumulated so far.
-            trainer_kwargs: Passed directly to ``lightning.Trainer``. When
-                using the CLI, these come from ``TrainerConfig.to_dict()`` so
-                ``max_epochs`` and other defaults are visible in the YAML
-                config.  If *not* provided the hard-coded fallback of
-                ``max_epochs=30`` is used — prefer passing an explicit dict.
-            datamodule_kwargs: Passed to ``MixedFidelityDataModule`` (e.g.
-                ``val_fraction``, ``seed``). Use
-                ``TrainerConfig.to_datamodule_kwargs()`` to populate this from
-                the campaign config so train/val split parameters are
-                reproducible and config-driven.
-            reset_weights: If True, reload CheMeleon weights before refitting
-                (full warm-start from pretrained). Default: False (continue
-                fine-tuning from current weights).
+        Parameters
+        ----------
+        records : list[LabelRecord]
+            All labeled records accumulated so far.
+        trainer_kwargs : dict[str, Any], optional
+            Passed directly to ``lightning.Trainer``. When using the CLI,
+            these come from ``TrainerConfig.to_dict()`` so ``max_epochs`` and
+            other defaults are visible in the YAML config. If not provided,
+            the hard-coded fallback of ``max_epochs=30`` is used — prefer
+            passing an explicit dict.
+        datamodule_kwargs : dict[str, Any], optional
+            Passed to ``MixedFidelityDataModule`` (e.g. ``val_fraction``,
+            ``seed``). Use ``TrainerConfig.to_datamodule_kwargs()`` to
+            populate this from the campaign config so train/val split
+            parameters are reproducible and config-driven.
+        reset_weights : bool, optional
+            If True, reload CheMeleon weights before refitting (full warm-start
+            from pretrained). Default is False (continue fine-tuning from
+            current weights).
 
-        Returns:
+        Returns
+        -------
+        ChemPropLightningModule
             self (for chaining).
         """
         from moal.dataset import MixedFidelityDataModule
@@ -341,14 +373,17 @@ class NoisyOracleModel:
 
     The noise level is not fixed at construction — it is supplied per-call via
     the ``noise_scale`` argument to ``predict_smiles``, allowing the caller
-    (typically :class:`~moal.loop.ActiveLearningLoop`) to implement an
-    error ramp across iterations.
+    (typically :class:`~moal.loop.ActiveLearningLoop`) to implement an error
+    ramp across iterations.
 
-    Args:
-        ground_truth: Mapping from canonical SMILES to true pEC50 values.
-            Typically ``oracle._ground_truth``.
-        seed: Seed for the internal RNG, ensuring reproducible predictions
-            across runs with the same configuration.
+    Parameters
+    ----------
+    ground_truth : dict[str, float]
+        Mapping from canonical SMILES to true pEC50 values. Typically
+        ``oracle._ground_truth``.
+    seed : int, optional
+        Seed for the internal RNG, ensuring reproducible predictions across
+        runs with the same configuration. Default is 42.
     """
 
     def __init__(
@@ -368,23 +403,32 @@ class NoisyOracleModel:
         The ``batch_size`` argument is accepted for interface compatibility but
         has no effect — there is no batched computation.
 
-        Args:
-            smiles_list: Canonical SMILES strings. Each must be present in the
-                ``ground_truth`` dict supplied at construction.
-            noise_scale: Half-width of the uniform noise distribution (pEC50
-                log-units). A value of 0.0 returns exact oracle values. Must be
-                non-negative. Passed by the caller on every invocation, enabling
-                per-iteration error schedules.
-            batch_size: Ignored; retained for interface compatibility with
-                :class:`ChemPropLightningModule`.
+        Parameters
+        ----------
+        smiles_list : list[str]
+            Canonical SMILES strings. Each must be present in the
+            ``ground_truth`` dict supplied at construction.
+        noise_scale : float
+            Half-width of the uniform noise distribution (pEC50 log-units).
+            A value of 0.0 returns exact oracle values. Must be non-negative.
+            Passed by the caller on every invocation, enabling per-iteration
+            error schedules.
+        batch_size : int, optional
+            Ignored; retained for interface compatibility with
+            :class:`ChemPropLightningModule`. Default is 256.
 
-        Returns:
-            NumPy array of shape ``(N,)`` with pEC50 estimates, aligned with
+        Returns
+        -------
+        np.ndarray
+            Array of shape ``(N,)`` with pEC50 estimates, aligned with
             ``smiles_list``.
 
-        Raises:
-            ValueError: If ``noise_scale`` is negative.
-            KeyError: If any SMILES in ``smiles_list`` is not in ``ground_truth``.
+        Raises
+        ------
+        ValueError
+            If ``noise_scale`` is negative.
+        KeyError
+            If any SMILES in ``smiles_list`` is not in ``ground_truth``.
         """
         if noise_scale < 0:
             raise ValueError(f"noise_scale must be non-negative, got {noise_scale}")
@@ -408,7 +452,9 @@ class NoisyOracleModel:
         All arguments are accepted for interface compatibility with
         :class:`ChemPropLightningModule` and silently ignored.
 
-        Returns:
+        Returns
+        -------
+        NoisyOracleModel
             self
         """
         return self

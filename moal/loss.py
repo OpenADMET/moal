@@ -49,17 +49,22 @@ class LossBreakdown(NamedTuple):
 class CensoredRegressionLoss(nn.Module):
     """Mixed-fidelity Tobit regression loss.
 
-    Args:
-        sigma: Fixed noise scale in pEC50 log-units. A value of 0.5 is
-            consistent with typical intra-assay pEC50 measurement variability
-            (coefficient of variation ≈ 0.3–0.5 log units).
-        w_drc: Loss weight for EXACT (DRC) samples.
-        w_ps: Loss weight for LEFT/INTERVAL (Primary Screen) samples.
-            Set < w_drc to prevent low-information inequality labels from
-            dominating gradient updates.
-        learnable_sigma: If True, σ is a learned scalar parameter (bounded
-            from below by _SIGMA_MIN). Requires model output_size=2
-            (mean, log_sigma); if False, output_size=1 (mean only).
+    Parameters
+    ----------
+    sigma : float, optional
+        Fixed noise scale in pEC50 log-units. A value of 0.5 is consistent
+        with typical intra-assay pEC50 measurement variability (coefficient
+        of variation ≈ 0.3–0.5 log units). Default is 0.5.
+    w_drc : float, optional
+        Loss weight for EXACT (DRC) samples. Default is 1.0.
+    w_ps : float, optional
+        Loss weight for LEFT/INTERVAL (Primary Screen) samples. Set less than
+        ``w_drc`` to prevent low-information inequality labels from dominating
+        gradient updates. Default is 0.3.
+    learnable_sigma : bool, optional
+        If True, σ is a learned scalar parameter bounded from below by
+        ``_SIGMA_MIN``. Requires model ``output_size=2`` (mean, log_sigma);
+        if False, ``output_size=1`` (mean only). Default is False.
     """
 
     def __init__(
@@ -86,7 +91,20 @@ class CensoredRegressionLoss(nn.Module):
         return self._sigma  # type: ignore[return-value]
 
     def _single_loss(self, pred: Tensor, rec: LabelRecord) -> Tensor:
-        """Compute the weighted scalar loss for one (prediction, record) pair."""
+        """Compute the weighted scalar loss for one (prediction, record) pair.
+
+        Parameters
+        ----------
+        pred : Tensor
+            Scalar pEC50 prediction for the compound.
+        rec : LabelRecord
+            Labeled observation providing the censoring type and bounds.
+
+        Returns
+        -------
+        Tensor
+            Scalar weighted loss value.
+        """
         sigma = self.sigma
         ct = rec.censoring_type
         T = torch.tensor(rec.value, dtype=pred.dtype, device=pred.device)
@@ -119,15 +137,20 @@ class CensoredRegressionLoss(nn.Module):
     def forward(self, predictions: Tensor, records: list[LabelRecord]) -> Tensor:
         """Compute the mean censored loss over a batch.
 
-        Args:
-            predictions: Shape ``(N,)`` — model's pEC50 point estimates.
-                If ``learnable_sigma=True``, shape is ``(N, 2)`` where
-                column 0 = mean, column 1 = log_sigma (per-sample σ is
-                then ignored in favour of a single learned σ for now).
-            records: List of N LabelRecord instances corresponding to
-                each prediction.
+        Parameters
+        ----------
+        predictions : Tensor
+            Shape ``(N,)`` — model's pEC50 point estimates. If
+            ``learnable_sigma=True``, shape is ``(N, 2)`` where column 0 is
+            the mean and column 1 is log_sigma (per-sample σ is then ignored
+            in favour of a single learned σ).
+        records : list[LabelRecord]
+            List of N ``LabelRecord`` instances corresponding to each
+            prediction.
 
-        Returns:
+        Returns
+        -------
+        Tensor
             Scalar mean loss.
         """
         return self.forward_with_breakdown(predictions, records).total
@@ -137,15 +160,20 @@ class CensoredRegressionLoss(nn.Module):
     ) -> LossBreakdown:
         """Compute per-fidelity loss breakdown for diagnostic logging.
 
-        Args:
-            predictions: Same contract as ``forward()``.
-            records: List of N LabelRecord instances.
+        Parameters
+        ----------
+        predictions : Tensor
+            Same contract as :meth:`forward`.
+        records : list[LabelRecord]
+            List of N ``LabelRecord`` instances.
 
-        Returns:
-            :class:`LossBreakdown` with ``total``, ``drc_loss``, and
-            ``ps_loss``.  ``drc_loss`` / ``ps_loss`` are ``nan`` when the
-            batch contains no samples of that fidelity, so they can be
-            logged without masking the aggregated loss.
+        Returns
+        -------
+        LossBreakdown
+            Named tuple with ``total``, ``drc_loss``, and ``ps_loss``.
+            ``drc_loss`` / ``ps_loss`` are ``nan`` when the batch contains no
+            samples of that fidelity, so they can be logged without masking
+            the aggregated loss.
         """
         if predictions.dim() == 2:
             preds = predictions[:, 0]
