@@ -148,6 +148,7 @@ def main(config: str, output_dir: str | None, verbose: bool) -> None:
 
         dashboard = LiveDashboard(
             n_iterations=cfg.active_learning_loop.n_iterations,
+            n_compounds=len(oracle),
             model_metric=ModelMetric(cfg.dashboard.model_metric),
             figsize=cfg.dashboard.figsize,
             show=cfg.dashboard.show,
