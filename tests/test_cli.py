@@ -171,33 +171,3 @@ class TestExampleConfig:
         assert cfg.active_learning_loop.n_iterations == 20
         assert cfg.active_learning_loop.k_per_iteration == 10
         assert cfg.model.fast is False
-
-    def test_fast_mode_config_does_not_require_checkpoint(self, tmp_path):
-        """A config with fast=true must not fail at the checkpoint-loading stage.
-
-        The oracle is initialised successfully; the run will eventually fail
-        (or succeed) at model instantiation, but it must not exit=1 with a
-        'checkpoint not found' or 'chempeleon' error message.
-        """
-        csv_file = tmp_path / "data.csv"
-        csv_file.write_text("smiles,pec50\nc1ccccc1,4.0\nCCO,6.0\nc1ccc(O)cc1,7.5\n")
-        cfg = tmp_path / "config.yaml"
-        cfg.write_text(
-            "data:\n"
-            f"  ground_truth_csv: {csv_file}\n"
-            "model:\n"
-            "  fast: true\n"
-            "  initial_error: 0.7\n"
-            "  final_error: 0.3\n"
-            "dashboard:\n"
-            "  enabled: false\n"
-        )
-        runner = CliRunner()
-        result = runner.invoke(
-            main,
-            ["--config", str(cfg), "--output-dir", str(tmp_path / "out")],
-        )
-        # A checkpoint-related error is the failure mode we guard against.
-        error_text = (result.output or "") + str(result.exception or "")
-        assert "checkpoint" not in error_text.lower()
-        assert "chempeleon" not in error_text.lower()

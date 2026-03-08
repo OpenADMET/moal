@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from typing import Any
+from urllib.request import urlretrieve
 
 import lightning as L
 import numpy as np
@@ -32,14 +33,33 @@ logger = logging.getLogger(__name__)
 # These constants mirror the exact feature set used during CheMeleon
 # pretraining. Changing any of these will corrupt the pretrained embedding
 # space.  If CheMeleon releases an updated feature spec, update these
-# constants and bump _CHEMPELEON_ATOM_FDIM / _CHEMPELEON_BOND_FDIM.
+# constants and bump _CHEMELEON_ATOM_FDIM / _CHEMELEON_BOND_FDIM.
 #
 # Feature order: atomic_num_one_hot (100), degree (6), formal_charge (5),
 #   chiral_tag (4), num_Hs (5), hybridization (5), aromaticity (1),
 #   mass (1)  →  total = 127 (atom), bond: 14 (type + stereo + conjugated etc.)
 
-_CHEMPELEON_ATOM_FDIM: int = 72  # as used in CheMeleon / default chemprop v2
-_CHEMPELEON_BOND_FDIM: int = 14  # as used in CheMeleon / default chemprop v2
+_CHEMELEON_ATOM_FDIM: int = 72  # as used in CheMeleon / default chemprop v2
+_CHEMELEON_BOND_FDIM: int = 14  # as used in CheMeleon / default chemprop v2
+
+
+def download_chemeleon():
+    logger.info(
+        "Please cite DOI: 10.48550/arXiv.2506.15792 when using CheMeleon in published work"
+    )
+    ckpt_dir = Path().home() / ".chemprop"
+    ckpt_dir.mkdir(exist_ok=True)
+    model_path = ckpt_dir / "chemeleon_mp.pt"
+    if not model_path.exists():
+        logger.info(
+            f"Downloading CheMeleon Foundation model from Zenodo (https://zenodo.org/records/15460715) to {model_path}"
+        )
+        urlretrieve(
+            r"https://zenodo.org/records/15460715/files/chemeleon_mp.pt",
+            model_path,
+        )
+    else:
+        logger.info(f"Loading cached CheMeleon from {model_path}")
 
 
 def _assert_feature_dims(model: nn.Module) -> None:
@@ -49,21 +69,21 @@ def _assert_feature_dims(model: nn.Module) -> None:
     ----------
     model : nn.Module
         ChemProp MPNN model whose ``message_passing.W_i`` input dimension is
-        checked against ``_CHEMPELEON_ATOM_FDIM + _CHEMPELEON_BOND_FDIM``.
+        checked against ``_CHEMELEON_ATOM_FDIM + _CHEMELEON_BOND_FDIM``.
     """
     try:
         atom_fdim = model.message_passing.W_i.in_features  # type: ignore[attr-defined]
     except AttributeError:
         logger.warning(
             "Could not verify atom feature dimension — "
-            "ensure CheMeleon feature spec matches _CHEMPELEON_ATOM_FDIM=%d.",
-            _CHEMPELEON_ATOM_FDIM,
+            "ensure CheMeleon feature spec matches _CHEMELEON_ATOM_FDIM=%d.",
+            _CHEMELEON_ATOM_FDIM,
         )
         return
-    if atom_fdim != _CHEMPELEON_ATOM_FDIM + _CHEMPELEON_BOND_FDIM:
+    if atom_fdim != _CHEMELEON_ATOM_FDIM + _CHEMELEON_BOND_FDIM:
         raise ValueError(
             f"Model atom+bond feature dimension ({atom_fdim}) does not match "
-            f"expected CheMeleon dimension ({_CHEMPELEON_ATOM_FDIM + _CHEMPELEON_BOND_FDIM}). "
+            f"expected CheMeleon dimension ({_CHEMELEON_ATOM_FDIM + _CHEMELEON_BOND_FDIM}). "
             "Ensure the featurizer uses the exact CheMeleon feature set."
         )
 
@@ -73,10 +93,6 @@ class ChemPropLightningModule(L.LightningModule):
 
     Parameters
     ----------
-    chempeleon_ckpt_path : str or Path
-        Path to the CheMeleon pretrained checkpoint (.pt or .ckpt file). Must
-        contain a ``state_dict`` loadable by ChemProp v2.x's MPNN with
-        ``strict=True``.
     hidden_size : int, optional
         MPNN hidden dimension (must match CheMeleon checkpoint). Default is 300.
     depth : int, optional
@@ -105,7 +121,6 @@ class ChemPropLightningModule(L.LightningModule):
 
     def __init__(
         self,
-        chempeleon_ckpt_path: str | Path,
         hidden_size: int = 300,
         depth: int = 3,
         ffn_hidden_size: int = 300,
@@ -119,7 +134,7 @@ class ChemPropLightningModule(L.LightningModule):
         learnable_sigma: bool = False,
     ) -> None:
         super().__init__()
-        self.save_hyperparameters(ignore=["chempeleon_ckpt_path"])
+        self.save_hyperparameters()
 
         self.freeze_epochs = freeze_epochs
         self.lr_encoder = lr_encoder
@@ -136,7 +151,7 @@ class ChemPropLightningModule(L.LightningModule):
             ffn_hidden_size=ffn_hidden_size,
             ffn_num_layers=ffn_num_layers,
         )
-        self._load_chempeleon_weights(chempeleon_ckpt_path)
+        self._load_chemeleon_weights()
         self._freeze_encoder()
 
     # ------------------------------------------------------------------
@@ -167,10 +182,25 @@ class ChemPropLightningModule(L.LightningModule):
         )
         return MPNN(message_passing=mp, agg=agg, predictor=ffn)
 
-    def _load_chempeleon_weights(self, ckpt_path: str | Path) -> None:
-        ckpt_path = Path(ckpt_path)
+    def _load_chemeleon_weights(self) -> None:
+        logger.info(
+            "Please cite DOI: 10.48550/arXiv.2506.15792 when using CheMeleon in published work"
+        )
+
+        # Download CheMeleon if needed
+        ckpt_dir = Path().home() / ".chemprop"
+        ckpt_dir.mkdir(exist_ok=True)
+        ckpt_path = ckpt_dir / "chemeleon_mp.pt"
         if not ckpt_path.exists():
-            raise FileNotFoundError(f"CheMeleon checkpoint not found: {ckpt_path}")
+            logger.info(
+                f"Downloading CheMeleon Foundation model from Zenodo (https://zenodo.org/records/15460715) to {ckpt_path}"
+            )
+            urlretrieve(
+                r"https://zenodo.org/records/15460715/files/chemeleon_mp.pt",
+                ckpt_path,
+            )
+        else:
+            logger.info(f"Loading cached CheMeleon from {ckpt_path}")
 
         _assert_feature_dims(self.model)
 
@@ -346,7 +376,7 @@ class ChemPropLightningModule(L.LightningModule):
         from moal.dataset import MixedFidelityDataModule
 
         if reset_weights:
-            self._load_chempeleon_weights(self.hparams.get("chempeleon_ckpt_path", ""))
+            self._load_chemeleon_weights()
             self._freeze_encoder()
 
         dm = MixedFidelityDataModule(records, **(datamodule_kwargs or {}))

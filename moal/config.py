@@ -39,9 +39,6 @@ class OracleConfig:
 class ModelConfig:
     """ChemProp + CheMeleon model parameters."""
 
-    chempeleon_ckpt_path: str = ""
-    """Path to the CheMeleon pretrained checkpoint file."""
-
     hidden_size: int = 300
     depth: int = 3
     ffn_hidden_size: int = 300

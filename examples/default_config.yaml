@@ -22,7 +22,6 @@ oracle:
 # ChemProp / CheMeleon model
 # --------------------------------------------------------------------------
 model:
-  chempeleon_ckpt_path: ""   # REQUIRED (unless fast: true): path to CheMeleon pretrained checkpoint (.pt / .ckpt)
   hidden_size: 300
   depth: 3
   ffn_hidden_size: 300
@@ -35,7 +34,7 @@ model:
   w_ps: 0.3                  # Loss weight for PS (inequality) labels
   learnable_sigma: false     # If true, sigma is a learned parameter
   fast: false                # When true, bypass CheMeleon and use a noisy oracle predictor (no checkpoint needed)
-  initial_error: 0.7         # Starting noise magnitude (pEC50 units) for the error ramp in fast mode
+  initial_error: 1.0         # Starting noise magnitude (pEC50 units) for the error ramp in fast mode
   final_error: 0.5           # Ending noise magnitude for the ramp; set equal to initial_error for constant noise
 
 # --------------------------------------------------------------------------
@@ -50,11 +49,11 @@ acquisition:
 # PyTorch Lightning trainer (used during model.refit())
 # --------------------------------------------------------------------------
 trainer:
-  max_epochs: 30
+  max_epochs: 20
   accelerator: auto         # "cpu", "gpu", "mps", or "auto"
   enable_progress_bar: false
   enable_model_summary: false
-  val_fraction: 0.1         # Fraction of labeled records held out for validation
+  val_fraction: 0.0         # Fraction of labeled records held out for validation
   split_seed: 42            # Seed for the train/val split inside MixedFidelityDataModule
 
 # --------------------------------------------------------------------------
@@ -63,7 +62,7 @@ trainer:
 dashboard:
   enabled: true
   model_metric: mae         # Metric displayed in panel 3: mae | rmse | kendall_tau | spearman_r | r2
-  figsize: [15, 4]          # Figure size in inches [width, height]
+  figsize: [12, 8]          # Figure size in inches [width, height]
   show: true                # Set to false for headless/server environments
 
 # --------------------------------------------------------------------------
