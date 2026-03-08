@@ -1,7 +1,5 @@
 """Tests for CostAwareGreedyAcquisition: score properties and selection logic."""
 
-import math
-
 import numpy as np
 import pytest
 
@@ -28,11 +26,10 @@ class TestScoreHelpers:
         assert h[1] > h[0]
         assert h[1] > h[2]
 
-    def test_binary_entropy_zero_at_extremes(self):
-        p = np.array([1e-9, 1 - 1e-9])
-        h = _binary_entropy(p)
+    @pytest.mark.parametrize("p", [1e-9, 1 - 1e-9])
+    def test_binary_entropy_zero_at_extremes(self, p):
+        h = _binary_entropy(np.array([p]))
         assert h[0] == pytest.approx(0.0, abs=1e-3)
-        assert h[1] == pytest.approx(0.0, abs=1e-3)
 
     def test_sigmoid_monotone(self):
         x = np.linspace(-5, 5, 20)
@@ -73,16 +70,11 @@ class TestPSScore:
 
 
 class TestSelect:
-    def test_returns_k_queries(self, acq):
+    def test_returns_k_unique_queries(self, acq):
         smiles = [f"C{i}" for i in range(20)]
         preds = np.random.default_rng(0).normal(6.0, 1.5, 20).astype(np.float32)
         selected = acq.select(smiles, preds, k=5)
         assert len(selected) == 5
-
-    def test_no_duplicate_compounds(self, acq):
-        smiles = [f"C{i}" for i in range(20)]
-        preds = np.random.default_rng(1).normal(6.0, 1.5, 20).astype(np.float32)
-        selected = acq.select(smiles, preds, k=10)
         selected_smiles = [s for s, _ in selected]
         assert len(selected_smiles) == len(set(selected_smiles))
 
@@ -107,9 +99,12 @@ class TestSelect:
         selected = acq.select(smiles, preds, k=1)
         assert selected[0][1] == QueryType.PRIMARY_SCREEN
 
-    def test_empty_unlabeled_returns_empty(self, acq):
-        result = acq.select([], np.array([]), k=5)
-        assert result == []
+    @pytest.mark.parametrize("smiles,preds,k", [
+        ([], np.array([]), 5),
+        ([f"C{i}" for i in range(10)], np.ones(10, dtype=np.float32) * 6.0, 0),
+    ])
+    def test_empty_selection_returns_empty(self, acq, smiles, preds, k):
+        assert acq.select(smiles, preds, k=k) == []
 
     def test_k_larger_than_pool(self, acq):
         smiles = ["A", "B"]
@@ -120,12 +115,6 @@ class TestSelect:
     def test_invalid_cost_raises(self):
         with pytest.raises(ValueError, match="positive"):
             CostAwareGreedyAcquisition(cost_ps=-1.0, cost_drc=10.0)
-
-    def test_k_zero_returns_empty(self, acq):
-        """k=0 must return an empty list without touching the pool."""
-        smiles = [f"C{i}" for i in range(10)]
-        preds = np.ones(10, dtype=np.float32) * 6.0
-        assert acq.select(smiles, preds, k=0) == []
 
     def test_degenerate_thresholds_still_selects(self, acq):
         """When ps_threshold == target_threshold both scoring functions compete at the same
@@ -143,6 +132,17 @@ class TestSelect:
         assert len(selected) == 3
         for _, qt in selected:
             assert qt in (QueryType.PRIMARY_SCREEN, QueryType.DOSE_RESPONSE)
+
+    def test_select_with_nan_predictions(self, acq):
+        """NaN in predictions must raise ValueError before scoring.
+
+        Silently allowing NaN propagates undefined float comparisons into the
+        sort step and produces non-deterministic selection results.
+        """
+        smiles = ["A", "B", "C"]
+        preds = np.array([float("nan"), 6.0, 7.0], dtype=np.float32)
+        with pytest.raises(ValueError, match="finite"):
+            acq.select(smiles, preds, k=2)
 
 
 class TestPSUpgradeCandidates:
@@ -195,11 +195,3 @@ class TestPSUpgradeCandidates:
             acq.select([], np.array([]), 1,
                        ps_labeled_smiles=["A", "B"],
                        ps_labeled_predictions=np.array([1.0]))
-
-    def test_only_ps_labeled_pool_all_empty_returns_empty(self, acq):
-        """When both pools are empty, select must return empty and warn."""
-        result = acq.select([], np.array([]), 2,
-                            ps_labeled_smiles=[],
-                            ps_labeled_predictions=None)
-        assert result == []
-

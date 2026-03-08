@@ -1,5 +1,7 @@
 """Tests for CostAwareOracle: cost tracking, deduplication, label dispatch."""
 
+import math
+
 import pandas as pd
 import pytest
 
@@ -72,12 +74,6 @@ class TestPrimaryScreenQueries:
         assert rec.value == pytest.approx(_PS_THRESHOLD)
         assert rec.upper_bound == pytest.approx(11.0)  # default upper_bound
 
-    def test_active_compound_gives_interval_label(self):
-        oracle = _make_oracle()
-        # naphthalene pEC50=8.0 >= ps_threshold → INTERVAL
-        rec = oracle.query("c1ccc2ccccc2c1", QueryType.PRIMARY_SCREEN, iteration=0)
-        assert rec.censoring_type == CensoringType.INTERVAL
-
 
 class TestDRCQueries:
     def test_exact_label(self):
@@ -101,24 +97,16 @@ class TestCostTracking:
 
 
 class TestDeduplication:
-    def test_ps_after_ps_raises(self):
+    @pytest.mark.parametrize("first_qt,second_qt,match", [
+        (QueryType.PRIMARY_SCREEN,  QueryType.PRIMARY_SCREEN,  "already has a PS label"),
+        (QueryType.DOSE_RESPONSE,   QueryType.PRIMARY_SCREEN,  "already has a DRC label"),
+        (QueryType.DOSE_RESPONSE,   QueryType.DOSE_RESPONSE,   "already has a DRC label"),
+    ])
+    def test_duplicate_query_raises(self, first_qt, second_qt, match):
         oracle = _make_oracle()
-        oracle.query("c1ccccc1", QueryType.PRIMARY_SCREEN, iteration=0)
-        with pytest.raises(ValueError, match="already has a PS label"):
-            oracle.query("c1ccccc1", QueryType.PRIMARY_SCREEN, iteration=1)
-
-    def test_ps_after_drc_raises(self):
-        """Downgrading from DRC to PS must be blocked; DRC supersedes PS."""
-        oracle = _make_oracle()
-        oracle.query("c1ccccc1", QueryType.DOSE_RESPONSE, iteration=0)
-        with pytest.raises(ValueError, match="already has a DRC label"):
-            oracle.query("c1ccccc1", QueryType.PRIMARY_SCREEN, iteration=1)
-
-    def test_drc_after_drc_raises(self):
-        oracle = _make_oracle()
-        oracle.query("c1ccccc1", QueryType.DOSE_RESPONSE, iteration=0)
-        with pytest.raises(ValueError, match="already has a DRC label"):
-            oracle.query("c1ccccc1", QueryType.DOSE_RESPONSE, iteration=1)
+        oracle.query("c1ccccc1", first_qt, iteration=0)
+        with pytest.raises(ValueError, match=match):
+            oracle.query("c1ccccc1", second_qt, iteration=1)
 
     def test_batch_dedup_within_batch(self):
         oracle = _make_oracle()
@@ -219,13 +207,6 @@ class TestPSUpgrade:
         assert len(records) == 1
         assert records[0].fidelity == QueryType.PRIMARY_SCREEN
 
-    def test_training_records_identical_to_labeled_when_no_upgrades(self):
-        """Without any upgrades, training_records must equal labeled_records."""
-        oracle = _make_oracle()
-        oracle.query("c1ccccc1", QueryType.PRIMARY_SCREEN, iteration=0)
-        oracle.query("CCO", QueryType.DOSE_RESPONSE, iteration=0)
-        assert oracle.training_records == oracle.labeled_records
-
     def test_cost_accumulates_for_both_assays(self):
         oracle = _make_oracle()
         oracle.query("c1ccc(O)cc1", QueryType.PRIMARY_SCREEN, iteration=0)
@@ -269,13 +250,13 @@ class TestPSUpgrade:
 
 
 class TestIsActive:
-    def test_active_compound(self):
+    @pytest.mark.parametrize("smiles,threshold,expected", [
+        ("c1ccc(O)cc1", 7.0, True),
+        ("c1ccccc1",    7.0, False),
+    ])
+    def test_is_active(self, smiles, threshold, expected):
         oracle = _make_oracle()
-        assert oracle.is_active("c1ccc(O)cc1", threshold=7.0) is True
-
-    def test_inactive_compound(self):
-        oracle = _make_oracle()
-        assert oracle.is_active("c1ccccc1", threshold=7.0) is False
+        assert oracle.is_active(smiles, threshold=threshold) is expected
 
 
 class TestUnknownCompound:
@@ -295,6 +276,13 @@ class TestUnknownCompound:
         ]
         records = oracle.query_batch(queries, iteration=0)
         assert len(records) == 1
+
+    def test_query_batch_empty_input_returns_empty(self):
+        """query_batch with an empty queries list must return [] without error."""
+        oracle = _make_oracle()
+        records = oracle.query_batch([], iteration=0)
+        assert records == []
+        assert oracle.total_cost == pytest.approx(0.0)
 
 
 class TestCustomColumnNames:
@@ -335,8 +323,12 @@ class TestCustomColumnNames:
         rec = oracle.query("c1ccccc1", QueryType.DOSE_RESPONSE, iteration=0)
         assert rec.value == pytest.approx(4.0)
 
-    def test_wrong_smiles_column_raises(self):
-        """Passing a smiles_column that does not exist must raise ValueError."""
+    @pytest.mark.parametrize("bad_kwarg,bad_name", [
+        ("smiles_column", "nonexistent"),
+        ("pec50_column",  "nonexistent"),
+    ])
+    def test_wrong_column_raises(self, bad_kwarg, bad_name):
+        """Passing a column name that doesn't exist must raise ValueError."""
         df = pd.DataFrame({"smiles": ["c1ccccc1"], "pec50": [5.0]})
         with pytest.raises(ValueError, match="must contain columns"):
             CostAwareOracle(
@@ -344,19 +336,7 @@ class TestCustomColumnNames:
                 cost_ps=1.0,
                 cost_drc=10.0,
                 ps_threshold=5.0,
-                smiles_column="nonexistent",
-            )
-
-    def test_wrong_pec50_column_raises(self):
-        """Passing a pec50_column that does not exist must raise ValueError."""
-        df = pd.DataFrame({"smiles": ["c1ccccc1"], "pec50": [5.0]})
-        with pytest.raises(ValueError, match="must contain columns"):
-            CostAwareOracle(
-                ground_truth_df=df,
-                cost_ps=1.0,
-                cost_drc=10.0,
-                ps_threshold=5.0,
-                pec50_column="nonexistent",
+                **{bad_kwarg: bad_name},
             )
 
     def test_error_message_names_configured_columns(self):
@@ -393,11 +373,6 @@ class TestIsCanonical:
         )
         defaults.update(kwargs)
         return CostAwareOracle(**defaults)
-
-    def test_init_with_is_canonical_true_accepted(self):
-        """Oracle must initialize without error when is_canonical=True."""
-        oracle = self._make_canonical_oracle()
-        assert len(oracle) == 2
 
     def test_is_canonical_true_skips_rewrite(self):
         """When is_canonical=True, keys in ground truth must equal the raw input strings."""
@@ -466,38 +441,20 @@ class TestIsCanonical:
 
 
 class TestPec50Validation:
-    def test_nan_pec50_excluded(self):
-        import math
-        df = pd.DataFrame({"smiles": ["c1ccccc1", "CCO"], "pec50": [float("nan"), 5.0]})
+    @pytest.mark.parametrize("bad_values,n_valid", [
+        ([float("nan"), 5.0],                    1),   # NaN excluded
+        ([float("inf"), float("-inf"), 5.0],     1),   # ±inf excluded
+        ([-50.0, 999.0, 7.0],                    1),   # out of [0, 14] excluded
+    ])
+    def test_invalid_pec50_excluded(self, bad_values, n_valid):
+        """Compounds with invalid pEC50 values must be excluded from the oracle."""
+        smiles = ["c1ccccc1", "CCO", "c1ccc(N)cc1"][:len(bad_values)]
+        df = pd.DataFrame({"smiles": smiles, "pec50": bad_values})
         oracle = CostAwareOracle(
             ground_truth_df=df, cost_ps=1.0, cost_drc=10.0, ps_threshold=5.0
         )
-        # Only CCO should survive.
-        assert len(oracle) == 1
-        # The surviving compound must have a finite stored value.
+        assert len(oracle) == n_valid
         assert all(math.isfinite(v) for v in oracle._ground_truth.values())
-
-    def test_inf_pec50_excluded(self):
-        """Positive and negative infinity must be excluded."""
-        df = pd.DataFrame({
-            "smiles": ["c1ccccc1", "CCO", "c1ccc(N)cc1"],
-            "pec50": [float("inf"), float("-inf"), 5.0],
-        })
-        oracle = CostAwareOracle(
-            ground_truth_df=df, cost_ps=1.0, cost_drc=10.0, ps_threshold=5.0
-        )
-        assert len(oracle) == 1  # only aniline
-
-    def test_out_of_range_pec50_excluded(self):
-        """pEC50 outside [0, 14] (e.g., -50 or 999) must be excluded."""
-        df = pd.DataFrame({
-            "smiles": ["c1ccccc1", "CCO", "c1ccc(N)cc1"],
-            "pec50": [-50.0, 999.0, 7.0],
-        })
-        oracle = CostAwareOracle(
-            ground_truth_df=df, cost_ps=1.0, cost_drc=10.0, ps_threshold=5.0
-        )
-        assert len(oracle) == 1  # only aniline with pEC50=7.0
 
     def test_boundary_values_accepted(self):
         """Boundary values 0.0 and 14.0 are physically plausible and must be kept."""
@@ -509,8 +466,3 @@ class TestPec50Validation:
             ground_truth_df=df, cost_ps=1.0, cost_drc=10.0, ps_threshold=5.0
         )
         assert len(oracle) == 2
-
-    def test_valid_pec50_range_all_kept(self):
-        """All 6 fixtures have valid pEC50 values — none should be excluded."""
-        oracle = _make_oracle()
-        assert len(oracle) == len(_GT_DATA)

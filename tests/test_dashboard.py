@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -69,23 +68,15 @@ class TestDashboardHeadless:
         assert len(db._fig.get_axes()) == initial_count
         db.close()
 
-    def test_update_captures_frame(self, tmp_path):
+    @pytest.mark.parametrize("n_updates", [2, 3])
+    def test_update_captures_frames(self, tmp_path, n_updates):
         db = LiveDashboard(n_iterations=3, n_compounds=20, show=False)
         records = _make_records(4)
-        db.update(records, activity_threshold=7.0, iter_drc_cost=10.0, iter_ps_cost=3.0)
-        db.update(records, activity_threshold=7.0, iter_drc_cost=20.0, iter_ps_cost=5.0)
+        for i in range(n_updates):
+            db.update(records, activity_threshold=7.0,
+                      iter_drc_cost=10.0 * (i + 1), iter_ps_cost=float(i + 1))
         db.close()
-        assert len(db._frames) == 2
-
-    def test_three_updates_three_frames(self, tmp_path):
-        db = LiveDashboard(n_iterations=3, n_compounds=20, show=False)
-        records = _make_records(6)
-        for i in range(3):
-            db.update(records[:i+2], activity_threshold=7.0,
-                      iter_drc_cost=10.0, iter_ps_cost=2.0,
-                      model_metric_value=float(i + 0.5))
-        db.close()
-        assert len(db._frames) == 3
+        assert len(db._frames) == n_updates
 
     def test_no_updates_no_frames(self, tmp_path):
         db = LiveDashboard(n_iterations=3, n_compounds=20, show=False)
@@ -127,23 +118,16 @@ class TestDashboardNoTestSet:
 
 
 class TestDashboardMetricHistory:
-    def test_metric_values_accumulated(self, tmp_path):
-        db = LiveDashboard(n_iterations=4, n_compounds=20, show=False)
-        records = _make_records(6)
-        for v in [2.0, 1.5, 1.2]:
-            db.update(records, activity_threshold=7.0,
-                      iter_drc_cost=10.0, iter_ps_cost=1.0,
-                      model_metric_value=v)
-        assert db._model_metric_values == [2.0, 1.5, 1.2]
-        db.close()
-
-    def test_cost_stacks_accumulated(self, tmp_path):
+    def test_metric_and_cost_stacks_accumulated(self, tmp_path):
         db = LiveDashboard(n_iterations=3, n_compounds=20, show=False)
         records = _make_records(4)
-        db.update(records, activity_threshold=7.0, iter_drc_cost=10.0, iter_ps_cost=2.0)
-        db.update(records, activity_threshold=7.0, iter_drc_cost=20.0, iter_ps_cost=4.0)
+        db.update(records, activity_threshold=7.0, iter_drc_cost=10.0, iter_ps_cost=2.0,
+                  model_metric_value=2.0)
+        db.update(records, activity_threshold=7.0, iter_drc_cost=20.0, iter_ps_cost=4.0,
+                  model_metric_value=1.5)
+        assert db._model_metric_values == [2.0, 1.5]
         assert db._iter_drc_costs == [10.0, 20.0]
-        assert db._iter_ps_costs  == [2.0, 4.0]
+        assert db._iter_ps_costs == [2.0, 4.0]
         db.close()
 
     @pytest.mark.parametrize("metric", list(ModelMetric))
@@ -159,8 +143,8 @@ class TestDashboardMetricHistory:
 class TestSaveGif:
     """Tests for LiveDashboard.save_gif."""
 
-    def test_gif_created_with_correct_frame_count(self, tmp_path):
-        """A GIF produced from N iteration snapshots must contain N frames."""
+    def test_gif_created_with_correct_frame_count_and_format(self, tmp_path):
+        """A GIF produced from N iteration snapshots must contain N frames and be a valid GIF."""
         from PIL import Image
 
         db = LiveDashboard(n_iterations=3, n_compounds=20, show=False)
@@ -174,7 +158,7 @@ class TestSaveGif:
 
         assert gif_path.exists(), "GIF file was not created"
         with Image.open(gif_path) as img:
-            # Count frames by seeking through the GIF
+            assert img.format == "GIF"
             frame_count = 0
             try:
                 while True:
@@ -183,22 +167,6 @@ class TestSaveGif:
             except EOFError:
                 pass
         assert frame_count == 3
-
-    def test_gif_is_valid_gif_format(self, tmp_path):
-        """The output file must be a valid GIF that Pillow can open."""
-        from PIL import Image
-
-        db = LiveDashboard(n_iterations=2, n_compounds=20, show=False)
-        records = _make_records(2)
-        db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
-        db.update(records, activity_threshold=7.0, iter_drc_cost=8.0, iter_ps_cost=2.0)
-
-        gif_path = tmp_path / "animation.gif"
-        db.save_gif(gif_path)
-        db.close()
-
-        with Image.open(gif_path) as img:
-            assert img.format == "GIF"
 
     def test_gif_skipped_when_no_frames(self, tmp_path):
         """No file should be created and no exception raised when no updates have been made."""
@@ -287,9 +255,10 @@ class TestCompoundStatusPanel:
         db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
 
         bars = db._ax4.containers
-        # Expect 3 bar containers: PS-only, DRC-new, upgrade
-        # (unqueried is a 4th container)
-        heights = [c.datavalues[0] for c in bars]
+        # Expect 4 bar containers: PS-only, DRC-new, upgrade, unqueried.
+        # Use the public Rectangle.get_height() API rather than the internal
+        # BarContainer.datavalues attribute.
+        heights = [c[0].get_height() for c in bars]
 
         # PS-only: A → 1
         assert heights[0] == 1, f"Expected PS-only=1, got {heights[0]}"
