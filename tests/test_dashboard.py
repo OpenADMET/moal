@@ -2,19 +2,16 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import numpy as np
 import pytest
 
 from moal.dashboard import LiveDashboard
 from moal.evaluation import ModelMetric
 from moal.types import CensoringType, LabelRecord, QueryType
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_record(
     iteration: int,
@@ -43,7 +40,11 @@ def _make_records(n: int = 6) -> list[LabelRecord]:
         ct = CensoringType.EXACT if i % 2 == 0 else CensoringType.INTERVAL
         fid = QueryType.DOSE_RESPONSE if i % 2 == 0 else QueryType.PRIMARY_SCREEN
         v = 5.0 + i * 0.5
-        records.append(_make_record(i // 2, v, ct, fid, cost=10.0 if fid == QueryType.DOSE_RESPONSE else 1.0))
+        records.append(
+            _make_record(
+                i // 2, v, ct, fid, cost=10.0 if fid == QueryType.DOSE_RESPONSE else 1.0
+            )
+        )
     return records
 
 
@@ -51,8 +52,10 @@ def _make_records(n: int = 6) -> list[LabelRecord]:
 # Headless dashboard tests
 # ---------------------------------------------------------------------------
 
+
 class TestDashboardHeadless:
     """Tests that LiveDashboard operates correctly in headless mode (show=False, file output only)."""
+
     def test_creates_figure_with_4_axes(self, tmp_path):
         """The figure must have 4 primary axes plus 1 twin axis for cost at construction time."""
         db = LiveDashboard(n_iterations=5, n_compounds=20, show=False)
@@ -66,9 +69,13 @@ class TestDashboardHeadless:
         records = _make_records(6)
         initial_count = len(db._fig.get_axes())
         for i in range(10):
-            db.update(records, activity_threshold=7.0,
-                      iter_drc_cost=10.0, iter_ps_cost=2.0,
-                      model_metric_value=float(i))
+            db.update(
+                records,
+                activity_threshold=7.0,
+                iter_drc_cost=10.0,
+                iter_ps_cost=2.0,
+                model_metric_value=float(i),
+            )
         assert len(db._fig.get_axes()) == initial_count
         db.close()
 
@@ -78,8 +85,12 @@ class TestDashboardHeadless:
         db = LiveDashboard(n_iterations=3, n_compounds=20, show=False)
         records = _make_records(4)
         for i in range(n_updates):
-            db.update(records, activity_threshold=7.0,
-                      iter_drc_cost=10.0 * (i + 1), iter_ps_cost=float(i + 1))
+            db.update(
+                records,
+                activity_threshold=7.0,
+                iter_drc_cost=10.0 * (i + 1),
+                iter_ps_cost=float(i + 1),
+            )
         db.close()
         assert len(db._frames) == n_updates
 
@@ -102,13 +113,19 @@ class TestDashboardHeadless:
 
 class TestDashboardNoTestSet:
     """Tests for dashboard rendering when no model evaluation test set is configured."""
+
     def test_no_metric_shows_annotation(self, tmp_path):
         """Model performance panel should show annotation when no test set data."""
         db = LiveDashboard(n_iterations=3, n_compounds=20, show=False)
         records = _make_records(4)
         # No model_metric_value → panel should contain annotation text.
-        db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=2.0,
-                  model_metric_value=None)
+        db.update(
+            records,
+            activity_threshold=7.0,
+            iter_drc_cost=5.0,
+            iter_ps_cost=2.0,
+            model_metric_value=None,
+        )
         # Check that panel 3 has text artists (the annotation).
         texts = [t.get_text() for t in db._ax3.texts]
         assert any("No test set" in t for t in texts)
@@ -119,23 +136,38 @@ class TestDashboardNoTestSet:
         db = LiveDashboard(n_iterations=3, n_compounds=20, show=False)
         records = _make_records(6)
         for val in [1.0, 0.8, 0.6]:
-            db.update(records, activity_threshold=7.0,
-                      iter_drc_cost=10.0, iter_ps_cost=2.0,
-                      model_metric_value=val)
+            db.update(
+                records,
+                activity_threshold=7.0,
+                iter_drc_cost=10.0,
+                iter_ps_cost=2.0,
+                model_metric_value=val,
+            )
         assert len(db._model_metric_values) == 3
         db.close()
 
 
 class TestDashboardMetricHistory:
     """Tests for internal history accumulation (cost stacks and model metric values) across multiple updates."""
+
     def test_metric_and_cost_stacks_accumulated(self, tmp_path):
         """After two updates, both cost-stack lists and the model-metric-value list must contain exactly two entries each."""
         db = LiveDashboard(n_iterations=3, n_compounds=20, show=False)
         records = _make_records(4)
-        db.update(records, activity_threshold=7.0, iter_drc_cost=10.0, iter_ps_cost=2.0,
-                  model_metric_value=2.0)
-        db.update(records, activity_threshold=7.0, iter_drc_cost=20.0, iter_ps_cost=4.0,
-                  model_metric_value=1.5)
+        db.update(
+            records,
+            activity_threshold=7.0,
+            iter_drc_cost=10.0,
+            iter_ps_cost=2.0,
+            model_metric_value=2.0,
+        )
+        db.update(
+            records,
+            activity_threshold=7.0,
+            iter_drc_cost=20.0,
+            iter_ps_cost=4.0,
+            model_metric_value=1.5,
+        )
         assert db._model_metric_values == [2.0, 1.5]
         assert db._iter_drc_costs == [10.0, 20.0]
         assert db._iter_ps_costs == [2.0, 4.0]
@@ -144,11 +176,17 @@ class TestDashboardMetricHistory:
     @pytest.mark.parametrize("metric", list(ModelMetric))
     def test_all_model_metrics_accepted(self, metric, tmp_path):
         """Every ModelMetric enum value must be accepted by LiveDashboard without raising, ensuring forward compatibility."""
-        db = LiveDashboard(n_iterations=3, n_compounds=20, model_metric=metric, show=False)
+        db = LiveDashboard(
+            n_iterations=3, n_compounds=20, model_metric=metric, show=False
+        )
         records = _make_records(4)
-        db.update(records, activity_threshold=7.0,
-                  iter_drc_cost=5.0, iter_ps_cost=1.0,
-                  model_metric_value=0.5)
+        db.update(
+            records,
+            activity_threshold=7.0,
+            iter_drc_cost=5.0,
+            iter_ps_cost=1.0,
+            model_metric_value=0.5,
+        )
         db.close()
 
 
@@ -162,7 +200,9 @@ class TestSaveGif:
         db = LiveDashboard(n_iterations=3, n_compounds=20, show=False)
         records = _make_records(4)
         for _ in range(3):
-            db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
+            db.update(
+                records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0
+            )
 
         gif_path = tmp_path / "animation.gif"
         db.save_gif(gif_path)
@@ -195,7 +235,9 @@ class TestSaveGif:
         db = LiveDashboard(n_iterations=3, n_compounds=20, show=False)
         records = _make_records(4)
         for _ in range(3):
-            db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
+            db.update(
+                records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0
+            )
 
         gif_path = tmp_path / "animation.gif"
         db.save_gif(gif_path, frame_duration_ms=500, last_frame_duration_ms=5000)
@@ -212,7 +254,9 @@ class TestSaveGif:
 
         assert len(frame_durations) == 3
         assert frame_durations[-1] == 5000, "Last frame must use last_frame_duration_ms"
-        assert all(d == 500 for d in frame_durations[:-1]), "Non-final frames must use frame_duration_ms"
+        assert all(d == 500 for d in frame_durations[:-1]), (
+            "Non-final frames must use frame_duration_ms"
+        )
 
     def test_single_frame_gif_uses_last_frame_duration(self, tmp_path):
         """A single-frame GIF should still apply last_frame_duration_ms to that frame."""
@@ -234,8 +278,10 @@ class TestSaveGif:
 # Compound status panel tests
 # ---------------------------------------------------------------------------
 
+
 class TestCompoundStatusPanel:
     """Tests for the compound status bar panel (PS-only, DRC-new, upgrades, unqueried)."""
+
     def test_bar_counts_with_mixed_records(self, tmp_path):
         """PS-only, DRC-new, and upgrades are correctly partitioned."""
         from moal.types import CensoringType, QueryType
@@ -245,7 +291,11 @@ class TestCompoundStatusPanel:
         #   - smiles "B": PS then DRC (upgrade)
         #   - smiles "C": DRC first-pass
         def _rec(smi, fidelity, value=6.0, cost=1.0):
-            ct = CensoringType.EXACT if fidelity == QueryType.DOSE_RESPONSE else CensoringType.INTERVAL
+            ct = (
+                CensoringType.EXACT
+                if fidelity == QueryType.DOSE_RESPONSE
+                else CensoringType.INTERVAL
+            )
             return LabelRecord(
                 smiles=smi,
                 canonical_smiles=smi,

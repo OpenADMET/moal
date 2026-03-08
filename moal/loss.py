@@ -196,7 +196,7 @@ class CensoredRegressionLoss(nn.Module):
 
         _nan = torch.tensor(float("nan"))
         drc_mean = torch.stack(drc_losses).mean() if drc_losses else _nan
-        ps_mean  = torch.stack(ps_losses).mean()  if ps_losses  else _nan
+        ps_mean = torch.stack(ps_losses).mean() if ps_losses else _nan
         all_losses = drc_losses + ps_losses
         total = torch.stack(all_losses).mean()
 

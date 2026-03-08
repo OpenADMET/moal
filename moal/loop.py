@@ -142,7 +142,9 @@ class ActiveLearningLoop:
         # linspace(a, a, n) naturally handles the constant-error case.
         noise_schedule: np.ndarray | None = None
         if isinstance(self.model, NoisyOracleModel):
-            noise_schedule = np.linspace(self.initial_error, self.final_error, n_iterations)
+            noise_schedule = np.linspace(
+                self.initial_error, self.final_error, n_iterations
+            )
 
         _console.print(
             f"[bold]moal[/bold] campaign starting — "
@@ -159,18 +161,23 @@ class ActiveLearningLoop:
         ps_labeled = self.oracle.get_ps_labeled_smiles()
         all_scorable = unlabeled + ps_labeled
         if all_scorable:
-            all_preds = self._predict(all_scorable, noise_schedule[0] if noise_schedule is not None else None)
-            unlabeled_preds = all_preds[:len(unlabeled)]
-            ps_labeled_preds = all_preds[len(unlabeled):]
+            all_preds = self._predict(
+                all_scorable, noise_schedule[0] if noise_schedule is not None else None
+            )
+            unlabeled_preds = all_preds[: len(unlabeled)]
+            ps_labeled_preds = all_preds[len(unlabeled) :]
         else:
             unlabeled_preds = ps_labeled_preds = np.array([])
         pending_queries = (
             self.acquisition.select(
-                unlabeled, unlabeled_preds, k_per_iteration,
+                unlabeled,
+                unlabeled_preds,
+                k_per_iteration,
                 ps_labeled_smiles=ps_labeled,
                 ps_labeled_predictions=ps_labeled_preds if ps_labeled else None,
             )
-            if all_scorable else []
+            if all_scorable
+            else []
         )
 
         total_steps = n_iterations * 3
@@ -194,9 +201,10 @@ class ActiveLearningLoop:
                 # progress display without waiting for oracle results.
                 ps_labeled_before = set(self.oracle.get_ps_labeled_smiles())
                 n_drc = sum(1 for _, qt in queries if qt == QueryType.DOSE_RESPONSE)
-                n_ps  = sum(1 for _, qt in queries if qt == QueryType.PRIMARY_SCREEN)
+                n_ps = sum(1 for _, qt in queries if qt == QueryType.PRIMARY_SCREEN)
                 n_drc_upgrade_planned = sum(
-                    1 for smi, qt in queries
+                    1
+                    for smi, qt in queries
                     if qt == QueryType.DOSE_RESPONSE and smi in ps_labeled_before
                 )
                 n_drc_new_planned = n_drc - n_drc_upgrade_planned
@@ -228,7 +236,9 @@ class ActiveLearningLoop:
                     r.cost for r in new_records if r.fidelity == QueryType.DOSE_RESPONSE
                 )
                 iter_ps_cost = sum(
-                    r.cost for r in new_records if r.fidelity == QueryType.PRIMARY_SCREEN
+                    r.cost
+                    for r in new_records
+                    if r.fidelity == QueryType.PRIMARY_SCREEN
                 )
                 progress.advance(task)
 
@@ -273,8 +283,13 @@ class ActiveLearningLoop:
                 if self.test_set is not None:
                     test_smiles, test_pec50 = self.test_set
                     model_metric_value = self.evaluator.evaluate_model(
-                        self.model, test_smiles, test_pec50, self.model_metric,
-                        noise_scale=noise_schedule[iteration] if noise_schedule is not None else None,
+                        self.model,
+                        test_smiles,
+                        test_pec50,
+                        self.model_metric,
+                        noise_scale=noise_schedule[iteration]
+                        if noise_schedule is not None
+                        else None,
                     )
                 progress.advance(task)
 
@@ -294,14 +309,20 @@ class ActiveLearningLoop:
                 if all_remaining:
                     all_preds = self._predict(
                         all_remaining,
-                        noise_schedule[iteration] if noise_schedule is not None else None,
+                        noise_schedule[iteration]
+                        if noise_schedule is not None
+                        else None,
                     )
-                    unlabeled_preds = all_preds[:len(remaining_unlabeled)]
-                    ps_labeled_preds = all_preds[len(remaining_unlabeled):]
+                    unlabeled_preds = all_preds[: len(remaining_unlabeled)]
+                    ps_labeled_preds = all_preds[len(remaining_unlabeled) :]
                     pending_queries = self.acquisition.select(
-                        remaining_unlabeled, unlabeled_preds, k_per_iteration,
+                        remaining_unlabeled,
+                        unlabeled_preds,
+                        k_per_iteration,
                         ps_labeled_smiles=remaining_ps_labeled,
-                        ps_labeled_predictions=ps_labeled_preds if remaining_ps_labeled else None,
+                        ps_labeled_predictions=ps_labeled_preds
+                        if remaining_ps_labeled
+                        else None,
                     )
                 else:
                     pending_queries = []
@@ -340,7 +361,10 @@ class ActiveLearningLoop:
                     )
 
                 if not all_remaining:
-                    progress.update(task, description="[green]All compounds queried — stopping early.")
+                    progress.update(
+                        task,
+                        description="[green]All compounds queried — stopping early.",
+                    )
                     break
 
         results.final_metrics = self.evaluator.evaluate(
@@ -372,7 +396,9 @@ class ActiveLearningLoop:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _predict(self, smiles_list: list[str], noise_scale: float | None = None) -> np.ndarray:
+    def _predict(
+        self, smiles_list: list[str], noise_scale: float | None = None
+    ) -> np.ndarray:
         """Route inference to the appropriate model backend.
 
         Passes ``noise_scale`` to ``NoisyOracleModel`` to support per-iteration

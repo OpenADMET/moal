@@ -11,7 +11,6 @@ pEC50 predictions) to verify that:
 
 from __future__ import annotations
 
-from typing import Any
 from unittest.mock import create_autospec, patch
 
 import numpy as np
@@ -24,9 +23,7 @@ from moal.evaluation import PipelineEvaluator
 from moal.loop import ActiveLearningLoop
 from moal.model import ChemPropLightningModule
 from moal.oracle import CostAwareOracle
-from moal.preprocessing import SMILESPreprocessor
-from moal.types import LabelRecord, QueryType
-
+from moal.types import QueryType
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -69,8 +66,8 @@ _SMILES = [
 # Assign synthetic pEC50 values: roughly normal, 3 compounds are "active" (>7).
 _RNG = np.random.default_rng(42)
 _PECS50 = _RNG.normal(6.0, 1.2, len(_SMILES)).tolist()
-_PECS50[2] = 7.8   # phenol — active
-_PECS50[5] = 8.1   # naphthalene — active
+_PECS50[2] = 7.8  # phenol — active
+_PECS50[5] = 8.1  # naphthalene — active
 _PECS50[23] = 7.3  # biphenyl — active
 
 
@@ -149,6 +146,7 @@ K = 5
 
 class TestLoopExecution:
     """Integration tests verifying that the loop runs correctly and manages the labeled pool and cost."""
+
     def test_correct_number_of_iterations(self, loop):
         """The results list must contain exactly n_iterations entries, confirming the loop ran the requested number of times."""
         results = loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
@@ -195,9 +193,7 @@ class TestLoopExecution:
         both pools entirely).  It must never grow.
         """
         loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
-        call_sizes = [
-            len(c.args[0]) for c in mock_model.predict_smiles.call_args_list
-        ]
+        call_sizes = [len(c.args[0]) for c in mock_model.predict_smiles.call_args_list]
         assert all(s1 >= s2 for s1, s2 in zip(call_sizes, call_sizes[1:])), (
             f"Scorable pool grew between iterations; sizes: {call_sizes}"
         )
@@ -205,6 +201,7 @@ class TestLoopExecution:
 
 class TestMetrics:
     """Tests that iteration-level metrics are finite, consistent, and within expected bounds."""
+
     def test_metrics_are_finite(self, loop):
         """All numeric metrics must be finite after every iteration; nan or inf would indicate a data pipeline bug."""
         results = loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
@@ -218,10 +215,13 @@ class TestMetrics:
         assert "total_cost" in results.final_metrics
         assert results.final_metrics["total_cost"] == pytest.approx(results.total_cost)
 
-    @pytest.mark.parametrize("key,lo,hi", [
-        ("actives_per_dollar", 0.0, None),
-        ("recall",             0.0, 1.0),
-    ])
+    @pytest.mark.parametrize(
+        "key,lo,hi",
+        [
+            ("actives_per_dollar", 0.0, None),
+            ("recall", 0.0, 1.0),
+        ],
+    )
     def test_metric_in_bounds(self, loop, key, lo, hi):
         """Recall must lie in [0, 1] and actives_per_dollar must be non-negative across all iterations."""
         results = loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
@@ -250,12 +250,16 @@ class TestEarlyStop:
         rng = np.random.default_rng(99)
 
         mock = create_autospec(ChemPropLightningModule, instance=True)
-        mock.predict_smiles.side_effect = lambda s, **kw: rng.normal(6.0, 1.0, len(s)).astype(np.float32)
+        mock.predict_smiles.side_effect = lambda s, **kw: rng.normal(
+            6.0, 1.0, len(s)
+        ).astype(np.float32)
         mock.refit.return_value = mock
 
         acq = CostAwareGreedyAcquisition(cost_ps=1.0, cost_drc=10.0)
         ev = PipelineEvaluator()
-        loop = ActiveLearningLoop(oracle=oracle, model=mock, acquisition=acq, evaluator=ev)
+        loop = ActiveLearningLoop(
+            oracle=oracle, model=mock, acquisition=acq, evaluator=ev
+        )
 
         results = loop.run(n_iterations=100, k_per_iteration=5)
         # At most 10 unique compounds could be queried; each may contribute 2 records
@@ -359,12 +363,12 @@ class TestIsCanonicalForwarding:
         # Kekulé SMILES that RDKit would canonicalize to lowercase aromatic
         # equivalents — these are the raw CSV keys when is_canonical=True.
         kekule_smiles = [
-            "C1=CC=CC=C1",       # benzene (canonical: c1ccccc1)
-            "C1=CC=C(O)C=C1",    # phenol (canonical: Oc1ccccc1)
-            "C1=CC=C(N)C=C1",    # aniline (canonical: Nc1ccccc1)
-            "C1=CC=NC=C1",       # pyridine (canonical: c1ccncc1)
-            "C1=CC=CO1",         # furan (canonical: c1ccoc1)
-            "CC(=O)O",           # acetic acid (already canonical)
+            "C1=CC=CC=C1",  # benzene (canonical: c1ccccc1)
+            "C1=CC=C(O)C=C1",  # phenol (canonical: Oc1ccccc1)
+            "C1=CC=C(N)C=C1",  # aniline (canonical: Nc1ccccc1)
+            "C1=CC=NC=C1",  # pyridine (canonical: c1ccncc1)
+            "C1=CC=CO1",  # furan (canonical: c1ccoc1)
+            "CC(=O)O",  # acetic acid (already canonical)
         ]
         pec50s = [5.0, 7.8, 6.2, 5.5, 4.9, 6.0]
         df = pd.DataFrame({"smiles": kekule_smiles, "pec50": pec50s})
@@ -375,29 +379,40 @@ class TestIsCanonicalForwarding:
             cost_drc=10.0,
             ps_threshold=5.0,
             upper_bound=11.0,
-            is_canonical=True,   # keys stored verbatim, no RDKit canonicalization
+            is_canonical=True,  # keys stored verbatim, no RDKit canonicalization
         )
 
         # NoisyOracleModel gets the same dict, so lookups in predict_smiles match.
         model = NoisyOracleModel(oracle._ground_truth, seed=0)
         acquisition = CostAwareGreedyAcquisition(
-            cost_ps=1.0, cost_drc=10.0, ps_threshold=5.0,
-            target_threshold=7.0, tau=0.5,
+            cost_ps=1.0,
+            cost_drc=10.0,
+            ps_threshold=5.0,
+            target_threshold=7.0,
+            tau=0.5,
         )
         evaluator = PipelineEvaluator(activity_threshold=7.0, upper_bound=11.0)
         loop = ActiveLearningLoop(
-            oracle=oracle, model=model, acquisition=acquisition, evaluator=evaluator,
-            initial_error=0.0, final_error=0.0,
+            oracle=oracle,
+            model=model,
+            acquisition=acquisition,
+            evaluator=evaluator,
+            initial_error=0.0,
+            final_error=0.0,
         )
 
         results = loop.run(n_iterations=2, k_per_iteration=2)
 
         # The oracle must have labeled compounds — if the bug were present,
         # every query would have been silently skipped and the pool would be empty.
-        assert oracle.labeled_records, "No compounds were labeled — query_batch likely skipped all"
+        assert oracle.labeled_records, (
+            "No compounds were labeled — query_batch likely skipped all"
+        )
         # Each (SMILES, fidelity) pair must be unique — a compound may have both
         # PS and DRC records after an upgrade, but never two of the same fidelity.
-        key_fidelity_pairs = [(r.canonical_smiles, r.fidelity) for r in oracle.labeled_records]
+        key_fidelity_pairs = [
+            (r.canonical_smiles, r.fidelity) for r in oracle.labeled_records
+        ]
         assert len(key_fidelity_pairs) == len(set(key_fidelity_pairs))
         # Total cost must be positive (at least one successful query).
         assert results.total_cost > 0
@@ -411,31 +426,48 @@ class TestPSUpgradeInLoop:
         """Small pool where several compounds will get INTERVAL PS labels."""
         # pEC50 values chosen so: phenol (7.8) and naphthalene (8.1) are
         # above ps_threshold=5.0 → INTERVAL censoring → eligible for DRC upgrade.
-        data = pd.DataFrame({
-            "smiles": ["c1ccccc1", "c1ccc(O)cc1", "c1ccc2ccccc2c1",
-                       "c1ccc(N)cc1", "CCO", "CC(=O)O"],
-            "pec50": [4.0, 7.8, 8.1, 5.5, 6.0, 3.0],
-        })
+        data = pd.DataFrame(
+            {
+                "smiles": [
+                    "c1ccccc1",
+                    "c1ccc(O)cc1",
+                    "c1ccc2ccccc2c1",
+                    "c1ccc(N)cc1",
+                    "CCO",
+                    "CC(=O)O",
+                ],
+                "pec50": [4.0, 7.8, 8.1, 5.5, 6.0, 3.0],
+            }
+        )
         return CostAwareOracle(
             ground_truth_df=data,
-            cost_ps=1.0, cost_drc=10.0,
-            ps_threshold=5.0, upper_bound=11.0,
+            cost_ps=1.0,
+            cost_drc=10.0,
+            ps_threshold=5.0,
+            upper_bound=11.0,
         )
 
     @pytest.fixture
     def upgrade_loop(self, upgrade_oracle):
         """ActiveLearningLoop wired to upgrade_oracle using NoisyOracleModel with zero noise for deterministic upgrades."""
         from moal.model import NoisyOracleModel
+
         model = NoisyOracleModel(upgrade_oracle._ground_truth, seed=0)
         acquisition = CostAwareGreedyAcquisition(
-            cost_ps=1.0, cost_drc=10.0, ps_threshold=5.0,
-            target_threshold=7.0, tau=0.5,
+            cost_ps=1.0,
+            cost_drc=10.0,
+            ps_threshold=5.0,
+            target_threshold=7.0,
+            tau=0.5,
         )
         evaluator = PipelineEvaluator(activity_threshold=7.0, upper_bound=11.0)
         return ActiveLearningLoop(
-            oracle=upgrade_oracle, model=model,
-            acquisition=acquisition, evaluator=evaluator,
-            initial_error=0.0, final_error=0.0,
+            oracle=upgrade_oracle,
+            model=model,
+            acquisition=acquisition,
+            evaluator=evaluator,
+            initial_error=0.0,
+            final_error=0.0,
         )
 
     def test_upgrade_produces_both_records(self, upgrade_loop, upgrade_oracle):
@@ -445,19 +477,25 @@ class TestPSUpgradeInLoop:
         records = upgrade_oracle.labeled_records
         # Group by canonical SMILES
         from collections import defaultdict
+
         by_smiles: dict = defaultdict(list)
         for r in records:
             by_smiles[r.canonical_smiles].append(r.fidelity)
         upgraded = {
-            smi for smi, fids in by_smiles.items()
+            smi
+            for smi, fids in by_smiles.items()
             if QueryType.PRIMARY_SCREEN in fids and QueryType.DOSE_RESPONSE in fids
         }
-        assert upgraded, "Expected at least one compound to have both PS and DRC records"
+        assert upgraded, (
+            "Expected at least one compound to have both PS and DRC records"
+        )
 
     def test_no_duplicate_fidelity_pairs(self, upgrade_loop, upgrade_oracle):
         """Each (smiles, fidelity) pair must appear at most once in labeled_records."""
         upgrade_loop.run(n_iterations=4, k_per_iteration=2)
-        pairs = [(r.canonical_smiles, r.fidelity) for r in upgrade_oracle.labeled_records]
+        pairs = [
+            (r.canonical_smiles, r.fidelity) for r in upgrade_oracle.labeled_records
+        ]
         assert len(pairs) == len(set(pairs))
 
     def test_cost_includes_both_ps_and_drc(self, upgrade_loop, upgrade_oracle):
@@ -466,7 +504,9 @@ class TestPSUpgradeInLoop:
         manual_cost = sum(r.cost for r in upgrade_oracle.labeled_records)
         assert upgrade_oracle.total_cost == pytest.approx(manual_cost)
 
-    def test_ps_labeled_pool_shrinks_as_upgrades_happen(self, upgrade_loop, upgrade_oracle):
+    def test_ps_labeled_pool_shrinks_as_upgrades_happen(
+        self, upgrade_loop, upgrade_oracle
+    ):
         """After enough iterations, the PS-labeled pool should shrink to zero
         as all INTERVAL-censored hits are upgraded to DRC."""
         # Run enough iterations to exhaust the whole pool
@@ -482,8 +522,16 @@ class TestPSUpgradeInLoop:
 # Small pool used across ramp tests — enough compounds for several iterations
 # without exhausting the pool on the first pass.
 _RAMP_SMILES = [
-    "c1ccccc1", "CCO", "c1ccc(O)cc1", "c1ccncc1", "c1ccoc1",
-    "CC(C)O", "CCCO", "c1ccc(F)cc1", "c1ccc(Cl)cc1", "Cc1ccccc1",
+    "c1ccccc1",
+    "CCO",
+    "c1ccc(O)cc1",
+    "c1ccncc1",
+    "c1ccoc1",
+    "CC(C)O",
+    "CCCO",
+    "c1ccc(F)cc1",
+    "c1ccc(Cl)cc1",
+    "Cc1ccccc1",
 ]
 _RAMP_PECS50 = [4.0, 6.0, 7.5, 5.5, 4.9, 5.8, 6.2, 4.3, 5.1, 6.7]
 
@@ -509,15 +557,23 @@ class TestNoisyOracleErrorRamp:
 
     def _make_loop(self, oracle, initial_error, final_error):
         from moal.model import NoisyOracleModel
+
         model = NoisyOracleModel(oracle._ground_truth, seed=0)
         acq = CostAwareGreedyAcquisition(
-            cost_ps=1.0, cost_drc=10.0, ps_threshold=5.0,
-            target_threshold=7.0, tau=0.5,
+            cost_ps=1.0,
+            cost_drc=10.0,
+            ps_threshold=5.0,
+            target_threshold=7.0,
+            tau=0.5,
         )
         ev = PipelineEvaluator(activity_threshold=7.0, upper_bound=11.0)
         return model, ActiveLearningLoop(
-            oracle=oracle, model=model, acquisition=acq, evaluator=ev,
-            initial_error=initial_error, final_error=final_error,
+            oracle=oracle,
+            model=model,
+            acquisition=acq,
+            evaluator=ev,
+            initial_error=initial_error,
+            final_error=final_error,
         )
 
     def test_ramp_dispatches_correct_noise_per_iteration(self, ramp_oracle):
@@ -527,7 +583,6 @@ class TestNoisyOracleErrorRamp:
         iteration i should receive schedule[i]. Spy on predict_smiles to capture
         all noise_scale arguments while allowing real predictions through.
         """
-        from moal.model import NoisyOracleModel
 
         initial, final = 0.8, 0.2
         expected_schedule = np.linspace(initial, final, self.N_ITER)
@@ -549,14 +604,15 @@ class TestNoisyOracleErrorRamp:
             f"Expected at least {self.N_ITER + 1} predict_smiles calls, got {len(captured)}"
         )
         iter_noise_scales = captured[1 : self.N_ITER + 1]
-        for i, (actual, expected) in enumerate(zip(iter_noise_scales, expected_schedule)):
+        for i, (actual, expected) in enumerate(
+            zip(iter_noise_scales, expected_schedule)
+        ):
             assert actual == pytest.approx(expected, abs=1e-7), (
                 f"Iteration {i}: expected noise_scale={expected:.6f}, got {actual:.6f}"
             )
 
     def test_constant_ramp_when_initial_equals_final(self, ramp_oracle):
         """When initial_error == final_error, every predict_smiles call must use that value."""
-        from moal.model import NoisyOracleModel
 
         noise_val = 0.5
         model, loop = self._make_loop(ramp_oracle, noise_val, noise_val)
@@ -578,7 +634,6 @@ class TestNoisyOracleErrorRamp:
 
     def test_pre_loop_call_uses_initial_error(self, ramp_oracle):
         """The pre-loop seed call (before iteration 0) must use initial_error, not final_error."""
-        from moal.model import NoisyOracleModel
 
         initial, final = 0.9, 0.1
         model, loop = self._make_loop(ramp_oracle, initial, final)

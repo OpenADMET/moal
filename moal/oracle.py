@@ -144,7 +144,9 @@ class CostAwareOracle:
 
         for key, pec50 in keyed_pairs:
             if key in ground_truth:
-                logger.warning("Duplicate SMILES in ground truth, keeping first: %s", key)
+                logger.warning(
+                    "Duplicate SMILES in ground truth, keeping first: %s", key
+                )
                 continue
             ground_truth[key] = pec50
 
@@ -293,7 +295,9 @@ class CostAwareOracle:
         records: list[LabelRecord] = []
         for smiles, qt in unique_queries:
             try:
-                records.append(self.query(smiles, qt, iteration, is_canonical=is_canonical))
+                records.append(
+                    self.query(smiles, qt, iteration, is_canonical=is_canonical)
+                )
             except (ValueError, KeyError) as exc:
                 logger.warning("Skipping query (%s, %s): %s", smiles, qt, exc)
         return records
@@ -366,7 +370,10 @@ class CostAwareOracle:
         # within the same iteration the PS record precedes the DRC upgrade.
         return sorted(
             flat,
-            key=lambda r: (r.iteration, 0 if r.fidelity == QueryType.PRIMARY_SCREEN else 1),
+            key=lambda r: (
+                r.iteration,
+                0 if r.fidelity == QueryType.PRIMARY_SCREEN else 1,
+            ),
         )
 
     @property

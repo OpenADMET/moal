@@ -38,8 +38,8 @@ logger = logging.getLogger(__name__)
 #   chiral_tag (4), num_Hs (5), hybridization (5), aromaticity (1),
 #   mass (1)  →  total = 127 (atom), bond: 14 (type + stereo + conjugated etc.)
 
-_CHEMPELEON_ATOM_FDIM: int = 72   # as used in CheMeleon / default chemprop v2
-_CHEMPELEON_BOND_FDIM: int = 14   # as used in CheMeleon / default chemprop v2
+_CHEMPELEON_ATOM_FDIM: int = 72  # as used in CheMeleon / default chemprop v2
+_CHEMPELEON_BOND_FDIM: int = 14  # as used in CheMeleon / default chemprop v2
 
 
 def _assert_feature_dims(model: nn.Module) -> None:
@@ -201,7 +201,9 @@ class ChemPropLightningModule(L.LightningModule):
         return list(self.model.message_passing.parameters())
 
     def _head_params(self) -> list[nn.Parameter]:
-        return list(self.model.agg.parameters()) + list(self.model.predictor.parameters())
+        return list(self.model.agg.parameters()) + list(
+            self.model.predictor.parameters()
+        )
 
     def _freeze_encoder(self) -> None:
         for p in self._encoder_params():
@@ -228,7 +230,9 @@ class ChemPropLightningModule(L.LightningModule):
     def forward(self, batch_mol_graph: Any) -> Tensor:
         return self.model(batch_mol_graph).squeeze(-1)
 
-    def training_step(self, batch: tuple[Any, list[LabelRecord]], batch_idx: int) -> Tensor:
+    def training_step(
+        self, batch: tuple[Any, list[LabelRecord]], batch_idx: int
+    ) -> Tensor:
         mol_graph, records = batch
         predictions = self(mol_graph)
         breakdown = self.loss_fn.forward_with_breakdown(predictions, records)
@@ -239,7 +243,9 @@ class ChemPropLightningModule(L.LightningModule):
             self.log("train_ps_loss", breakdown.ps_loss, batch_size=len(records))
         return breakdown.total
 
-    def validation_step(self, batch: tuple[Any, list[LabelRecord]], batch_idx: int) -> None:
+    def validation_step(
+        self, batch: tuple[Any, list[LabelRecord]], batch_idx: int
+    ) -> None:
         mol_graph, records = batch
         predictions = self(mol_graph)
         breakdown = self.loss_fn.forward_with_breakdown(predictions, records)
@@ -252,7 +258,9 @@ class ChemPropLightningModule(L.LightningModule):
     def configure_optimizers(self) -> Adam:
         param_groups = [{"params": self._head_params(), "lr": self.lr_head}]
         if not self._encoder_frozen:
-            param_groups.append({"params": self._encoder_params(), "lr": self.lr_encoder})
+            param_groups.append(
+                {"params": self._encoder_params(), "lr": self.lr_encoder}
+            )
         return Adam(param_groups)
 
     # ------------------------------------------------------------------
@@ -260,7 +268,9 @@ class ChemPropLightningModule(L.LightningModule):
     # ------------------------------------------------------------------
 
     @torch.no_grad()
-    def predict_smiles(self, smiles_list: list[str], batch_size: int = 256) -> np.ndarray:
+    def predict_smiles(
+        self, smiles_list: list[str], batch_size: int = 256
+    ) -> np.ndarray:
         """Run batch inference over a list of canonical SMILES.
 
         Parameters

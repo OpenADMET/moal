@@ -12,11 +12,11 @@ from moal.types import CensoringType, QueryType
 _GT_DATA = pd.DataFrame(
     {
         "smiles": [
-            "c1ccccc1",        # benzene  — pEC50 4.0 (below ps_threshold 5.0)
-            "c1ccc(N)cc1",     # aniline  — pEC50 5.5 (above ps_threshold, below 7)
-            "c1ccc(O)cc1",     # phenol   — pEC50 7.5 (active)
-            "CC(=O)O",         # acetic acid — pEC50 3.0
-            "CCO",             # ethanol  — pEC50 6.0
+            "c1ccccc1",  # benzene  — pEC50 4.0 (below ps_threshold 5.0)
+            "c1ccc(N)cc1",  # aniline  — pEC50 5.5 (above ps_threshold, below 7)
+            "c1ccc(O)cc1",  # phenol   — pEC50 7.5 (active)
+            "CC(=O)O",  # acetic acid — pEC50 3.0
+            "CCO",  # ethanol  — pEC50 6.0
             "c1ccc2ccccc2c1",  # naphthalene — pEC50 8.0 (active)
         ],
         "pec50": [4.0, 5.5, 7.5, 3.0, 6.0, 8.0],
@@ -41,6 +41,7 @@ def _make_oracle(**kwargs) -> CostAwareOracle:
 
 class TestOracleInit:
     """Tests for CostAwareOracle construction: compound count, active count, and input validation."""
+
     def test_n_compounds(self):
         """Oracle must store every compound from the DataFrame without dropping or duplicating any."""
         oracle = _make_oracle()
@@ -64,6 +65,7 @@ class TestOracleInit:
 
 class TestPrimaryScreenQueries:
     """Tests that PS queries produce the correct censoring type and bounds based on pEC50 vs ps_threshold."""
+
     def test_below_threshold_gives_left_label(self):
         """A compound with pEC50 < ps_threshold must receive a LEFT-censored label, confirming it as inactive."""
         oracle = _make_oracle()
@@ -85,6 +87,7 @@ class TestPrimaryScreenQueries:
 
 class TestDRCQueries:
     """Tests that DRC queries produce EXACT labels with the true pEC50 value and correct cost."""
+
     def test_exact_label(self):
         """A DRC query must return the true pEC50 as an EXACT label and charge cost_drc."""
         oracle = _make_oracle()
@@ -96,6 +99,7 @@ class TestDRCQueries:
 
 class TestCostTracking:
     """Tests for total_cost accumulation after single and multiple queries."""
+
     def test_cost_accumulates(self):
         """Total cost must equal the sum of all individual assay costs after querying several compounds."""
         oracle = _make_oracle()
@@ -111,11 +115,27 @@ class TestCostTracking:
 
 class TestDeduplication:
     """Tests that re-querying a compound at the same or incompatible fidelity raises ValueError."""
-    @pytest.mark.parametrize("first_qt,second_qt,match", [
-        (QueryType.PRIMARY_SCREEN,  QueryType.PRIMARY_SCREEN,  "already has a PS label"),
-        (QueryType.DOSE_RESPONSE,   QueryType.PRIMARY_SCREEN,  "already has a DRC label"),
-        (QueryType.DOSE_RESPONSE,   QueryType.DOSE_RESPONSE,   "already has a DRC label"),
-    ])
+
+    @pytest.mark.parametrize(
+        "first_qt,second_qt,match",
+        [
+            (
+                QueryType.PRIMARY_SCREEN,
+                QueryType.PRIMARY_SCREEN,
+                "already has a PS label",
+            ),
+            (
+                QueryType.DOSE_RESPONSE,
+                QueryType.PRIMARY_SCREEN,
+                "already has a DRC label",
+            ),
+            (
+                QueryType.DOSE_RESPONSE,
+                QueryType.DOSE_RESPONSE,
+                "already has a DRC label",
+            ),
+        ],
+    )
     def test_duplicate_query_raises(self, first_qt, second_qt, match):
         """Re-querying a compound at an already-labeled fidelity must raise ValueError to prevent duplicate records."""
         oracle = _make_oracle()
@@ -137,6 +157,7 @@ class TestDeduplication:
 
 class TestUnlabeledPool:
     """Tests for the unlabeled-pool management: initial state and shrinkage after queries."""
+
     def test_all_unlabeled_initially(self):
         """Before any queries, all compounds must be in the unlabeled pool."""
         oracle = _make_oracle()
@@ -178,11 +199,15 @@ class TestPSUpgrade:
         """labeled_records must be ordered by (iteration, PS-before-DRC) regardless of insertion order."""
         oracle = _make_oracle()
         # Query three distinct compounds across two iterations.
-        oracle.query("CCO", QueryType.PRIMARY_SCREEN, iteration=0)         # iter 0 PS
-        oracle.query("c1ccc(O)cc1", QueryType.PRIMARY_SCREEN, iteration=0) # iter 0 PS
-        oracle.query("CCO", QueryType.DOSE_RESPONSE, iteration=1)          # iter 1 DRC (upgrade)
-        oracle.query("c1ccc(O)cc1", QueryType.DOSE_RESPONSE, iteration=1)  # iter 1 DRC (upgrade)
-        oracle.query("c1ccccc1", QueryType.PRIMARY_SCREEN, iteration=2)    # iter 2 PS
+        oracle.query("CCO", QueryType.PRIMARY_SCREEN, iteration=0)  # iter 0 PS
+        oracle.query("c1ccc(O)cc1", QueryType.PRIMARY_SCREEN, iteration=0)  # iter 0 PS
+        oracle.query(
+            "CCO", QueryType.DOSE_RESPONSE, iteration=1
+        )  # iter 1 DRC (upgrade)
+        oracle.query(
+            "c1ccc(O)cc1", QueryType.DOSE_RESPONSE, iteration=1
+        )  # iter 1 DRC (upgrade)
+        oracle.query("c1ccccc1", QueryType.PRIMARY_SCREEN, iteration=2)  # iter 2 PS
 
         records = oracle.labeled_records
         assert len(records) == 5
@@ -264,18 +289,28 @@ class TestPSUpgrade:
         """get_ps_labeled_smiles must not include compounds with no label at all."""
         oracle = _make_oracle()
         assert oracle.get_ps_labeled_smiles() == []
-        oracle.query("c1ccccc1", QueryType.PRIMARY_SCREEN, iteration=0)   # LEFT — excluded
-        oracle.query("c1ccc(O)cc1", QueryType.PRIMARY_SCREEN, iteration=0) # INTERVAL — included
-        oracle.query("CCO", QueryType.PRIMARY_SCREEN, iteration=0)          # ethanol pEC50=6.0 → INTERVAL
+        oracle.query(
+            "c1ccccc1", QueryType.PRIMARY_SCREEN, iteration=0
+        )  # LEFT — excluded
+        oracle.query(
+            "c1ccc(O)cc1", QueryType.PRIMARY_SCREEN, iteration=0
+        )  # INTERVAL — included
+        oracle.query(
+            "CCO", QueryType.PRIMARY_SCREEN, iteration=0
+        )  # ethanol pEC50=6.0 → INTERVAL
         assert len(oracle.get_ps_labeled_smiles()) == 2
 
 
 class TestIsActive:
     """Tests for the is_active() convenience method."""
-    @pytest.mark.parametrize("smiles,threshold,expected", [
-        ("c1ccc(O)cc1", 7.0, True),
-        ("c1ccccc1",    7.0, False),
-    ])
+
+    @pytest.mark.parametrize(
+        "smiles,threshold,expected",
+        [
+            ("c1ccc(O)cc1", 7.0, True),
+            ("c1ccccc1", 7.0, False),
+        ],
+    )
     def test_is_active(self, smiles, threshold, expected):
         """is_active must return True for compounds above the threshold and False otherwise."""
         oracle = _make_oracle()
@@ -297,7 +332,7 @@ class TestUnknownCompound:
         oracle = _make_oracle()
         queries = [
             ("c1ccccc1", QueryType.PRIMARY_SCREEN),  # valid
-            ("C1CC1", QueryType.DOSE_RESPONSE),       # not in ground truth
+            ("C1CC1", QueryType.DOSE_RESPONSE),  # not in ground truth
         ]
         records = oracle.query_batch(queries, iteration=0)
         assert len(records) == 1
@@ -350,10 +385,13 @@ class TestCustomColumnNames:
         rec = oracle.query("c1ccccc1", QueryType.DOSE_RESPONSE, iteration=0)
         assert rec.value == pytest.approx(4.0)
 
-    @pytest.mark.parametrize("bad_kwarg,bad_name", [
-        ("smiles_column", "nonexistent"),
-        ("pec50_column",  "nonexistent"),
-    ])
+    @pytest.mark.parametrize(
+        "bad_kwarg,bad_name",
+        [
+            ("smiles_column", "nonexistent"),
+            ("pec50_column", "nonexistent"),
+        ],
+    )
     def test_wrong_column_raises(self, bad_kwarg, bad_name):
         """Passing a column name that doesn't exist must raise ValueError."""
         df = pd.DataFrame({"smiles": ["c1ccccc1"], "pec50": [5.0]})
@@ -429,7 +467,9 @@ class TestIsCanonical:
         """query() with is_canonical=True must return the correct label without
         calling canonicalize()."""
         oracle = self._make_canonical_oracle()
-        rec = oracle.query(self._REWRITTEN, QueryType.DOSE_RESPONSE, iteration=0, is_canonical=True)
+        rec = oracle.query(
+            self._REWRITTEN, QueryType.DOSE_RESPONSE, iteration=0, is_canonical=True
+        )
         assert rec.value == pytest.approx(6.0)
 
     def test_query_batch_with_is_canonical_true_works(self):
@@ -467,20 +507,28 @@ class TestIsCanonical:
         # Query with is_canonical=False: RDKit rewrites "OCC" → "CCO", which
         # is not in the ground truth, so a KeyError is expected.
         with pytest.raises(KeyError):
-            oracle.query(self._REWRITABLE, QueryType.DOSE_RESPONSE, iteration=0, is_canonical=False)
+            oracle.query(
+                self._REWRITABLE,
+                QueryType.DOSE_RESPONSE,
+                iteration=0,
+                is_canonical=False,
+            )
 
 
 class TestPec50Validation:
     """Tests that invalid pEC50 values (NaN, inf, out-of-range) are excluded at oracle construction time."""
 
-    @pytest.mark.parametrize("bad_values,n_valid", [
-        ([float("nan"), 5.0],                    1),   # NaN excluded
-        ([float("inf"), float("-inf"), 5.0],     1),   # ±inf excluded
-        ([-50.0, 999.0, 7.0],                    1),   # out of [0, 14] excluded
-    ])
+    @pytest.mark.parametrize(
+        "bad_values,n_valid",
+        [
+            ([float("nan"), 5.0], 1),  # NaN excluded
+            ([float("inf"), float("-inf"), 5.0], 1),  # ±inf excluded
+            ([-50.0, 999.0, 7.0], 1),  # out of [0, 14] excluded
+        ],
+    )
     def test_invalid_pec50_excluded(self, bad_values, n_valid):
         """Compounds with invalid pEC50 values must be excluded from the oracle."""
-        smiles = ["c1ccccc1", "CCO", "c1ccc(N)cc1"][:len(bad_values)]
+        smiles = ["c1ccccc1", "CCO", "c1ccc(N)cc1"][: len(bad_values)]
         df = pd.DataFrame({"smiles": smiles, "pec50": bad_values})
         oracle = CostAwareOracle(
             ground_truth_df=df, cost_ps=1.0, cost_drc=10.0, ps_threshold=5.0
@@ -490,10 +538,12 @@ class TestPec50Validation:
 
     def test_boundary_values_accepted(self):
         """Boundary values 0.0 and 14.0 are physically plausible and must be kept."""
-        df = pd.DataFrame({
-            "smiles": ["c1ccccc1", "CCO"],
-            "pec50": [0.0, 14.0],
-        })
+        df = pd.DataFrame(
+            {
+                "smiles": ["c1ccccc1", "CCO"],
+                "pec50": [0.0, 14.0],
+            }
+        )
         oracle = CostAwareOracle(
             ground_truth_df=df, cost_ps=1.0, cost_drc=10.0, ps_threshold=5.0
         )

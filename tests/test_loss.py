@@ -1,7 +1,5 @@
 """Tests for CensoredRegressionLoss: gradient checks and branch correctness."""
 
-import math
-
 import pytest
 import torch
 
@@ -30,6 +28,7 @@ def _make_record(
 
 class TestExactBranch:
     """Tests for the EXACT censoring branch of CensoredRegressionLoss (standard squared-error-like behaviour)."""
+
     def test_zero_loss_at_truth(self):
         """When prediction equals the true value, the EXACT branch must return ~0 loss."""
         loss_fn = CensoredRegressionLoss(sigma=1.0)
@@ -59,6 +58,7 @@ class TestExactBranch:
 
 class TestLeftBranch:
     """Tests for the LEFT censoring branch of CensoredRegressionLoss (confirmed inactive compounds)."""
+
     def test_loss_decreases_as_prediction_moves_below_threshold(self):
         """Lower predictions should incur lower LEFT-branch loss."""
         loss_fn = CensoredRegressionLoss(sigma=1.0)
@@ -82,6 +82,7 @@ class TestLeftBranch:
 
 class TestIntervalBranch:
     """Tests for the INTERVAL censoring branch of CensoredRegressionLoss (active compounds with pEC50 in [T, upper_bound])."""
+
     def test_loss_minimized_inside_interval(self):
         """Predictions inside [T, U] should incur lower loss than outside."""
         loss_fn = CensoredRegressionLoss(sigma=1.0)
@@ -120,6 +121,7 @@ class TestIntervalBranch:
 
 class TestFidelityWeighting:
     """Tests that per-fidelity loss weights (w_drc, w_ps) are correctly applied to DRC vs PS samples."""
+
     def test_ps_loss_less_than_drc_for_same_error(self):
         """PS (inequality) samples should contribute less to total loss."""
         loss_fn = CensoredRegressionLoss(sigma=1.0, w_drc=1.0, w_ps=0.3)
@@ -133,6 +135,7 @@ class TestFidelityWeighting:
 
 class TestLearnableSigma:
     """Tests for the learnable sigma option: parameter existence and lower-bound enforcement."""
+
     def test_sigma_parameter_exists_and_bounded(self):
         """When learnable_sigma=True, the module must expose exactly one trainable parameter and enforce the minimum-sigma lower bound."""
         loss_fn = CensoredRegressionLoss(sigma=0.5, learnable_sigma=True)
@@ -146,6 +149,7 @@ class TestLearnableSigma:
 
 class TestLossBreakdown:
     """Tests for forward_with_breakdown(): correctness and gradient flow of the returned LossBreakdown NamedTuple."""
+
     def test_forward_consistent_with_breakdown(self):
         """forward() total must match forward_with_breakdown().total."""
         loss_fn = CensoredRegressionLoss(sigma=1.0)
@@ -173,11 +177,16 @@ class TestLossBreakdown:
         assert not bd.ps_loss.isnan()
         assert bd.drc_loss.item() > bd.ps_loss.item()
 
-    @pytest.mark.parametrize("absent_fidelity,nan_field,finite_field", [
-        (QueryType.DOSE_RESPONSE, "drc_loss", "ps_loss"),
-        (QueryType.PRIMARY_SCREEN, "ps_loss", "drc_loss"),
-    ])
-    def test_absent_fidelity_loss_is_nan(self, absent_fidelity, nan_field, finite_field):
+    @pytest.mark.parametrize(
+        "absent_fidelity,nan_field,finite_field",
+        [
+            (QueryType.DOSE_RESPONSE, "drc_loss", "ps_loss"),
+            (QueryType.PRIMARY_SCREEN, "ps_loss", "drc_loss"),
+        ],
+    )
+    def test_absent_fidelity_loss_is_nan(
+        self, absent_fidelity, nan_field, finite_field
+    ):
         """The per-fidelity loss field must be nan when the batch contains no
         samples of that fidelity, while the other field and total remain finite."""
         loss_fn = CensoredRegressionLoss(sigma=1.0)
@@ -186,7 +195,9 @@ class TestLossBreakdown:
             # Batch with only PS records
             recs = [
                 _make_record(5.0, 5.0, CensoringType.LEFT, QueryType.PRIMARY_SCREEN),
-                _make_record(5.0, 11.0, CensoringType.INTERVAL, QueryType.PRIMARY_SCREEN),
+                _make_record(
+                    5.0, 11.0, CensoringType.INTERVAL, QueryType.PRIMARY_SCREEN
+                ),
             ]
         else:
             # Batch with only DRC records
@@ -223,6 +234,8 @@ class TestLossBreakdown:
         """Mismatched predictions and records lengths must raise AssertionError."""
         loss_fn = CensoredRegressionLoss(sigma=1.0)
         preds = torch.tensor([5.0, 6.0, 7.0])  # 3 predictions
-        recs = [_make_record(5.0, 5.0, CensoringType.EXACT, QueryType.DOSE_RESPONSE)]  # 1 record
+        recs = [
+            _make_record(5.0, 5.0, CensoringType.EXACT, QueryType.DOSE_RESPONSE)
+        ]  # 1 record
         with pytest.raises(AssertionError):
             loss_fn(preds, recs)
