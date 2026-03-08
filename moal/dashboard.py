@@ -86,7 +86,7 @@ class LiveDashboard:
         if not show:
             matplotlib.use("Agg")
 
-        self._fig, _axes = plt.subplots(2, 2, figsize=figsize)
+        self._fig, _axes = plt.subplots(2, 2, figsize=figsize, dpi=150)
         self._ax1: Axes = _axes[0, 0]
         self._ax2: Axes = _axes[0, 1]
         self._ax3: Axes = _axes[1, 0]
@@ -392,6 +392,15 @@ class LiveDashboard:
         x = np.arange(len(categories))
 
         ax.bar([x[0]], [n_ps_only], color=_COLOUR_PS, zorder=2, label="PS")
+        ax.bar(
+            [x[0]],
+            [n_upgrades],
+            bottom=[n_ps_only],
+            color=_COLOUR_UPGRADE,
+            zorder=2,
+            # label="PS→DRC",
+        )
+
         # DRC bar: first-pass DRC on the bottom, upgrades stacked on top
         ax.bar([x[1]], [n_drc_new], color=_COLOUR_DRC, zorder=2, label="DRC")
         ax.bar(
@@ -400,7 +409,7 @@ class LiveDashboard:
             bottom=[n_drc_new],
             color=_COLOUR_UPGRADE,
             zorder=2,
-            label="PS→DRC upgrade",
+            label="PS→DRC",
         )
         ax.bar(
             [x[2]], [n_unqueried], color=_COLOUR_UNQUERIED, zorder=2, label="Unqueried"
@@ -429,7 +438,7 @@ class LiveDashboard:
         """Render the current figure into an in-memory PNG buffer."""
         buf = io.BytesIO()
         try:
-            self._fig.savefig(buf, format="png", dpi=100, bbox_inches="tight")
+            self._fig.savefig(buf, format="png", dpi=600, bbox_inches="tight")
             self._frames.append(buf.getvalue())
         except Exception as exc:
             logger.warning("Could not capture dashboard frame: %s", exc)
@@ -446,7 +455,7 @@ class LiveDashboard:
         path : str or Path
             Destination file path (format inferred from extension).
         """
-        self._fig.savefig(path, dpi=120, bbox_inches="tight")
+        self._fig.savefig(path, dpi=600, bbox_inches="tight")
 
     def save_gif(
         self,
