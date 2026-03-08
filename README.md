@@ -80,9 +80,9 @@ The model performance panel requires a held-out test set (scaffold-split) — th
 The campaign emits a rich progress bar with `n_iterations × 3` discrete steps:
 
 ```
- ⠹  Iter 3/20  Querying oracle — 5 DRC (2 upgrades), 3 PS             ████░░  9/60  0:00:12
- ⠹  Iter 3/20  Retraining model — 28 records (14 DRC, 12 PS, 2 upgrades)  ████░░ 10/60  0:00:45
- ⠹  Iter 3/20  Selecting next 10 — 18 unqueried, 3 PS hits eligible for upgrade  ████░░ 11/60  0:00:46
+ ⠹  Iter 3/20  Querying oracle — 5 DRC (2 upgrades), 3 PS             ████░░  15%  0:00:12
+ ⠹  Iter 3/20  Retraining model — 28 records (14 DRC, 12 PS, 2 upgrades)  ████░░  17%  0:00:45
+ ⠹  Iter 3/20  Selecting next 10 — 18 unqueried, 3 PS hits eligible for upgrade  ████░░  18%  0:00:46
 ```
 
 ## Key Design Notes
