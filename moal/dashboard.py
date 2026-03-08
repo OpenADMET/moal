@@ -1,9 +1,12 @@
 """LiveDashboard: real-time updating matplotlib figure for campaign monitoring.
 
-Three subplots update after every active learning iteration:
+Four subplots (2×2) update after every active learning iteration:
   1. Cumulative Actives Curve  — x: cumulative cost ($), y: actives found
   2. Cumulative Cost Curve     — stacked bar per iteration (DRC + PS) with total line
   3. Model Performance Curve   — x: iteration, y: configurable metric on test set
+  4. Compound Status           — bar per category (PS-only, DRC, Unqueried) showing
+                                 current pool state; DRC bar is stacked to show
+                                 PS→DRC upgrades
 """
 
 from __future__ import annotations
@@ -36,13 +39,17 @@ _COLOUR_DRC = "#E07B39"  # orange
 _COLOUR_PS = "#4C9BE8"  # blue
 _COLOUR_ACT = "#2CA02C"  # green
 _COLOUR_MET = "#9467BD"  # purple
+_COLOUR_UPGRADE = "#9B59B6"  # purple-magenta (PS→DRC upgrades, matches terminal [magenta])
+_COLOUR_UNQUERIED = "#D3D3D3"  # light gray
 
 
 class LiveDashboard:
-    """Three-panel live-updating campaign dashboard.
+    """Four-panel live-updating campaign dashboard (2×2 grid).
 
     Args:
         n_iterations: Total planned iterations (used to pre-size x-axes).
+        n_compounds: Total number of compounds in the pool (used to compute
+            the unqueried count in the compound status panel).
         model_metric: Metric to display in the model performance panel.
         figsize: Overall figure size (width, height) in inches.
         show: If True, attempt interactive ``plt.ion()`` mode. If False (or if
@@ -52,11 +59,13 @@ class LiveDashboard:
     def __init__(
         self,
         n_iterations: int,
+        n_compounds: int = 0,
         model_metric: ModelMetric = ModelMetric.MAE,
-        figsize: tuple[int, int] = (15, 4),
+        figsize: tuple[int, int] = (14, 8),
         show: bool = True,
     ) -> None:
         self.n_iterations = n_iterations
+        self.n_compounds = n_compounds
         self.model_metric = model_metric
         self._interactive = False
         self._update_count = 0
@@ -68,9 +77,11 @@ class LiveDashboard:
         if not show:
             matplotlib.use("Agg")
 
-        self._fig, (self._ax1, self._ax2, self._ax3) = plt.subplots(
-            1, 3, figsize=figsize
-        )
+        self._fig, _axes = plt.subplots(2, 2, figsize=figsize)
+        self._ax1: Axes = _axes[0, 0]
+        self._ax2: Axes = _axes[0, 1]
+        self._ax3: Axes = _axes[1, 0]
+        self._ax4: Axes = _axes[1, 1]
         self._fig.suptitle(
             "Active Learning Campaign Dashboard", fontsize=11, fontweight="bold"
         )
@@ -135,6 +146,10 @@ class LiveDashboard:
             fontstyle="italic",
         )
 
+        self._ax4.set_title("Compound Status", fontsize=9)
+        self._ax4.set_ylabel("Compounds")
+        self._ax4.grid(True, linestyle="--", alpha=0.4, axis="y")
+
     # ------------------------------------------------------------------
     # Public update API
     # ------------------------------------------------------------------
@@ -182,6 +197,7 @@ class LiveDashboard:
         self._draw_actives_panel()
         self._draw_cost_panel()
         self._draw_metric_panel()
+        self._draw_compound_status_panel(labeled_records)
 
         self._fig.tight_layout(pad=2.5)
 
@@ -311,6 +327,53 @@ class LiveDashboard:
         ax.set_xlim(0.5, max(len(iters) + 0.5, self.n_iterations + 0.5))
         # Force integer-only tick positions so labels never display as floats
         ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+
+    def _draw_compound_status_panel(self, labeled_records: list[LabelRecord]) -> None:
+        ax: Axes = self._ax4
+        ax.cla()
+        ax.set_title("Compound Status", fontsize=9)
+        ax.set_ylabel("Compounds")
+        ax.grid(True, linestyle="--", alpha=0.4, axis="y")
+
+        from moal.types import QueryType
+
+        ps_smiles = {
+            r.canonical_smiles
+            for r in labeled_records
+            if r.fidelity == QueryType.PRIMARY_SCREEN
+        }
+        drc_smiles = {
+            r.canonical_smiles
+            for r in labeled_records
+            if r.fidelity == QueryType.DOSE_RESPONSE
+        }
+        n_upgrades = len(ps_smiles & drc_smiles)
+        n_ps_only = len(ps_smiles) - n_upgrades
+        n_drc_new = len(drc_smiles) - n_upgrades
+        # Unique queried = PS-only + all DRC (upgrades are counted in DRC, not PS-only)
+        n_queried = n_ps_only + len(drc_smiles)
+        n_unqueried = max(self.n_compounds - n_queried, 0)
+
+        categories = ["PS", "DRC", "Unqueried"]
+        x = np.arange(len(categories))
+
+        ax.bar([x[0]], [n_ps_only], color=_COLOUR_PS, zorder=2, label="PS")
+        # DRC bar: first-pass DRC on the bottom, upgrades stacked on top
+        ax.bar([x[1]], [n_drc_new], color=_COLOUR_DRC, zorder=2, label="DRC")
+        ax.bar(
+            [x[1]],
+            [n_upgrades],
+            bottom=[n_drc_new],
+            color=_COLOUR_UPGRADE,
+            zorder=2,
+            label="PS→DRC upgrade",
+        )
+        ax.bar([x[2]], [n_unqueried], color=_COLOUR_UNQUERIED, zorder=2, label="Unqueried")
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(categories, fontsize=8)
+        ax.set_ylim(bottom=0)
+        ax.legend(fontsize=7, loc="upper right")
 
     # ------------------------------------------------------------------
     # Helpers
