@@ -372,6 +372,7 @@ class TestCompoundStatusPanel:
 
         records = [
             _rec("A", QueryType.PRIMARY_SCREEN),
+            _rec("A", QueryType.DOSE_RESPONSE),
             _rec("B", QueryType.PRIMARY_SCREEN),
             _rec("B", QueryType.DOSE_RESPONSE),
             _rec("C", QueryType.DOSE_RESPONSE),
@@ -381,19 +382,21 @@ class TestCompoundStatusPanel:
         db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
 
         bars = db._ax4.containers
-        # Expect 4 bar containers: PS-only, DRC-new, upgrade, unqueried.
+        # Expect 5 bar containers: PS-only, upgrade, DRC-new, upgrade, unqueried.
         # Use the public Rectangle.get_height() API rather than the internal
         # BarContainer.datavalues attribute.
         heights = [c[0].get_height() for c in bars]
 
         # PS-only: A → 1
         assert heights[0] == 1, f"Expected PS-only=1, got {heights[0]}"
+        # Upgrades: A → 1 (top of PS bar)
+        assert heights[1] == 1, f"Expected PS→DRC=1, got {heights[1]}"
         # DRC-new: C → 1 (bottom of DRC bar)
-        assert heights[1] == 1, f"Expected DRC-new=1, got {heights[1]}"
+        assert heights[2] == 1, f"Expected DRC-new=1, got {heights[2]}"
         # Upgrades: B → 1 (top of DRC bar)
-        assert heights[2] == 1, f"Expected upgrades=1, got {heights[2]}"
+        assert heights[3] == 1, f"Expected PS→DRC=1, got {heights[3]}"
         # Unqueried: 10 - 1(A) - 2(B,C) = 7
-        assert heights[3] == 7, f"Expected unqueried=7, got {heights[3]}"
+        assert heights[4] == 7, f"Expected unqueried=7, got {heights[4]}"
 
         db.close()
 
