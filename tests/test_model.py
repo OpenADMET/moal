@@ -141,9 +141,7 @@ class TestArchitectureParams:
             (512, 3, 2),
         ],
     )
-    def test_combined_architecture_params(
-        self, hidden_size, depth, ffn_num_layers
-    ):
+    def test_combined_architecture_params(self, hidden_size, depth, ffn_num_layers):
         """Combinations of architecture params must all be reflected in the built model."""
         m = ChemPropLightningModule(
             hidden_size=hidden_size,
@@ -293,7 +291,7 @@ class TestNoisyOracleModel:
         preds = noisy_model.predict_smiles(smiles, noise_scale=0.5)
         for smi, pred in zip(smiles, preds):
             true = _GT[smi]
-            assert true - 0.5 <= pred <= true + 0.5, (
+            assert true - 1.0 <= pred <= true + 1.0, (
                 f"Prediction {pred:.4f} out of noise bounds for {smi} (true={true})"
             )
 

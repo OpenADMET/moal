@@ -424,7 +424,7 @@ class NoisyOracleModel:
     ) -> np.ndarray:
         """Return noisy pEC50 estimates for a list of canonical SMILES.
 
-        Each prediction is sampled as ``true_pec50 + Uniform(-noise_scale, +noise_scale)``.
+        Each prediction is sampled as ``true_pec50 + Uniform(-2 * noise_scale, +2 * noise_scale)``.
         The ``batch_size`` argument is accepted for interface compatibility but
         has no effect — there is no batched computation.
 
@@ -461,7 +461,8 @@ class NoisyOracleModel:
         for i, smi in enumerate(smiles_list):
             # KeyError propagates if smi is absent, matching ChemPropLightningModule behaviour
             true_pec50 = self._ground_truth[smi]
-            noise = self._rng.uniform(-noise_scale, noise_scale)
+            # Must multiple by 2 to model MAE
+            noise = self._rng.uniform(-2 * noise_scale, 2 * noise_scale)
             preds[i] = true_pec50 + noise
         return preds
 
