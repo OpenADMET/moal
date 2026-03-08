@@ -9,6 +9,7 @@ from moal.cli import main
 
 
 class TestCLIHelp:
+    """Tests that the --help flag exits cleanly and exposes all expected options."""
     def test_help_shows_usage_and_options(self):
         """--help must exit 0 and document the command purpose and all three options."""
         runner = CliRunner()
@@ -22,6 +23,7 @@ class TestCLIHelp:
 
 
 class TestCLIMissingConfig:
+    """Tests that missing or nonexistent --config paths produce a non-zero exit code."""
     @pytest.mark.parametrize("args", [
         [],
         ["--config", "/nonexistent/path/config.yaml"],
@@ -34,6 +36,7 @@ class TestCLIMissingConfig:
 
 
 class TestCLINoGroundTruth:
+    """Tests that an empty ground_truth_csv path triggers a clean exit-1 error."""
     def test_empty_ground_truth_csv_exits_one(self, tmp_path):
         """A config with data.ground_truth_csv='' must exit with code 1.
 
@@ -51,6 +54,7 @@ class TestCLINoGroundTruth:
 
 
 class TestCLIBadCSV:
+    """Tests that a missing or malformed CSV file triggers a clean exit-1 error."""
     @pytest.mark.parametrize("csv_content", [
         None,  # missing file (config points at a non-existent path)
         'smiles,pec50\n"unclosed quote,5.0\n',  # malformed CSV
@@ -73,6 +77,7 @@ class TestCLIBadCSV:
 
 
 class TestCLICustomColumns:
+    """Tests that custom smiles_column/pec50_column config keys are correctly forwarded to the oracle."""
     def test_custom_column_names_accepted(self, tmp_path):
         """A config with smiles_column/pec50_column matching the CSV headers must not exit 1
         at the oracle-init stage (it will fail later at model init, which is fine here)."""
@@ -115,6 +120,7 @@ class TestCLICustomColumns:
 
 
 class TestExampleConfig:
+    """Tests that the bundled examples/default_config.yaml is valid and loadable end-to-end."""
     def test_example_config_is_valid_yaml_with_required_sections(self):
         """examples/default_config.yaml must parse as valid YAML and contain all
         top-level PipelineConfig sections."""

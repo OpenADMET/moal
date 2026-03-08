@@ -28,6 +28,7 @@ _COST_DRC = 10.0
 
 
 def _make_oracle(**kwargs) -> CostAwareOracle:
+    """Helper that creates a CostAwareOracle from the shared ground-truth fixture, with optional overrides."""
     defaults = dict(
         ground_truth_df=_GT_DATA,
         cost_ps=_COST_PS,
@@ -39,15 +40,19 @@ def _make_oracle(**kwargs) -> CostAwareOracle:
 
 
 class TestOracleInit:
+    """Tests for CostAwareOracle construction: compound count, active count, and input validation."""
     def test_n_compounds(self):
+        """Oracle must store every compound from the DataFrame without dropping or duplicating any."""
         oracle = _make_oracle()
         assert len(oracle) == len(_GT_DATA)
 
     def test_n_true_actives(self):
+        """n_true_actives must correctly count compounds whose pEC50 exceeds a given threshold."""
         oracle = _make_oracle()
         assert oracle.n_true_actives(threshold=7.0) == 2  # phenol + naphthalene
 
     def test_invalid_df_raises(self):
+        """Constructing an oracle from a DataFrame that lacks required columns must raise ValueError immediately."""
         with pytest.raises(ValueError, match="must contain columns"):
             CostAwareOracle(
                 ground_truth_df=pd.DataFrame({"foo": [1]}),
@@ -58,7 +63,9 @@ class TestOracleInit:
 
 
 class TestPrimaryScreenQueries:
+    """Tests that PS queries produce the correct censoring type and bounds based on pEC50 vs ps_threshold."""
     def test_below_threshold_gives_left_label(self):
+        """A compound with pEC50 < ps_threshold must receive a LEFT-censored label, confirming it as inactive."""
         oracle = _make_oracle()
         # benzene has pEC50=4.0 < ps_threshold=5.0 → LEFT
         rec = oracle.query("c1ccccc1", QueryType.PRIMARY_SCREEN, iteration=0)
@@ -67,6 +74,7 @@ class TestPrimaryScreenQueries:
         assert rec.cost == pytest.approx(_COST_PS)
 
     def test_above_threshold_gives_interval_label(self):
+        """A compound with pEC50 >= ps_threshold must receive an INTERVAL label, marking it as a potential hit."""
         oracle = _make_oracle()
         # aniline has pEC50=5.5 >= ps_threshold=5.0 → INTERVAL
         rec = oracle.query("c1ccc(N)cc1", QueryType.PRIMARY_SCREEN, iteration=0)
@@ -76,7 +84,9 @@ class TestPrimaryScreenQueries:
 
 
 class TestDRCQueries:
+    """Tests that DRC queries produce EXACT labels with the true pEC50 value and correct cost."""
     def test_exact_label(self):
+        """A DRC query must return the true pEC50 as an EXACT label and charge cost_drc."""
         oracle = _make_oracle()
         rec = oracle.query("c1ccccc1", QueryType.DOSE_RESPONSE, iteration=0)
         assert rec.censoring_type == CensoringType.EXACT
@@ -85,30 +95,36 @@ class TestDRCQueries:
 
 
 class TestCostTracking:
+    """Tests for total_cost accumulation after single and multiple queries."""
     def test_cost_accumulates(self):
+        """Total cost must equal the sum of all individual assay costs after querying several compounds."""
         oracle = _make_oracle()
         oracle.query("c1ccccc1", QueryType.PRIMARY_SCREEN, iteration=0)
         oracle.query("c1ccc(N)cc1", QueryType.DOSE_RESPONSE, iteration=0)
         assert oracle.total_cost == pytest.approx(_COST_PS + _COST_DRC)
 
     def test_zero_cost_before_queries(self):
+        """A freshly initialized oracle must report zero cost since no assays have been run yet."""
         oracle = _make_oracle()
         assert oracle.total_cost == pytest.approx(0.0)
 
 
 class TestDeduplication:
+    """Tests that re-querying a compound at the same or incompatible fidelity raises ValueError."""
     @pytest.mark.parametrize("first_qt,second_qt,match", [
         (QueryType.PRIMARY_SCREEN,  QueryType.PRIMARY_SCREEN,  "already has a PS label"),
         (QueryType.DOSE_RESPONSE,   QueryType.PRIMARY_SCREEN,  "already has a DRC label"),
         (QueryType.DOSE_RESPONSE,   QueryType.DOSE_RESPONSE,   "already has a DRC label"),
     ])
     def test_duplicate_query_raises(self, first_qt, second_qt, match):
+        """Re-querying a compound at an already-labeled fidelity must raise ValueError to prevent duplicate records."""
         oracle = _make_oracle()
         oracle.query("c1ccccc1", first_qt, iteration=0)
         with pytest.raises(ValueError, match=match):
             oracle.query("c1ccccc1", second_qt, iteration=1)
 
     def test_batch_dedup_within_batch(self):
+        """A batch containing the same compound twice must silently process only the first occurrence and ignore the duplicate."""
         oracle = _make_oracle()
         queries = [
             ("c1ccccc1", QueryType.PRIMARY_SCREEN),
@@ -120,11 +136,14 @@ class TestDeduplication:
 
 
 class TestUnlabeledPool:
+    """Tests for the unlabeled-pool management: initial state and shrinkage after queries."""
     def test_all_unlabeled_initially(self):
+        """Before any queries, all compounds must be in the unlabeled pool."""
         oracle = _make_oracle()
         assert len(oracle.get_unlabeled_smiles()) == len(_GT_DATA)
 
     def test_labeled_compound_removed_from_pool(self):
+        """After querying a compound, the unlabeled pool must shrink by exactly one."""
         oracle = _make_oracle()
         before = len(oracle.get_unlabeled_smiles())
         oracle.query("c1ccccc1", QueryType.PRIMARY_SCREEN, iteration=0)
@@ -208,12 +227,14 @@ class TestPSUpgrade:
         assert records[0].fidelity == QueryType.PRIMARY_SCREEN
 
     def test_cost_accumulates_for_both_assays(self):
+        """Total cost after a PS and a DRC query on the same compound must equal the sum of both assay costs."""
         oracle = _make_oracle()
         oracle.query("c1ccc(O)cc1", QueryType.PRIMARY_SCREEN, iteration=0)
         oracle.query("c1ccc(O)cc1", QueryType.DOSE_RESPONSE, iteration=1)
         assert oracle.total_cost == pytest.approx(_COST_PS + _COST_DRC)
 
     def test_ps_labeled_smiles_initially_empty(self):
+        """Before any queries, the PS-labeled pool must be empty since no INTERVAL labels exist yet."""
         oracle = _make_oracle()
         assert oracle.get_ps_labeled_smiles() == []
 
@@ -250,16 +271,20 @@ class TestPSUpgrade:
 
 
 class TestIsActive:
+    """Tests for the is_active() convenience method."""
     @pytest.mark.parametrize("smiles,threshold,expected", [
         ("c1ccc(O)cc1", 7.0, True),
         ("c1ccccc1",    7.0, False),
     ])
     def test_is_active(self, smiles, threshold, expected):
+        """is_active must return True for compounds above the threshold and False otherwise."""
         oracle = _make_oracle()
         assert oracle.is_active(smiles, threshold=threshold) is expected
 
 
 class TestUnknownCompound:
+    """Tests that querying a SMILES not in the ground truth is handled gracefully."""
+
     def test_query_unknown_smiles_raises_key_error(self):
         """Querying a SMILES that is not in the ground truth must raise KeyError."""
         oracle = _make_oracle()
@@ -286,6 +311,8 @@ class TestUnknownCompound:
 
 
 class TestCustomColumnNames:
+    """Tests that non-default smiles_column and pec50_column names are correctly used throughout."""
+
     def test_custom_columns_accepted(self):
         """Oracle must work when the DataFrame uses non-default column names."""
         df = pd.DataFrame(
@@ -353,11 +380,14 @@ class TestCustomColumnNames:
 
 
 class TestIsCanonical:
+    """Tests for the is_canonical flag: controls whether SMILES are re-canonicalized at query time."""
+
     # RDKit re-encodes "OCC" to "CCO" — a reliable rewrite to verify skip behavior.
     _REWRITABLE = "OCC"
     _REWRITTEN = "CCO"
 
     def _make_canonical_oracle(self, **kwargs) -> CostAwareOracle:
+        """Helper that builds an oracle with is_canonical=True from a small canonical-SMILES DataFrame."""
         df = pd.DataFrame(
             {
                 "smiles": [self._REWRITTEN, "c1ccc(O)cc1"],
@@ -441,6 +471,8 @@ class TestIsCanonical:
 
 
 class TestPec50Validation:
+    """Tests that invalid pEC50 values (NaN, inf, out-of-range) are excluded at oracle construction time."""
+
     @pytest.mark.parametrize("bad_values,n_valid", [
         ([float("nan"), 5.0],                    1),   # NaN excluded
         ([float("inf"), float("-inf"), 5.0],     1),   # ±inf excluded

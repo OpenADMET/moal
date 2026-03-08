@@ -73,6 +73,7 @@ def model(tmp_path) -> ChemPropLightningModule:
 
 
 class TestDefaultInit:
+    """Tests for default-parameter ChemPropLightningModule initialization."""
     def test_model_attribute_is_nn_module(self, model):
         """The inner MPNN must be an nn.Module."""
         assert isinstance(model.model, nn.Module)
@@ -121,6 +122,7 @@ class TestDefaultInit:
 
 
 class TestArchitectureParams:
+    """Tests that architecture hyperparameters (hidden_size, depth, FFN layers) are correctly forwarded to the underlying MPNN."""
     @pytest.mark.parametrize("hidden_size", [128, 256, 512])
     def test_hidden_size_sets_message_passing_width(self, tmp_path, hidden_size):
         """W_h in the message-passing layer must reflect the configured hidden size."""
@@ -170,6 +172,7 @@ class TestArchitectureParams:
 
 
 class TestTrainingHyperparams:
+    """Tests that training hyperparameters (freeze_epochs, learning rates) are stored and accessible."""
     @pytest.mark.parametrize("freeze_epochs", [0, 5, 20])
     def test_freeze_epochs_stored(self, tmp_path, freeze_epochs):
         """freeze_epochs must be stored as an instance attribute."""
@@ -200,6 +203,7 @@ class TestTrainingHyperparams:
 
 
 class TestLossConfig:
+    """Tests that loss-related parameters (sigma, fidelity weights, learnable_sigma) are wired to the loss function."""
     @pytest.mark.parametrize("sigma", [0.1, 0.5, 1.0])
     def test_sigma_stored_in_loss_fn(self, tmp_path, sigma):
         """loss_fn.sigma must reflect the configured sigma value."""
@@ -229,6 +233,7 @@ class TestLossConfig:
 
 
 class TestFreezeUnfreeze:
+    """Tests for the encoder freeze/unfreeze schedule: optimizer count changes at the freeze epoch boundary."""
     def test_configure_optimizers_frozen_has_one_param_group(self, model):
         """When the encoder is frozen, configure_optimizers must return one param group."""
         opt = model.configure_optimizers()
@@ -272,6 +277,7 @@ class TestFreezeUnfreeze:
 
 
 class TestCheckpointErrors:
+    """Tests that missing or invalid checkpoint paths raise the correct exceptions at init time."""
     def test_missing_checkpoint_raises_file_not_found(self):
         """Passing a nonexistent checkpoint path must raise FileNotFoundError."""
         with pytest.raises(FileNotFoundError, match="CheMeleon checkpoint not found"):
@@ -293,10 +299,12 @@ _GT: dict[str, float] = {
 
 @pytest.fixture
 def noisy_model() -> NoisyOracleModel:
+    """NoisyOracleModel seeded with a small ground-truth dict for deterministic noise tests."""
     return NoisyOracleModel(ground_truth=_GT, seed=0)
 
 
 class TestNoisyOracleModel:
+    """Tests for NoisyOracleModel: noise bounds, reproducibility, and refit no-op behaviour."""
     def test_predictions_within_noise_bounds(self, noisy_model):
         """All predictions must lie within [true - noise_scale, true + noise_scale]."""
         smiles = list(_GT.keys())
