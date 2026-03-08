@@ -62,15 +62,16 @@ active_learning_loop:
 
 ## Live Dashboard
 
-Three panels update in real time after every iteration:
+Four panels update in real time after every iteration:
 
 | Panel | x-axis | y-axis |
 |---|---|---|
 | Cumulative Actives | Cost ($) | Confirmed actives found |
 | Cost Breakdown | Iteration | Per-iter DRC (orange) + PS (blue) cost, cumulative total line |
 | Model Performance | Iteration | Configurable metric (MAE / RMSE / Kendall's τ / Spearman's ρ / R²) |
+| Compound Status | PS, DRC, Unqueried | Number of compounds |
 
-The model performance panel requires a held-out test set (scaffold-split) — the CLI creates one automatically. In headless/server environments, set `dashboard.show: false` and `dashboard.save_dir: results/` in your YAML config to write PNG snapshots.
+The model performance panel requires a held-out test set (scaffold-split) — the CLI creates one automatically. In headless/server environments, set `dashboard.show: false` in your YAML config.
 
 ## Progress Bar
 
@@ -95,14 +96,6 @@ The campaign emits a rich progress bar with `n_iterations × 3` discrete steps:
 - `score(x, DRC) = sigmoid((ŷ - 7.0) / τ) / cost_DRC` — exploits likely actives; applies equally to first-pass DRC and upgrade-DRC candidates
 - `score(x, PS) = H_binary(sigmoid((ŷ - T) / τ)) / cost_PS` — cheaply resolves threshold ambiguity; only generated for unqueried compounds
 
-**CheMeleon weight loading:** Uses `strict=True`. Atom feature constants are hardcoded in `model.py` and asserted at initialization to catch silent feature mismatches.
-
-**Freeze schedule:** FFN head is trained alone for `freeze_epochs` epochs; the message-passing encoder is then unfrozen with a discriminative (lower) learning rate to avoid catastrophic forgetting.
-
-**Chirality preservation:** `SMILESPreprocessor` passes `isomericSmiles=True` to RDKit `MolToSmiles`, ensuring stereocentres survive canonicalization regardless of RDKit version defaults.
-
-**pEC50 input validation:** `CostAwareOracle` rejects NaN, ±inf, and values outside `[0.0, 14.0]` at ingestion with a warning. This prevents a single bad CSV row from producing NaN gradients that would corrupt an entire training batch.
-
 **Per-fidelity loss monitoring:** `training_step` and `validation_step` log `train_drc_loss`, `train_ps_loss`, `val_drc_loss`, and `val_ps_loss` separately (in addition to the aggregate `train_loss` / `val_loss`), making it possible to detect if DRC regression degrades while PS labels keep the total loss deceptively low.
 
 ## Output Files
@@ -112,6 +105,7 @@ The campaign emits a rich progress bar with `n_iterations × 3` discrete steps:
 | `results/iteration_metrics.csv` | Per-iteration scalar metrics |
 | `results/cumulative_actives_curve.csv` | Cumulative actives vs. cost curve |
 | `results/dashboard_final.png` | Final dashboard snapshot |
+| `results/dashboard_animation.gif` | Campaign dashboard animation |
 | `results/config_used.yaml` | Exact config used for reproducibility |
 
 ## Architecture
