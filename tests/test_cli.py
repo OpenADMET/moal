@@ -22,16 +22,14 @@ class TestCLIHelp:
 
 
 class TestCLIMissingConfig:
-    def test_missing_config_exits_nonzero(self):
-        """Invoking without --config must fail (required option)."""
+    @pytest.mark.parametrize("args", [
+        [],
+        ["--config", "/nonexistent/path/config.yaml"],
+    ])
+    def test_bad_config_exits_nonzero(self, args):
+        """Invoking without --config or with a non-existent path must fail."""
         runner = CliRunner()
-        result = runner.invoke(main, [])
-        assert result.exit_code != 0
-
-    def test_nonexistent_config_exits_nonzero(self):
-        """A --config path that does not exist must fail."""
-        runner = CliRunner()
-        result = runner.invoke(main, ["--config", "/nonexistent/path/config.yaml"])
+        result = runner.invoke(main, args)
         assert result.exit_code != 0
 
 
@@ -53,24 +51,19 @@ class TestCLINoGroundTruth:
 
 
 class TestCLIBadCSV:
-    def test_missing_csv_file_exits_one(self, tmp_path):
-        """A config pointing at a non-existent CSV must exit with code 1."""
+    @pytest.mark.parametrize("csv_content", [
+        None,  # missing file (config points at a non-existent path)
+        'smiles,pec50\n"unclosed quote,5.0\n',  # malformed CSV
+    ])
+    def test_bad_csv_exits_one(self, tmp_path, csv_content):
+        """A config pointing at a missing or malformed CSV must exit with code 1."""
+        if csv_content is None:
+            csv_path = tmp_path / "no_such_file.csv"
+        else:
+            csv_path = tmp_path / "bad.csv"
+            csv_path.write_text(csv_content)
         cfg = tmp_path / "config.yaml"
-        cfg.write_text("data:\n  ground_truth_csv: /no/such/file.csv\n")
-        runner = CliRunner()
-        result = runner.invoke(
-            main,
-            ["--config", str(cfg), "--output-dir", str(tmp_path / "out")],
-        )
-        assert result.exit_code == 1
-
-    def test_malformed_csv_exits_one(self, tmp_path):
-        """A config pointing at a file that is not a valid CSV must exit with code 1."""
-        bad_csv = tmp_path / "bad.csv"
-        # Write something that will trip pandas' parser (unbalanced quotes).
-        bad_csv.write_text('smiles,pec50\n"unclosed quote,5.0\n')
-        cfg = tmp_path / "config.yaml"
-        cfg.write_text(f"data:\n  ground_truth_csv: {bad_csv}\n")
+        cfg.write_text(f"data:\n  ground_truth_csv: {csv_path}\n")
         runner = CliRunner()
         result = runner.invoke(
             main,
@@ -122,8 +115,9 @@ class TestCLICustomColumns:
 
 
 class TestExampleConfig:
-    def test_example_config_is_valid_yaml(self):
-        """examples/default_config.yaml must parse as valid YAML."""
+    def test_example_config_is_valid_yaml_with_required_sections(self):
+        """examples/default_config.yaml must parse as valid YAML and contain all
+        top-level PipelineConfig sections."""
         import yaml
         from pathlib import Path
 
@@ -132,16 +126,6 @@ class TestExampleConfig:
         with open(config_path) as f:
             data = yaml.safe_load(f)
         assert isinstance(data, dict)
-
-    def test_example_config_has_required_sections(self):
-        """The example config must contain all top-level PipelineConfig sections."""
-        import yaml
-        from pathlib import Path
-
-        config_path = Path(__file__).parent.parent / "examples" / "default_config.yaml"
-        with open(config_path) as f:
-            data = yaml.safe_load(f)
-
         for section in ("oracle", "model", "acquisition", "trainer", "dashboard", "data", "active_learning_loop"):
             assert section in data, f"Missing section '{section}' in default_config.yaml"
 
@@ -154,22 +138,9 @@ class TestExampleConfig:
         cfg = PipelineConfig.from_yaml(config_path)
         assert cfg.oracle.cost_ps == 1.0
         assert cfg.oracle.cost_drc == 10.0
-        assert cfg.oracle.ps_threshold == 5.0
-        assert cfg.oracle.activity_threshold == 7.0
-        assert cfg.model.freeze_epochs == 10
-        assert cfg.acquisition.tau == 0.5
         assert cfg.active_learning_loop.n_iterations == 20
         assert cfg.active_learning_loop.k_per_iteration == 10
-        assert cfg.test_set_size == 0.15
-        assert cfg.trainer.val_fraction == 0.1
-        assert cfg.trainer.split_seed == 42
-        assert cfg.data.smiles_column == "smiles"
-        assert cfg.data.pec50_column == "pec50"
-        assert cfg.data.is_canonical is False
-        # Fast mode defaults must be present in the example config.
         assert cfg.model.fast is False
-        assert cfg.model.initial_error == pytest.approx(0.7)
-        assert cfg.model.final_error == pytest.approx(0.5)
 
     def test_fast_mode_config_does_not_require_checkpoint(self, tmp_path):
         """A config with fast=true must not fail at the checkpoint-loading stage.

@@ -124,14 +124,11 @@ class TestFidelityWeighting:
 
 
 class TestLearnableSigma:
-    def test_sigma_parameter_exists(self):
+    def test_sigma_parameter_exists_and_bounded(self):
         loss_fn = CensoredRegressionLoss(sigma=0.5, learnable_sigma=True)
         params = list(loss_fn.parameters())
         assert len(params) == 1
-
-    def test_sigma_bounded_from_below(self):
-        loss_fn = CensoredRegressionLoss(sigma=0.5, learnable_sigma=True)
-        # Force log_sigma very negative
+        # Force log_sigma very negative and confirm the lower bound holds.
         with torch.no_grad():
             loss_fn.log_sigma.fill_(-100.0)
         assert loss_fn.sigma.item() >= 0.05 - 1e-9
@@ -165,31 +162,30 @@ class TestLossBreakdown:
         assert not bd.ps_loss.isnan()
         assert bd.drc_loss.item() > bd.ps_loss.item()
 
-    def test_drc_loss_nan_when_no_drc_records(self):
-        """drc_loss should be nan if batch contains only PS records."""
+    @pytest.mark.parametrize("absent_fidelity,nan_field,finite_field", [
+        (QueryType.DOSE_RESPONSE, "drc_loss", "ps_loss"),
+        (QueryType.PRIMARY_SCREEN, "ps_loss", "drc_loss"),
+    ])
+    def test_absent_fidelity_loss_is_nan(self, absent_fidelity, nan_field, finite_field):
+        """The per-fidelity loss field must be nan when the batch contains no
+        samples of that fidelity, while the other field and total remain finite."""
         loss_fn = CensoredRegressionLoss(sigma=1.0)
         preds = torch.tensor([5.0, 6.0])
-        recs = [
-            _make_record(5.0, 5.0, CensoringType.LEFT, QueryType.PRIMARY_SCREEN),
-            _make_record(5.0, 11.0, CensoringType.INTERVAL, QueryType.PRIMARY_SCREEN),
-        ]
+        if absent_fidelity == QueryType.DOSE_RESPONSE:
+            # Batch with only PS records
+            recs = [
+                _make_record(5.0, 5.0, CensoringType.LEFT, QueryType.PRIMARY_SCREEN),
+                _make_record(5.0, 11.0, CensoringType.INTERVAL, QueryType.PRIMARY_SCREEN),
+            ]
+        else:
+            # Batch with only DRC records
+            recs = [
+                _make_record(5.0, 5.0, CensoringType.EXACT, QueryType.DOSE_RESPONSE),
+                _make_record(6.0, 6.0, CensoringType.EXACT, QueryType.DOSE_RESPONSE),
+            ]
         bd = loss_fn.forward_with_breakdown(preds, recs)
-        assert bd.drc_loss.isnan()
-        assert not bd.ps_loss.isnan()
-        # Total should still be finite (PS losses only)
-        assert not bd.total.isnan()
-
-    def test_ps_loss_nan_when_no_ps_records(self):
-        """ps_loss should be nan if batch contains only DRC records."""
-        loss_fn = CensoredRegressionLoss(sigma=1.0)
-        preds = torch.tensor([5.0, 6.0])
-        recs = [
-            _make_record(5.0, 5.0, CensoringType.EXACT, QueryType.DOSE_RESPONSE),
-            _make_record(6.0, 6.0, CensoringType.EXACT, QueryType.DOSE_RESPONSE),
-        ]
-        bd = loss_fn.forward_with_breakdown(preds, recs)
-        assert not bd.drc_loss.isnan()
-        assert bd.ps_loss.isnan()
+        assert getattr(bd, nan_field).isnan()
+        assert not getattr(bd, finite_field).isnan()
         assert not bd.total.isnan()
 
     def test_breakdown_gradient_flows_through_total(self):
@@ -211,3 +207,11 @@ class TestLossBreakdown:
         loss_fn = CensoredRegressionLoss(sigma=1.0)
         with pytest.raises((RuntimeError, AssertionError)):
             loss_fn(torch.tensor([]), [])
+
+    def test_mismatched_preds_records_length(self):
+        """Mismatched predictions and records lengths must raise AssertionError."""
+        loss_fn = CensoredRegressionLoss(sigma=1.0)
+        preds = torch.tensor([5.0, 6.0, 7.0])  # 3 predictions
+        recs = [_make_record(5.0, 5.0, CensoringType.EXACT, QueryType.DOSE_RESPONSE)]  # 1 record
+        with pytest.raises(AssertionError):
+            loss_fn(preds, recs)

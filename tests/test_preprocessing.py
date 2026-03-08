@@ -61,21 +61,15 @@ class TestProcessBatch:
 
 
 class TestChiralityPreservation:
-    def test_r_chirality_preserved(self, pp):
-        """(R) stereocentre must survive canonicalization."""
-        # (R)-2-bromobutane
-        r_smi = "[C@@H](Br)(CC)C"
-        result = pp.canonicalize(r_smi)
+    @pytest.mark.parametrize("smi", [
+        "[C@@H](Br)(CC)C",  # (R)-2-bromobutane
+        "[C@H](Br)(CC)C",   # (S)-2-bromobutane
+    ])
+    def test_chirality_preserved(self, pp, smi):
+        """Both R and S stereocentres must survive canonicalization."""
+        result = pp.canonicalize(smi)
         assert result is not None
         assert "@" in result  # RDKit encodes chirality with @ notation
-
-    def test_s_chirality_preserved(self, pp):
-        """(S) stereocentre must survive canonicalization."""
-        # (S)-2-bromobutane
-        s_smi = "[C@H](Br)(CC)C"
-        result = pp.canonicalize(s_smi)
-        assert result is not None
-        assert "@" in result
 
     def test_r_and_s_enantiomers_are_distinct(self, pp):
         """The canonical forms of (R) and (S) enantiomers must differ."""

@@ -205,16 +205,21 @@ class TestMetrics:
         assert "total_cost" in results.final_metrics
         assert results.final_metrics["total_cost"] == pytest.approx(results.total_cost)
 
-    def test_actives_per_dollar_non_negative(self, loop):
+    @pytest.mark.parametrize("key,lo,hi", [
+        ("actives_per_dollar", 0.0, None),
+        ("recall",             0.0, 1.0),
+    ])
+    def test_metric_in_bounds(self, loop, key, lo, hi):
         results = loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
         for iter_result in results.iterations:
-            assert iter_result.metrics.get("actives_per_dollar", 0.0) >= 0.0
-
-    def test_recall_between_0_and_1(self, loop):
-        results = loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
-        for iter_result in results.iterations:
-            recall = iter_result.metrics.get("recall", 0.0)
-            assert 0.0 <= recall <= 1.0
+            assert key in iter_result.metrics, (
+                f"Expected metric '{key}' in iter_result.metrics; "
+                f"got keys: {list(iter_result.metrics.keys())}"
+            )
+            value = iter_result.metrics[key]
+            assert value >= lo
+            if hi is not None:
+                assert value <= hi
 
 
 class TestEarlyStop:
@@ -246,10 +251,11 @@ class TestEarlyStop:
 
 
 class TestDashboardIntegration:
-    def test_dashboard_update_called_each_iteration(
+    def test_dashboard_update_called_and_costs_correct(
         self, oracle, mock_model, acquisition, evaluator
     ):
-        """dashboard.update() should be called exactly once per completed iteration."""
+        """dashboard.update() should be called exactly once per completed iteration,
+        with iter_drc_cost and iter_ps_cost that sum to the actual oracle spend."""
         mock_db = create_autospec(LiveDashboard, instance=True)
         loop = ActiveLearningLoop(
             oracle=oracle,
@@ -261,19 +267,6 @@ class TestDashboardIntegration:
         loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
         assert mock_db.update.call_count == N_ITERATIONS
 
-    def test_dashboard_receives_iter_costs(
-        self, oracle, mock_model, acquisition, evaluator
-    ):
-        """Each dashboard.update() call should pass iter_drc_cost and iter_ps_cost."""
-        mock_db = create_autospec(LiveDashboard, instance=True)
-        loop = ActiveLearningLoop(
-            oracle=oracle,
-            model=mock_model,
-            acquisition=acquisition,
-            evaluator=evaluator,
-            dashboard=mock_db,
-        )
-        loop.run(n_iterations=2, k_per_iteration=K)
         for call in mock_db.update.call_args_list:
             kwargs = call.kwargs
             assert "iter_drc_cost" in kwargs
@@ -281,22 +274,6 @@ class TestDashboardIntegration:
             assert kwargs["iter_drc_cost"] >= 0
             assert kwargs["iter_ps_cost"] >= 0
 
-    def test_iter_costs_match_oracle_records(
-        self, oracle, mock_model, acquisition, evaluator
-    ):
-        """iter_drc_cost + iter_ps_cost passed to dashboard must equal actual
-        oracle spend (no pre-query inflation)."""
-        mock_db = create_autospec(LiveDashboard, instance=True)
-        loop = ActiveLearningLoop(
-            oracle=oracle,
-            model=mock_model,
-            acquisition=acquisition,
-            evaluator=evaluator,
-            dashboard=mock_db,
-        )
-        loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
-
-        # Sum of all per-iteration costs reported to dashboard must equal total oracle cost.
         reported_total = sum(
             call.kwargs["iter_drc_cost"] + call.kwargs["iter_ps_cost"]
             for call in mock_db.update.call_args_list

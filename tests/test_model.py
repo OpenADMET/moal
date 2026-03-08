@@ -213,16 +213,14 @@ class TestLossConfig:
         assert m.loss_fn.w_drc == pytest.approx(w_drc)
         assert m.loss_fn.w_ps == pytest.approx(w_ps)
 
-    def test_learnable_sigma_false_has_no_parameters(self, tmp_path):
-        """With learnable_sigma=False, loss_fn must expose no learnable parameters."""
-        m = _make_model(tmp_path, learnable_sigma=False)
-        assert list(m.loss_fn.parameters()) == []
-
-    def test_learnable_sigma_true_has_log_sigma_parameter(self, tmp_path):
-        """With learnable_sigma=True, loss_fn must expose log_sigma as an nn.Parameter."""
-        m = _make_model(tmp_path, learnable_sigma=True)
-        assert isinstance(m.loss_fn.log_sigma, nn.Parameter)
-        assert m.loss_fn.log_sigma.requires_grad is True
+    @pytest.mark.parametrize("learnable,expected_param_count", [(False, 0), (True, 1)])
+    def test_learnable_sigma_parameter(self, tmp_path, learnable, expected_param_count):
+        """loss_fn must expose the correct number of parameters based on learnable_sigma."""
+        m = _make_model(tmp_path, learnable_sigma=learnable)
+        assert len(list(m.loss_fn.parameters())) == expected_param_count
+        if learnable:
+            assert isinstance(m.loss_fn.log_sigma, nn.Parameter)
+            assert m.loss_fn.log_sigma.requires_grad is True
 
 
 # ---------------------------------------------------------------------------
@@ -242,14 +240,10 @@ class TestFreezeUnfreeze:
         opt = model.configure_optimizers()
         assert len(opt.param_groups) == 2
 
-    def test_unfreeze_sets_requires_grad_true(self, model):
-        """_unfreeze_encoder must set requires_grad=True on all encoder parameters."""
+    def test_unfreeze_sets_requires_grad_and_flag(self, model):
+        """_unfreeze_encoder must set requires_grad=True and clear the frozen flag."""
         model._unfreeze_encoder()
         assert all(p.requires_grad for p in model._encoder_params())
-
-    def test_unfreeze_sets_frozen_flag_false(self, model):
-        """_unfreeze_encoder must update the _encoder_frozen flag."""
-        model._unfreeze_encoder()
         assert model._encoder_frozen is False
 
     def test_freeze_after_unfreeze_restores_no_grad(self, model):
@@ -365,16 +359,14 @@ class TestNoisyOracleModel:
         with pytest.raises(KeyError):
             noisy_model.predict_smiles(["C1CC1"], noise_scale=0.5)
 
-    def test_empty_smiles_list(self, noisy_model):
-        """An empty input list must return an empty float32 array without error."""
-        result = noisy_model.predict_smiles([], noise_scale=0.5)
-        assert result.shape == (0,)
-        assert result.dtype == np.float32
+    def test_empty_smiles_and_output_dtype(self, noisy_model):
+        """An empty input must return an empty float32 array; any input must yield float32."""
+        empty_result = noisy_model.predict_smiles([], noise_scale=0.5)
+        assert empty_result.shape == (0,)
+        assert empty_result.dtype == np.float32
 
-    def test_output_dtype_is_float32(self, noisy_model):
-        """Output array must always be float32 for compatibility with the pipeline."""
-        preds = noisy_model.predict_smiles(["c1ccccc1"], noise_scale=0.5)
-        assert preds.dtype == np.float32
+        single_result = noisy_model.predict_smiles(["c1ccccc1"], noise_scale=0.5)
+        assert single_result.dtype == np.float32
 
     def test_batch_size_argument_ignored(self, noisy_model):
         """batch_size kwarg must be accepted without error or behaviour change."""

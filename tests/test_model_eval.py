@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, create_autospec
+from unittest.mock import create_autospec
 
 import numpy as np
 import pytest
@@ -28,35 +28,17 @@ def _mock_model(preds: np.ndarray):
 # ---------------------------------------------------------------------------
 
 class TestPerfectPredictions:
-    def test_mae_zero(self, evaluator):
-        true = np.array([5.0, 6.0, 7.0, 8.0])
+    @pytest.mark.parametrize("metric,true,expected", [
+        (ModelMetric.MAE,         np.array([5.0, 6.0, 7.0, 8.0]),          0.0),
+        (ModelMetric.RMSE,        np.array([5.0, 6.0, 7.0]),                0.0),
+        (ModelMetric.KENDALL_TAU, np.array([1.0, 2.0, 3.0, 4.0, 5.0]),     1.0),
+        (ModelMetric.SPEARMAN_R,  np.array([1.0, 2.0, 3.0, 4.0]),          1.0),
+        (ModelMetric.R2,          np.array([4.0, 5.0, 6.0, 7.0, 8.0]),     1.0),
+    ])
+    def test_perfect_prediction(self, evaluator, metric, true, expected):
         model = _mock_model(true.copy())
-        result = evaluator.evaluate_model(model, ["A", "B", "C", "D"], true, ModelMetric.MAE)
-        assert result == pytest.approx(0.0, abs=1e-6)
-
-    def test_rmse_zero(self, evaluator):
-        true = np.array([5.0, 6.0, 7.0])
-        model = _mock_model(true.copy())
-        result = evaluator.evaluate_model(model, ["A", "B", "C"], true, ModelMetric.RMSE)
-        assert result == pytest.approx(0.0, abs=1e-6)
-
-    def test_kendall_tau_one(self, evaluator):
-        true = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        model = _mock_model(true.copy())
-        result = evaluator.evaluate_model(model, list("ABCDE"), true, ModelMetric.KENDALL_TAU)
-        assert result == pytest.approx(1.0, abs=1e-6)
-
-    def test_spearman_one(self, evaluator):
-        true = np.array([1.0, 2.0, 3.0, 4.0])
-        model = _mock_model(true.copy())
-        result = evaluator.evaluate_model(model, list("ABCD"), true, ModelMetric.SPEARMAN_R)
-        assert result == pytest.approx(1.0, abs=1e-6)
-
-    def test_r2_one(self, evaluator):
-        true = np.array([4.0, 5.0, 6.0, 7.0, 8.0])
-        model = _mock_model(true.copy())
-        result = evaluator.evaluate_model(model, list("ABCDE"), true, ModelMetric.R2)
-        assert result == pytest.approx(1.0, abs=1e-6)
+        result = evaluator.evaluate_model(model, list("ABCDE"[:len(true)]), true, metric)
+        assert result == pytest.approx(expected, abs=1e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -64,33 +46,16 @@ class TestPerfectPredictions:
 # ---------------------------------------------------------------------------
 
 class TestKnownErrors:
-    def test_mae_constant_offset(self, evaluator):
-        true = np.array([5.0, 6.0, 7.0])
-        preds = true + 1.0  # constant offset of 1
+    @pytest.mark.parametrize("metric,true,preds,expected", [
+        (ModelMetric.MAE,         np.array([5.0, 6.0, 7.0]),  np.array([6.0, 7.0, 8.0]),  1.0),
+        (ModelMetric.RMSE,        np.array([0.0, 0.0]),        np.array([1.0, 1.0]),        1.0),
+        (ModelMetric.KENDALL_TAU, np.array([1.0, 2.0, 3.0]),  np.array([3.0, 2.0, 1.0]),  -1.0),
+        (ModelMetric.SPEARMAN_R,  np.array([1.0, 2.0, 3.0, 4.0]), np.array([4.0, 3.0, 2.0, 1.0]), -1.0),
+    ])
+    def test_known_error(self, evaluator, metric, true, preds, expected):
         model = _mock_model(preds)
-        result = evaluator.evaluate_model(model, ["A", "B", "C"], true, ModelMetric.MAE)
-        assert result == pytest.approx(1.0, abs=1e-6)
-
-    def test_rmse_known(self, evaluator):
-        true = np.array([0.0, 0.0])
-        preds = np.array([1.0, 1.0])  # error of 1 each → RMSE = 1
-        model = _mock_model(preds)
-        result = evaluator.evaluate_model(model, ["A", "B"], true, ModelMetric.RMSE)
-        assert result == pytest.approx(1.0, abs=1e-6)
-
-    def test_kendall_tau_inverted(self, evaluator):
-        true  = np.array([1.0, 2.0, 3.0])
-        preds = np.array([3.0, 2.0, 1.0])  # perfectly inverted → τ = -1
-        model = _mock_model(preds)
-        result = evaluator.evaluate_model(model, ["A", "B", "C"], true, ModelMetric.KENDALL_TAU)
-        assert result == pytest.approx(-1.0, abs=1e-6)
-
-    def test_spearman_inverted(self, evaluator):
-        true  = np.array([1.0, 2.0, 3.0, 4.0])
-        preds = np.array([4.0, 3.0, 2.0, 1.0])
-        model = _mock_model(preds)
-        result = evaluator.evaluate_model(model, list("ABCD"), true, ModelMetric.SPEARMAN_R)
-        assert result == pytest.approx(-1.0, abs=1e-6)
+        result = evaluator.evaluate_model(model, list("ABCD"[:len(true)]), true, metric)
+        assert result == pytest.approx(expected, abs=1e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -105,15 +70,11 @@ class TestEdgeCases:
         # The early-return guard must short-circuit before any model call.
         model.predict_smiles.assert_not_called()
 
-    def test_single_point_kendall(self, evaluator):
+    @pytest.mark.parametrize("metric", [ModelMetric.KENDALL_TAU, ModelMetric.SPEARMAN_R])
+    def test_single_point_ranking_metric_is_nan(self, evaluator, metric):
         """Single-point ranking is undefined → nan."""
         model = _mock_model(np.array([5.0]))
-        result = evaluator.evaluate_model(model, ["A"], np.array([5.0]), ModelMetric.KENDALL_TAU)
-        assert np.isnan(result)
-
-    def test_single_point_spearman(self, evaluator):
-        model = _mock_model(np.array([5.0]))
-        result = evaluator.evaluate_model(model, ["A"], np.array([5.0]), ModelMetric.SPEARMAN_R)
+        result = evaluator.evaluate_model(model, ["A"], np.array([5.0]), metric)
         assert np.isnan(result)
 
     def test_r2_constant_truth(self, evaluator):
