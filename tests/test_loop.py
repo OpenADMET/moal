@@ -76,11 +76,13 @@ _PECS50[23] = 7.3  # biphenyl — active
 
 @pytest.fixture
 def ground_truth_df():
+    """Ground-truth DataFrame with 30 synthetic compounds, 3 of which are true actives."""
     return pd.DataFrame({"smiles": _SMILES, "pec50": _PECS50})
 
 
 @pytest.fixture
 def oracle(ground_truth_df):
+    """CostAwareOracle built from the 30-compound ground-truth DataFrame."""
     return CostAwareOracle(
         ground_truth_df=ground_truth_df,
         cost_ps=1.0,
@@ -110,6 +112,7 @@ def mock_model():
 
 @pytest.fixture
 def acquisition():
+    """Standard acquisition object with cost_ps=1, cost_drc=10, and target_threshold=7.0."""
     return CostAwareGreedyAcquisition(
         cost_ps=1.0,
         cost_drc=10.0,
@@ -121,11 +124,13 @@ def acquisition():
 
 @pytest.fixture
 def evaluator():
+    """PipelineEvaluator with activity_threshold=7.0 for loop-level recall and enrichment metrics."""
     return PipelineEvaluator(activity_threshold=7.0, upper_bound=11.0)
 
 
 @pytest.fixture
 def loop(oracle, mock_model, acquisition, evaluator):
+    """Fully assembled ActiveLearningLoop using the mock model and shared oracle/acquisition/evaluator."""
     return ActiveLearningLoop(
         oracle=oracle,
         model=mock_model,
@@ -143,11 +148,14 @@ K = 5
 
 
 class TestLoopExecution:
+    """Integration tests verifying that the loop runs correctly and manages the labeled pool and cost."""
     def test_correct_number_of_iterations(self, loop):
+        """The results list must contain exactly n_iterations entries, confirming the loop ran the requested number of times."""
         results = loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
         assert len(results.iterations) == N_ITERATIONS
 
     def test_labeled_pool_grows(self, loop, oracle):
+        """The cumulative labeled count must be non-decreasing and total k × n_iterations compounds at the end."""
         results = loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
         prev = 0
         for iter_result in results.iterations:
@@ -156,6 +164,7 @@ class TestLoopExecution:
         assert results.total_labeled == N_ITERATIONS * K
 
     def test_cost_is_monotonically_increasing(self, loop):
+        """Cumulative cost must be non-decreasing, since assays can only add cost, not remove it."""
         results = loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
         costs = results.costs()
         assert all(costs[i] <= costs[i + 1] for i in range(len(costs) - 1))
@@ -172,6 +181,7 @@ class TestLoopExecution:
         assert len(pairs) == len(set(pairs))
 
     def test_model_refit_called_each_iteration(self, loop, mock_model):
+        """model.refit must be called exactly once per iteration to ensure the model is updated with new labels."""
         loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
         assert mock_model.refit.call_count == N_ITERATIONS
 
@@ -194,13 +204,16 @@ class TestLoopExecution:
 
 
 class TestMetrics:
+    """Tests that iteration-level metrics are finite, consistent, and within expected bounds."""
     def test_metrics_are_finite(self, loop):
+        """All numeric metrics must be finite after every iteration; nan or inf would indicate a data pipeline bug."""
         results = loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
         for iter_result in results.iterations:
             for key, value in iter_result.metrics.items():
                 assert np.isfinite(value), f"Metric {key} is not finite: {value}"
 
     def test_total_cost_in_final_metrics(self, loop):
+        """final_metrics must contain total_cost matching oracle.total_cost so downstream reporting is consistent."""
         results = loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
         assert "total_cost" in results.final_metrics
         assert results.final_metrics["total_cost"] == pytest.approx(results.total_cost)
@@ -210,6 +223,7 @@ class TestMetrics:
         ("recall",             0.0, 1.0),
     ])
     def test_metric_in_bounds(self, loop, key, lo, hi):
+        """Recall must lie in [0, 1] and actives_per_dollar must be non-negative across all iterations."""
         results = loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
         for iter_result in results.iterations:
             assert key in iter_result.metrics, (
@@ -223,6 +237,8 @@ class TestMetrics:
 
 
 class TestEarlyStop:
+    """Tests that the loop terminates gracefully when the compound pool is exhausted."""
+
     def test_stops_when_all_labeled(self, ground_truth_df):
         """If k × n_iterations >= pool_size, the loop stops early without error."""
         oracle = CostAwareOracle(
@@ -251,6 +267,8 @@ class TestEarlyStop:
 
 
 class TestDashboardIntegration:
+    """Tests that the dashboard receives the correct calls and cost breakdowns from the loop."""
+
     def test_dashboard_update_called_and_costs_correct(
         self, oracle, mock_model, acquisition, evaluator
     ):
@@ -282,6 +300,8 @@ class TestDashboardIntegration:
 
 
 class TestTestSetIntegration:
+    """Tests that the per-iteration model evaluation against a held-out test set works correctly."""
+
     def test_model_metric_value_stored(
         self, oracle, mock_model, acquisition, evaluator
     ):
@@ -404,6 +424,7 @@ class TestPSUpgradeInLoop:
 
     @pytest.fixture
     def upgrade_loop(self, upgrade_oracle):
+        """ActiveLearningLoop wired to upgrade_oracle using NoisyOracleModel with zero noise for deterministic upgrades."""
         from moal.model import NoisyOracleModel
         model = NoisyOracleModel(upgrade_oracle._ground_truth, seed=0)
         acquisition = CostAwareGreedyAcquisition(
@@ -469,6 +490,7 @@ _RAMP_PECS50 = [4.0, 6.0, 7.5, 5.5, 4.9, 5.8, 6.2, 4.3, 5.1, 6.7]
 
 @pytest.fixture
 def ramp_oracle():
+    """Small 10-compound oracle for noise-ramp dispatch tests; large enough to avoid early exhaustion."""
     df = pd.DataFrame({"smiles": _RAMP_SMILES, "pec50": _RAMP_PECS50})
     return CostAwareOracle(
         ground_truth_df=df,

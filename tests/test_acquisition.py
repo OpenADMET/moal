@@ -9,6 +9,7 @@ from moal.types import QueryType
 
 @pytest.fixture
 def acq():
+    """Standard acquisition object with asymmetric PS/DRC costs and a target threshold of 7.0."""
     return CostAwareGreedyAcquisition(
         cost_ps=1.0,
         cost_drc=10.0,
@@ -19,6 +20,7 @@ def acq():
 
 
 class TestScoreHelpers:
+    """Tests for the _sigmoid and _binary_entropy scoring utility functions."""
     def test_binary_entropy_max_at_half(self):
         """H(p) should be maximized at p=0.5."""
         p = np.array([0.1, 0.5, 0.9])
@@ -28,23 +30,28 @@ class TestScoreHelpers:
 
     @pytest.mark.parametrize("p", [1e-9, 1 - 1e-9])
     def test_binary_entropy_zero_at_extremes(self, p):
+        """Binary entropy must approach 0 as p approaches 0 or 1, since the outcome is certain."""
         h = _binary_entropy(np.array([p]))
         assert h[0] == pytest.approx(0.0, abs=1e-3)
 
     def test_sigmoid_monotone(self):
+        """The sigmoid must be strictly increasing over its domain so that higher predictions always score higher."""
         x = np.linspace(-5, 5, 20)
         s = _sigmoid(x, tau=0.5)
         assert np.all(np.diff(s) > 0)
 
 
 class TestDRCScore:
+    """Tests for _score_drc(): the exploitation score that rewards high predicted pEC50."""
     def test_higher_prediction_higher_drc_score(self, acq):
+        """A compound with a higher predicted pEC50 must receive a higher DRC score, reflecting stronger exploitation incentive."""
         smiles = ["A", "B"]
         preds = np.array([4.0, 8.0])  # B is far more likely active
         scores_drc = acq._score_drc(preds)
         assert scores_drc[1] > scores_drc[0]
 
     def test_drc_score_normalized_by_cost(self, acq):
+        """DRC score must equal the sigmoid output divided by cost_drc so that costly assays are appropriately penalized."""
         preds = np.array([7.5])
         score = acq._score_drc(preds)[0]
         assert score == pytest.approx(
@@ -53,6 +60,7 @@ class TestDRCScore:
 
 
 class TestPSScore:
+    """Tests for _score_ps(): the exploration score that rewards uncertainty near the PS threshold."""
     def test_ps_score_maximized_near_threshold(self, acq):
         """PS score should peak near ps_threshold (max entropy)."""
         preds = np.array([3.0, 5.0, 7.0])
@@ -62,6 +70,7 @@ class TestPSScore:
         assert scores_ps[1] > scores_ps[2]
 
     def test_ps_score_normalized_by_cost(self, acq):
+        """PS score must equal binary entropy divided by cost_ps so that cheap screening is appropriately rewarded."""
         preds = np.array([5.0])
         score = acq._score_ps(preds)[0]
         p_cross = _sigmoid(np.array([5.0 - 5.0]), 0.5)[0]
@@ -70,7 +79,9 @@ class TestPSScore:
 
 
 class TestSelect:
+    """Integration tests for CostAwareGreedyAcquisition.select()."""
     def test_returns_k_unique_queries(self, acq):
+        """select must return exactly k pairs with no repeated SMILES, since a compound should only be queried once."""
         smiles = [f"C{i}" for i in range(20)]
         preds = np.random.default_rng(0).normal(6.0, 1.5, 20).astype(np.float32)
         selected = acq.select(smiles, preds, k=5)
@@ -79,6 +90,7 @@ class TestSelect:
         assert len(selected_smiles) == len(set(selected_smiles))
 
     def test_fidelity_types_are_valid(self, acq):
+        """Every selection must be either PS or DRC — no other query type should ever be emitted."""
         smiles = [f"C{i}" for i in range(10)]
         preds = np.ones(10, dtype=np.float32) * 6.0
         selected = acq.select(smiles, preds, k=8)
@@ -104,15 +116,18 @@ class TestSelect:
         ([f"C{i}" for i in range(10)], np.ones(10, dtype=np.float32) * 6.0, 0),
     ])
     def test_empty_selection_returns_empty(self, acq, smiles, preds, k):
+        """An empty pool or k=0 must return [] without error, as there is nothing to select."""
         assert acq.select(smiles, preds, k=k) == []
 
     def test_k_larger_than_pool(self, acq):
+        """When k exceeds the pool size, all available compounds must be returned rather than raising."""
         smiles = ["A", "B"]
         preds = np.array([5.0, 6.0], dtype=np.float32)
         selected = acq.select(smiles, preds, k=100)
         assert len(selected) == 2  # limited by pool size
 
     def test_invalid_cost_raises(self):
+        """Negative cost values must raise ValueError at construction time before any scoring occurs."""
         with pytest.raises(ValueError, match="positive"):
             CostAwareGreedyAcquisition(cost_ps=-1.0, cost_drc=10.0)
 
@@ -150,6 +165,7 @@ class TestPSUpgradeCandidates:
 
     @pytest.fixture
     def acq(self):
+        """Acquisition fixture scoped to this class for upgrade-candidate tests."""
         return CostAwareGreedyAcquisition(
             cost_ps=1.0,
             cost_drc=10.0,

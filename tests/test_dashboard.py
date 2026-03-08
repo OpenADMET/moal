@@ -23,6 +23,7 @@ def _make_record(
     fidelity: QueryType,
     cost: float,
 ) -> LabelRecord:
+    """Helper that constructs a single LabelRecord for dashboard rendering tests."""
     return LabelRecord(
         smiles="C",
         canonical_smiles="C",
@@ -36,6 +37,7 @@ def _make_record(
 
 
 def _make_records(n: int = 6) -> list[LabelRecord]:
+    """Helper that produces a list of n alternating DRC/PS LabelRecords spanning multiple iterations."""
     records = []
     for i in range(n):
         ct = CensoringType.EXACT if i % 2 == 0 else CensoringType.INTERVAL
@@ -50,7 +52,9 @@ def _make_records(n: int = 6) -> list[LabelRecord]:
 # ---------------------------------------------------------------------------
 
 class TestDashboardHeadless:
+    """Tests that LiveDashboard operates correctly in headless mode (show=False, file output only)."""
     def test_creates_figure_with_4_axes(self, tmp_path):
+        """The figure must have 4 primary axes plus 1 twin axis for cost at construction time."""
         db = LiveDashboard(n_iterations=5, n_compounds=20, show=False)
         # 4 primary axes + 1 twin axis for the cost panel = 5 total.
         assert len(db._fig.get_axes()) == 5
@@ -70,6 +74,7 @@ class TestDashboardHeadless:
 
     @pytest.mark.parametrize("n_updates", [2, 3])
     def test_update_captures_frames(self, tmp_path, n_updates):
+        """Each call to update() must append one frame to _frames so that save_gif() has the correct frame count."""
         db = LiveDashboard(n_iterations=3, n_compounds=20, show=False)
         records = _make_records(4)
         for i in range(n_updates):
@@ -79,11 +84,13 @@ class TestDashboardHeadless:
         assert len(db._frames) == n_updates
 
     def test_no_updates_no_frames(self, tmp_path):
+        """A dashboard that was never updated must have an empty frames list, so save_gif() skips file creation."""
         db = LiveDashboard(n_iterations=3, n_compounds=20, show=False)
         db.close()
         assert db._frames == []
 
     def test_explicit_save(self, tmp_path):
+        """Calling save() after an update must write a non-empty PNG file to the given path."""
         db = LiveDashboard(n_iterations=3, n_compounds=20, show=False)
         records = _make_records(4)
         db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
@@ -94,6 +101,7 @@ class TestDashboardHeadless:
 
 
 class TestDashboardNoTestSet:
+    """Tests for dashboard rendering when no model evaluation test set is configured."""
     def test_no_metric_shows_annotation(self, tmp_path):
         """Model performance panel should show annotation when no test set data."""
         db = LiveDashboard(n_iterations=3, n_compounds=20, show=False)
@@ -107,6 +115,7 @@ class TestDashboardNoTestSet:
         db.close()
 
     def test_with_metric_value_draws_line(self, tmp_path):
+        """When model_metric_value is provided, the metric history list must grow with each update."""
         db = LiveDashboard(n_iterations=3, n_compounds=20, show=False)
         records = _make_records(6)
         for val in [1.0, 0.8, 0.6]:
@@ -118,7 +127,9 @@ class TestDashboardNoTestSet:
 
 
 class TestDashboardMetricHistory:
+    """Tests for internal history accumulation (cost stacks and model metric values) across multiple updates."""
     def test_metric_and_cost_stacks_accumulated(self, tmp_path):
+        """After two updates, both cost-stack lists and the model-metric-value list must contain exactly two entries each."""
         db = LiveDashboard(n_iterations=3, n_compounds=20, show=False)
         records = _make_records(4)
         db.update(records, activity_threshold=7.0, iter_drc_cost=10.0, iter_ps_cost=2.0,
@@ -132,6 +143,7 @@ class TestDashboardMetricHistory:
 
     @pytest.mark.parametrize("metric", list(ModelMetric))
     def test_all_model_metrics_accepted(self, metric, tmp_path):
+        """Every ModelMetric enum value must be accepted by LiveDashboard without raising, ensuring forward compatibility."""
         db = LiveDashboard(n_iterations=3, n_compounds=20, model_metric=metric, show=False)
         records = _make_records(4)
         db.update(records, activity_threshold=7.0,
@@ -223,6 +235,7 @@ class TestSaveGif:
 # ---------------------------------------------------------------------------
 
 class TestCompoundStatusPanel:
+    """Tests for the compound status bar panel (PS-only, DRC-new, upgrades, unqueried)."""
     def test_bar_counts_with_mixed_records(self, tmp_path):
         """PS-only, DRC-new, and upgrades are correctly partitioned."""
         from moal.types import CensoringType, QueryType

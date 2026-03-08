@@ -15,6 +15,7 @@ def _make_record(
     censoring_type: CensoringType,
     fidelity: QueryType = QueryType.DOSE_RESPONSE,
 ) -> LabelRecord:
+    """Helper that builds a minimal LabelRecord for loss function tests."""
     return LabelRecord(
         smiles="C",
         canonical_smiles="C",
@@ -28,7 +29,9 @@ def _make_record(
 
 
 class TestExactBranch:
+    """Tests for the EXACT censoring branch of CensoredRegressionLoss (standard squared-error-like behaviour)."""
     def test_zero_loss_at_truth(self):
+        """When prediction equals the true value, the EXACT branch must return ~0 loss."""
         loss_fn = CensoredRegressionLoss(sigma=1.0)
         pred = torch.tensor([5.0])
         rec = _make_record(5.0, 5.0, CensoringType.EXACT)
@@ -36,6 +39,7 @@ class TestExactBranch:
         assert loss.item() == pytest.approx(0.0, abs=1e-6)
 
     def test_loss_increases_with_error(self):
+        """Larger prediction errors must produce strictly larger loss, confirming monotonicity of the EXACT branch."""
         loss_fn = CensoredRegressionLoss(sigma=1.0)
         rec = _make_record(5.0, 5.0, CensoringType.EXACT)
         loss_small = loss_fn(torch.tensor([5.1]), [rec])
@@ -43,6 +47,7 @@ class TestExactBranch:
         assert loss_large.item() > loss_small.item()
 
     def test_gradient_direction(self):
+        """When prediction overshoots truth, the gradient must be positive so that the optimizer pushes it back down."""
         loss_fn = CensoredRegressionLoss(sigma=1.0)
         pred = torch.tensor([7.0], requires_grad=True)
         rec = _make_record(5.0, 5.0, CensoringType.EXACT)
@@ -53,6 +58,7 @@ class TestExactBranch:
 
 
 class TestLeftBranch:
+    """Tests for the LEFT censoring branch of CensoredRegressionLoss (confirmed inactive compounds)."""
     def test_loss_decreases_as_prediction_moves_below_threshold(self):
         """Lower predictions should incur lower LEFT-branch loss."""
         loss_fn = CensoredRegressionLoss(sigma=1.0)
@@ -75,6 +81,7 @@ class TestLeftBranch:
 
 
 class TestIntervalBranch:
+    """Tests for the INTERVAL censoring branch of CensoredRegressionLoss (active compounds with pEC50 in [T, upper_bound])."""
     def test_loss_minimized_inside_interval(self):
         """Predictions inside [T, U] should incur lower loss than outside."""
         loss_fn = CensoredRegressionLoss(sigma=1.0)
@@ -112,6 +119,7 @@ class TestIntervalBranch:
 
 
 class TestFidelityWeighting:
+    """Tests that per-fidelity loss weights (w_drc, w_ps) are correctly applied to DRC vs PS samples."""
     def test_ps_loss_less_than_drc_for_same_error(self):
         """PS (inequality) samples should contribute less to total loss."""
         loss_fn = CensoredRegressionLoss(sigma=1.0, w_drc=1.0, w_ps=0.3)
@@ -124,7 +132,9 @@ class TestFidelityWeighting:
 
 
 class TestLearnableSigma:
+    """Tests for the learnable sigma option: parameter existence and lower-bound enforcement."""
     def test_sigma_parameter_exists_and_bounded(self):
+        """When learnable_sigma=True, the module must expose exactly one trainable parameter and enforce the minimum-sigma lower bound."""
         loss_fn = CensoredRegressionLoss(sigma=0.5, learnable_sigma=True)
         params = list(loss_fn.parameters())
         assert len(params) == 1
@@ -135,6 +145,7 @@ class TestLearnableSigma:
 
 
 class TestLossBreakdown:
+    """Tests for forward_with_breakdown(): correctness and gradient flow of the returned LossBreakdown NamedTuple."""
     def test_forward_consistent_with_breakdown(self):
         """forward() total must match forward_with_breakdown().total."""
         loss_fn = CensoredRegressionLoss(sigma=1.0)
