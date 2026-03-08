@@ -39,7 +39,9 @@ _COLOUR_DRC = "#E07B39"  # orange
 _COLOUR_PS = "#4C9BE8"  # blue
 _COLOUR_ACT = "#2CA02C"  # green
 _COLOUR_MET = "#9467BD"  # purple
-_COLOUR_UPGRADE = "#9B59B6"  # purple-magenta (PS→DRC upgrades, matches terminal [magenta])
+_COLOUR_UPGRADE = (
+    "#9B59B6"  # purple-magenta (PS→DRC upgrades, matches terminal [magenta])
+)
 _COLOUR_UNQUERIED = "#D3D3D3"  # light gray
 
 
@@ -366,6 +368,7 @@ class LiveDashboard:
         # Unique queried = PS-only + all DRC (upgrades are counted in DRC, not PS-only)
         n_queried = n_ps_only + len(drc_smiles)
         n_unqueried = max(self.n_compounds - n_queried, 0)
+        n_all = n_ps_only + n_drc_new + n_upgrades + n_unqueried
 
         categories = ["PS", "DRC", "Unqueried"]
         x = np.arange(len(categories))
@@ -381,11 +384,13 @@ class LiveDashboard:
             zorder=2,
             label="PS→DRC upgrade",
         )
-        ax.bar([x[2]], [n_unqueried], color=_COLOUR_UNQUERIED, zorder=2, label="Unqueried")
+        ax.bar(
+            [x[2]], [n_unqueried], color=_COLOUR_UNQUERIED, zorder=2, label="Unqueried"
+        )
 
         ax.set_xticks(x)
         ax.set_xticklabels(categories, fontsize=8)
-        ax.set_ylim(bottom=0)
+        ax.set_ylim(bottom=0, top=n_all * 1.05)
         ax.legend(fontsize=7, loc="upper right")
 
     # ------------------------------------------------------------------
