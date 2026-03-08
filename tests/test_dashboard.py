@@ -159,6 +159,7 @@ class TestDashboardMetricHistory:
             activity_threshold=7.0,
             iter_drc_cost=10.0,
             iter_ps_cost=2.0,
+            iter_upgrade_cost=3.0,
             model_metric_value=2.0,
         )
         db.update(
@@ -166,11 +167,13 @@ class TestDashboardMetricHistory:
             activity_threshold=7.0,
             iter_drc_cost=20.0,
             iter_ps_cost=4.0,
+            iter_upgrade_cost=6.0,
             model_metric_value=1.5,
         )
         assert db._model_metric_values == [2.0, 1.5]
         assert db._iter_drc_costs == [10.0, 20.0]
         assert db._iter_ps_costs == [2.0, 4.0]
+        assert db._iter_upgrade_costs == [3.0, 6.0]
         db.close()
 
     @pytest.mark.parametrize("metric", list(ModelMetric))
@@ -187,6 +190,66 @@ class TestDashboardMetricHistory:
             iter_ps_cost=1.0,
             model_metric_value=0.5,
         )
+        db.close()
+
+
+class TestCostPanelUpgradeBar:
+    """Tests for the PS→DRC upgrade segment in the Per-Iteration Cost Breakdown panel."""
+
+    def test_upgrade_bar_present_when_upgrade_cost_nonzero(self, tmp_path):
+        """Cost panel must render 3 bar containers (DRC, PS→DRC upgrade, PS) when upgrades occur."""
+        db = LiveDashboard(n_iterations=2, n_compounds=20, show=False)
+        records = _make_records(4)
+        db.update(
+            records,
+            activity_threshold=7.0,
+            iter_drc_cost=15.0,
+            iter_ps_cost=2.0,
+            iter_upgrade_cost=5.0,
+        )
+        # ax2 should have 3 BarContainers: DRC new, PS→DRC upgrade, PS
+        assert len(db._ax2.containers) == 3
+        db.close()
+
+    def test_upgrade_bar_absent_when_upgrade_cost_zero(self, tmp_path):
+        """Cost panel must still render 3 bar containers even with zero upgrade cost (bar has zero height)."""
+        db = LiveDashboard(n_iterations=2, n_compounds=20, show=False)
+        records = _make_records(4)
+        db.update(
+            records,
+            activity_threshold=7.0,
+            iter_drc_cost=15.0,
+            iter_ps_cost=2.0,
+            iter_upgrade_cost=0.0,
+        )
+        # Upgrade bar is always drawn; height is just 0 when there are no upgrades
+        assert len(db._ax2.containers) == 3
+        upgrade_height = db._ax2.containers[1][0].get_height()
+        assert upgrade_height == 0.0
+        db.close()
+
+    def test_drc_new_plus_upgrade_equals_total_drc(self, tmp_path):
+        """The first-pass DRC bar height plus upgrade bar height must equal total iter_drc_cost."""
+        db = LiveDashboard(n_iterations=2, n_compounds=20, show=False)
+        records = _make_records(4)
+        db.update(
+            records,
+            activity_threshold=7.0,
+            iter_drc_cost=20.0,
+            iter_ps_cost=3.0,
+            iter_upgrade_cost=8.0,
+        )
+        drc_new_height = db._ax2.containers[0][0].get_height()
+        upgrade_height = db._ax2.containers[1][0].get_height()
+        assert drc_new_height + upgrade_height == pytest.approx(20.0)
+        db.close()
+
+    def test_upgrade_cost_defaults_to_zero(self, tmp_path):
+        """Calling update() without iter_upgrade_cost must not raise and must record 0.0."""
+        db = LiveDashboard(n_iterations=2, n_compounds=20, show=False)
+        records = _make_records(4)
+        db.update(records, activity_threshold=7.0, iter_drc_cost=10.0, iter_ps_cost=2.0)
+        assert db._iter_upgrade_costs == [0.0]
         db.close()
 
 
