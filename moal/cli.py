@@ -48,6 +48,10 @@ def main(config: str, output_dir: str | None, verbose: bool) -> None:
     from moal.oracle import CostAwareOracle
     from moal.preprocessing import SMILESPreprocessor
 
+    # Print terminal banner
+    with open(Path(__file__).parent.parent / "assets" / "terminal.txt") as f:
+        print(f.read())
+
     cfg = PipelineConfig.from_yaml(config)
     logger.info("Loaded config from %s", config)
 
