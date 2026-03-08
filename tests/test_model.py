@@ -8,60 +8,12 @@ feature-dimension assertions, and strict state_dict loading.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import pytest
-import torch
 import torch.nn as nn
 
 from moal.loss import CensoredRegressionLoss
 from moal.model import ChemPropLightningModule, NoisyOracleModel
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _build_ckpt(
-    tmp_path: Path,
-    hidden_size: int = 300,
-    depth: int = 3,
-    ffn_hidden_size: int = 300,
-    ffn_num_layers: int = 2,
-) -> str:
-    """Build an MPNN with the given architecture and save its state dict.
-
-    Returns the path to the saved checkpoint file as a string.  Using the
-    model's own weights avoids needing a real CheMeleon checkpoint while
-    still exercising ``load_state_dict(strict=True)`` with a matching spec.
-    """
-    from chemprop.models import MPNN
-    from chemprop.nn import BondMessagePassing, MeanAggregation, RegressionFFN
-
-    mp = BondMessagePassing(d_h=hidden_size, depth=depth)
-    ffn = RegressionFFN(
-        input_dim=hidden_size, hidden_dim=ffn_hidden_size, n_layers=ffn_num_layers
-    )
-    arch_model = MPNN(message_passing=mp, agg=MeanAggregation(), predictor=ffn)
-
-    path = (
-        tmp_path / f"ckpt_{hidden_size}_{depth}_{ffn_hidden_size}_{ffn_num_layers}.pt"
-    )
-    torch.save({"state_dict": arch_model.state_dict()}, path)
-    return str(path)
-
-
-def _make_model(tmp_path: Path, **kwargs) -> ChemPropLightningModule:
-    """Build a ChemPropLightningModule with a matching synthetic checkpoint."""
-    arch_keys = {
-        k: kwargs[k]
-        for k in ("hidden_size", "depth", "ffn_hidden_size", "ffn_num_layers")
-        if k in kwargs
-    }
-    ckpt = _build_ckpt(tmp_path, **arch_keys)
-    return ChemPropLightningModule(chempeleon_ckpt_path=ckpt, **kwargs)
-
 
 # ---------------------------------------------------------------------------
 # Shared fixture
@@ -69,9 +21,9 @@ def _make_model(tmp_path: Path, **kwargs) -> ChemPropLightningModule:
 
 
 @pytest.fixture
-def model(tmp_path) -> ChemPropLightningModule:
+def model(**kwargs) -> ChemPropLightningModule:
     """Default-config module initialized from a real synthetic checkpoint."""
-    return _make_model(tmp_path)
+    return ChemPropLightningModule(**kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -298,20 +250,6 @@ class TestFreezeUnfreeze:
             id(p) for p in model._head_params()
         }
         assert covered == all_ids
-
-
-# ---------------------------------------------------------------------------
-# Checkpoint errors
-# ---------------------------------------------------------------------------
-
-
-class TestCheckpointErrors:
-    """Tests that missing or invalid checkpoint paths raise the correct exceptions at init time."""
-
-    def test_missing_checkpoint_raises_file_not_found(self):
-        """Passing a nonexistent checkpoint path must raise FileNotFoundError."""
-        with pytest.raises(FileNotFoundError, match="CheMeleon checkpoint not found"):
-            ChemPropLightningModule(chempeleon_ckpt_path="/no/such/file.ckpt")
 
 
 # ---------------------------------------------------------------------------

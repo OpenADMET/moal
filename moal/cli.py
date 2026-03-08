@@ -105,7 +105,6 @@ def main(config: str, output_dir: str | None, verbose: bool) -> None:
         )
     else:
         model = ChemPropLightningModule(
-            chempeleon_ckpt_path=cfg.model.chempeleon_ckpt_path,
             hidden_size=cfg.model.hidden_size,
             depth=cfg.model.depth,
             ffn_hidden_size=cfg.model.ffn_hidden_size,
