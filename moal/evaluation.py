@@ -31,6 +31,7 @@ class ModelMetric(str, Enum):
 # Scaffold utilities
 # ---------------------------------------------------------------------------
 
+
 def _murcko_scaffold(smiles: str) -> str:
     """Return the Bemis-Murcko scaffold SMILES for a compound, or the original
     SMILES if the scaffold is empty (e.g., acyclic compounds)."""
@@ -105,6 +106,7 @@ def scaffold_split(
 # ---------------------------------------------------------------------------
 # Evaluator
 # ---------------------------------------------------------------------------
+
 
 class PipelineEvaluator:
     """Computes efficiency metrics for a cost-aware active learning campaign.
@@ -241,9 +243,7 @@ class PipelineEvaluator:
         expected_random = n_true_actives * fraction
         return actives_in_top / expected_random if expected_random > 0 else 0.0
 
-    def cumulative_actives_curve(
-        self, labeled: list[LabelRecord]
-    ) -> pd.DataFrame:
+    def cumulative_actives_curve(self, labeled: list[LabelRecord]) -> pd.DataFrame:
         """Build a DataFrame tracking actives and cost cumulatively.
 
         Parameters
@@ -265,18 +265,18 @@ class PipelineEvaluator:
             if self._is_confirmed_active(rec):
                 cumulative_actives += 1
             apd = cumulative_actives / cumulative_cost if cumulative_cost > 0 else 0.0
-            rows.append({
-                "iteration": rec.iteration,
-                "n_labeled": i + 1,
-                "cumulative_cost": cumulative_cost,
-                "cumulative_actives": cumulative_actives,
-                "actives_per_dollar": apd,
-            })
+            rows.append(
+                {
+                    "iteration": rec.iteration,
+                    "n_labeled": i + 1,
+                    "cumulative_cost": cumulative_cost,
+                    "cumulative_actives": cumulative_actives,
+                    "actives_per_dollar": apd,
+                }
+            )
         return pd.DataFrame(rows)
 
-    def fidelity_breakdown(
-        self, labeled: list[LabelRecord]
-    ) -> dict[str, int]:
+    def fidelity_breakdown(self, labeled: list[LabelRecord]) -> dict[str, int]:
         """Count DRC, PS, and PS→DRC upgrades in the labeled pool.
 
         A PS→DRC upgrade is a compound that has both a PS and a DRC record —

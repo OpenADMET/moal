@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
 
 
 class QueryType(str, Enum):
@@ -18,7 +17,7 @@ class CensoringType(str, Enum):
     """How a label is censored relative to the true continuous pEC50."""
 
     EXACT = "exact"
-    LEFT = "left"        # True pEC50 is in (-inf, value); label: "< value"
+    LEFT = "left"  # True pEC50 is in (-inf, value); label: "< value"
     INTERVAL = "interval"  # True pEC50 is in [value, upper_bound]; label: ">= value"
 
 

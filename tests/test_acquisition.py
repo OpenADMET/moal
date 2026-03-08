@@ -21,6 +21,7 @@ def acq():
 
 class TestScoreHelpers:
     """Tests for the _sigmoid and _binary_entropy scoring utility functions."""
+
     def test_binary_entropy_max_at_half(self):
         """H(p) should be maximized at p=0.5."""
         p = np.array([0.1, 0.5, 0.9])
@@ -43,6 +44,7 @@ class TestScoreHelpers:
 
 class TestDRCScore:
     """Tests for _score_drc(): the exploitation score that rewards high predicted pEC50."""
+
     def test_higher_prediction_higher_drc_score(self, acq):
         """A compound with a higher predicted pEC50 must receive a higher DRC score, reflecting stronger exploitation incentive."""
         smiles = ["A", "B"]
@@ -61,6 +63,7 @@ class TestDRCScore:
 
 class TestPSScore:
     """Tests for _score_ps(): the exploration score that rewards uncertainty near the PS threshold."""
+
     def test_ps_score_maximized_near_threshold(self, acq):
         """PS score should peak near ps_threshold (max entropy)."""
         preds = np.array([3.0, 5.0, 7.0])
@@ -80,6 +83,7 @@ class TestPSScore:
 
 class TestSelect:
     """Integration tests for CostAwareGreedyAcquisition.select()."""
+
     def test_returns_k_unique_queries(self, acq):
         """select must return exactly k pairs with no repeated SMILES, since a compound should only be queried once."""
         smiles = [f"C{i}" for i in range(20)]
@@ -111,10 +115,13 @@ class TestSelect:
         selected = acq.select(smiles, preds, k=1)
         assert selected[0][1] == QueryType.PRIMARY_SCREEN
 
-    @pytest.mark.parametrize("smiles,preds,k", [
-        ([], np.array([]), 5),
-        ([f"C{i}" for i in range(10)], np.ones(10, dtype=np.float32) * 6.0, 0),
-    ])
+    @pytest.mark.parametrize(
+        "smiles,preds,k",
+        [
+            ([], np.array([]), 5),
+            ([f"C{i}" for i in range(10)], np.ones(10, dtype=np.float32) * 6.0, 0),
+        ],
+    )
     def test_empty_selection_returns_empty(self, acq, smiles, preds, k):
         """An empty pool or k=0 must return [] without error, as there is nothing to select."""
         assert acq.select(smiles, preds, k=k) == []
@@ -178,9 +185,13 @@ class TestPSUpgradeCandidates:
         """Compounds in the PS-labeled pool must not be selectable as PS."""
         ps_smiles = ["A"]
         ps_preds = np.array([9.0], dtype=np.float32)
-        selected = acq.select([], np.array([]), 1,
-                              ps_labeled_smiles=ps_smiles,
-                              ps_labeled_predictions=ps_preds)
+        selected = acq.select(
+            [],
+            np.array([]),
+            1,
+            ps_labeled_smiles=ps_smiles,
+            ps_labeled_predictions=ps_preds,
+        )
         assert len(selected) == 1
         assert selected[0] == ("A", QueryType.DOSE_RESPONSE)
 
@@ -190,9 +201,13 @@ class TestPSUpgradeCandidates:
         unlabeled_preds = np.array([3.0], dtype=np.float32)  # low DRC score
         ps_labeled = ["A"]
         ps_labeled_preds = np.array([9.0], dtype=np.float32)  # high DRC score
-        selected = acq.select(unlabeled, unlabeled_preds, 1,
-                              ps_labeled_smiles=ps_labeled,
-                              ps_labeled_predictions=ps_labeled_preds)
+        selected = acq.select(
+            unlabeled,
+            unlabeled_preds,
+            1,
+            ps_labeled_smiles=ps_labeled,
+            ps_labeled_predictions=ps_labeled_preds,
+        )
         assert selected[0] == ("A", QueryType.DOSE_RESPONSE)
 
     def test_empty_ps_labeled_behaves_like_no_pool(self, acq):
@@ -200,14 +215,18 @@ class TestPSUpgradeCandidates:
         smiles = [f"C{i}" for i in range(5)]
         preds = np.ones(5, dtype=np.float32) * 6.0
         without_pool = acq.select(smiles, preds, 3)
-        with_empty_pool = acq.select(smiles, preds, 3,
-                                     ps_labeled_smiles=[],
-                                     ps_labeled_predictions=None)
+        with_empty_pool = acq.select(
+            smiles, preds, 3, ps_labeled_smiles=[], ps_labeled_predictions=None
+        )
         assert without_pool == with_empty_pool
 
     def test_no_smiles_length_mismatch_assertion(self, acq):
         """Mismatched ps_labeled_smiles and ps_labeled_predictions must raise AssertionError."""
         with pytest.raises(AssertionError):
-            acq.select([], np.array([]), 1,
-                       ps_labeled_smiles=["A", "B"],
-                       ps_labeled_predictions=np.array([1.0]))
+            acq.select(
+                [],
+                np.array([]),
+                1,
+                ps_labeled_smiles=["A", "B"],
+                ps_labeled_predictions=np.array([1.0]),
+            )

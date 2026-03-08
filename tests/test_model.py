@@ -18,7 +18,6 @@ import torch.nn as nn
 from moal.loss import CensoredRegressionLoss
 from moal.model import ChemPropLightningModule, NoisyOracleModel
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -41,17 +40,25 @@ def _build_ckpt(
     from chemprop.nn import BondMessagePassing, MeanAggregation, RegressionFFN
 
     mp = BondMessagePassing(d_h=hidden_size, depth=depth)
-    ffn = RegressionFFN(input_dim=hidden_size, hidden_dim=ffn_hidden_size, n_layers=ffn_num_layers)
+    ffn = RegressionFFN(
+        input_dim=hidden_size, hidden_dim=ffn_hidden_size, n_layers=ffn_num_layers
+    )
     arch_model = MPNN(message_passing=mp, agg=MeanAggregation(), predictor=ffn)
 
-    path = tmp_path / f"ckpt_{hidden_size}_{depth}_{ffn_hidden_size}_{ffn_num_layers}.pt"
+    path = (
+        tmp_path / f"ckpt_{hidden_size}_{depth}_{ffn_hidden_size}_{ffn_num_layers}.pt"
+    )
     torch.save({"state_dict": arch_model.state_dict()}, path)
     return str(path)
 
 
 def _make_model(tmp_path: Path, **kwargs) -> ChemPropLightningModule:
     """Build a ChemPropLightningModule with a matching synthetic checkpoint."""
-    arch_keys = {k: kwargs[k] for k in ("hidden_size", "depth", "ffn_hidden_size", "ffn_num_layers") if k in kwargs}
+    arch_keys = {
+        k: kwargs[k]
+        for k in ("hidden_size", "depth", "ffn_hidden_size", "ffn_num_layers")
+        if k in kwargs
+    }
     ckpt = _build_ckpt(tmp_path, **arch_keys)
     return ChemPropLightningModule(chempeleon_ckpt_path=ckpt, **kwargs)
 
@@ -74,6 +81,7 @@ def model(tmp_path) -> ChemPropLightningModule:
 
 class TestDefaultInit:
     """Tests for default-parameter ChemPropLightningModule initialization."""
+
     def test_model_attribute_is_nn_module(self, model):
         """The inner MPNN must be an nn.Module."""
         assert isinstance(model.model, nn.Module)
@@ -97,9 +105,17 @@ class TestDefaultInit:
     def test_hparams_contains_architecture_keys(self, model):
         """save_hyperparameters must record all architecture and training params."""
         expected = {
-            "hidden_size", "depth", "ffn_hidden_size", "ffn_num_layers",
-            "freeze_epochs", "lr_encoder", "lr_head",
-            "sigma", "w_drc", "w_ps", "learnable_sigma",
+            "hidden_size",
+            "depth",
+            "ffn_hidden_size",
+            "ffn_num_layers",
+            "freeze_epochs",
+            "lr_encoder",
+            "lr_head",
+            "sigma",
+            "w_drc",
+            "w_ps",
+            "learnable_sigma",
         }
         assert expected.issubset(set(model.hparams.keys()))
 
@@ -123,6 +139,7 @@ class TestDefaultInit:
 
 class TestArchitectureParams:
     """Tests that architecture hyperparameters (hidden_size, depth, FFN layers) are correctly forwarded to the underlying MPNN."""
+
     @pytest.mark.parametrize("hidden_size", [128, 256, 512])
     def test_hidden_size_sets_message_passing_width(self, tmp_path, hidden_size):
         """W_h in the message-passing layer must reflect the configured hidden size."""
@@ -158,9 +175,16 @@ class TestArchitectureParams:
             (512, 3, 2),
         ],
     )
-    def test_combined_architecture_params(self, tmp_path, hidden_size, depth, ffn_num_layers):
+    def test_combined_architecture_params(
+        self, tmp_path, hidden_size, depth, ffn_num_layers
+    ):
         """Combinations of architecture params must all be reflected in the built model."""
-        m = _make_model(tmp_path, hidden_size=hidden_size, depth=depth, ffn_num_layers=ffn_num_layers)
+        m = _make_model(
+            tmp_path,
+            hidden_size=hidden_size,
+            depth=depth,
+            ffn_num_layers=ffn_num_layers,
+        )
         assert m.model.message_passing.W_h.in_features == hidden_size
         assert m.model.message_passing.depth == depth
         assert len(m.model.predictor.ffn) == ffn_num_layers + 1
@@ -173,6 +197,7 @@ class TestArchitectureParams:
 
 class TestTrainingHyperparams:
     """Tests that training hyperparameters (freeze_epochs, learning rates) are stored and accessible."""
+
     @pytest.mark.parametrize("freeze_epochs", [0, 5, 20])
     def test_freeze_epochs_stored(self, tmp_path, freeze_epochs):
         """freeze_epochs must be stored as an instance attribute."""
@@ -204,6 +229,7 @@ class TestTrainingHyperparams:
 
 class TestLossConfig:
     """Tests that loss-related parameters (sigma, fidelity weights, learnable_sigma) are wired to the loss function."""
+
     @pytest.mark.parametrize("sigma", [0.1, 0.5, 1.0])
     def test_sigma_stored_in_loss_fn(self, tmp_path, sigma):
         """loss_fn.sigma must reflect the configured sigma value."""
@@ -234,6 +260,7 @@ class TestLossConfig:
 
 class TestFreezeUnfreeze:
     """Tests for the encoder freeze/unfreeze schedule: optimizer count changes at the freeze epoch boundary."""
+
     def test_configure_optimizers_frozen_has_one_param_group(self, model):
         """When the encoder is frozen, configure_optimizers must return one param group."""
         opt = model.configure_optimizers()
@@ -267,7 +294,9 @@ class TestFreezeUnfreeze:
     def test_encoder_and_head_params_cover_all_model_params(self, model):
         """_encoder_params and _head_params together must account for all model parameters."""
         all_ids = {id(p) for p in model.model.parameters()}
-        covered = {id(p) for p in model._encoder_params()} | {id(p) for p in model._head_params()}
+        covered = {id(p) for p in model._encoder_params()} | {
+            id(p) for p in model._head_params()
+        }
         assert covered == all_ids
 
 
@@ -278,6 +307,7 @@ class TestFreezeUnfreeze:
 
 class TestCheckpointErrors:
     """Tests that missing or invalid checkpoint paths raise the correct exceptions at init time."""
+
     def test_missing_checkpoint_raises_file_not_found(self):
         """Passing a nonexistent checkpoint path must raise FileNotFoundError."""
         with pytest.raises(FileNotFoundError, match="CheMeleon checkpoint not found"):
@@ -305,6 +335,7 @@ def noisy_model() -> NoisyOracleModel:
 
 class TestNoisyOracleModel:
     """Tests for NoisyOracleModel: noise bounds, reproducibility, and refit no-op behaviour."""
+
     def test_predictions_within_noise_bounds(self, noisy_model):
         """All predictions must lie within [true - noise_scale, true + noise_scale]."""
         smiles = list(_GT.keys())
@@ -379,6 +410,10 @@ class TestNoisyOracleModel:
     def test_batch_size_argument_ignored(self, noisy_model):
         """batch_size kwarg must be accepted without error or behaviour change."""
         smiles = list(_GT.keys())
-        preds_default = NoisyOracleModel(ground_truth=_GT, seed=7).predict_smiles(smiles, noise_scale=0.3)
-        preds_custom  = NoisyOracleModel(ground_truth=_GT, seed=7).predict_smiles(smiles, noise_scale=0.3, batch_size=1)
+        preds_default = NoisyOracleModel(ground_truth=_GT, seed=7).predict_smiles(
+            smiles, noise_scale=0.3
+        )
+        preds_custom = NoisyOracleModel(ground_truth=_GT, seed=7).predict_smiles(
+            smiles, noise_scale=0.3, batch_size=1
+        )
         np.testing.assert_array_equal(preds_default, preds_custom)

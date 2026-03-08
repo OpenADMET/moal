@@ -31,7 +31,6 @@ is selected at most once.
 
 from __future__ import annotations
 
-import math
 import logging
 
 import numpy as np
@@ -193,7 +192,9 @@ class CostAwareGreedyAcquisition:
             )
             scores_drc_upgrade = self._score_drc(psl_preds)
             for j, smi in enumerate(ps_labeled_smiles):
-                candidates.append((float(scores_drc_upgrade[j]), smi, QueryType.DOSE_RESPONSE))
+                candidates.append(
+                    (float(scores_drc_upgrade[j]), smi, QueryType.DOSE_RESPONSE)
+                )
 
         candidates.sort(key=lambda x: x[0], reverse=True)
 
@@ -211,7 +212,10 @@ class CostAwareGreedyAcquisition:
             logger.warning(
                 "Could only select %d queries (requested %d); "
                 "%d unqueried and %d PS-labeled compounds available.",
-                len(selected), k, len(unlabeled_smiles), len(ps_labeled_smiles),
+                len(selected),
+                k,
+                len(unlabeled_smiles),
+                len(ps_labeled_smiles),
             )
         return selected
 
@@ -241,14 +245,21 @@ class CostAwareGreedyAcquisition:
         predictions = np.asarray(predictions, dtype=np.float32)
         rows = []
         for smi, y_hat in zip(unlabeled_smiles, predictions):
-            p_active = float(_sigmoid(np.array([y_hat - self.target_threshold]), self.tau)[0])
-            p_cross = float(_sigmoid(np.array([y_hat - self.ps_threshold]), self.tau)[0])
-            rows.append({
-                "smiles": smi,
-                "y_hat": float(y_hat),
-                "p_active": p_active,
-                "p_cross_threshold": p_cross,
-                "score_drc": p_active / self.cost_drc,
-                "score_ps": float(_binary_entropy(np.array([p_cross]))[0]) / self.cost_ps,
-            })
+            p_active = float(
+                _sigmoid(np.array([y_hat - self.target_threshold]), self.tau)[0]
+            )
+            p_cross = float(
+                _sigmoid(np.array([y_hat - self.ps_threshold]), self.tau)[0]
+            )
+            rows.append(
+                {
+                    "smiles": smi,
+                    "y_hat": float(y_hat),
+                    "p_active": p_active,
+                    "p_cross_threshold": p_cross,
+                    "score_drc": p_active / self.cost_drc,
+                    "score_ps": float(_binary_entropy(np.array([p_cross]))[0])
+                    / self.cost_ps,
+                }
+            )
         return rows

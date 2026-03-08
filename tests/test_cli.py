@@ -10,6 +10,7 @@ from moal.cli import main
 
 class TestCLIHelp:
     """Tests that the --help flag exits cleanly and exposes all expected options."""
+
     def test_help_shows_usage_and_options(self):
         """--help must exit 0 and document the command purpose and all three options."""
         runner = CliRunner()
@@ -24,10 +25,14 @@ class TestCLIHelp:
 
 class TestCLIMissingConfig:
     """Tests that missing or nonexistent --config paths produce a non-zero exit code."""
-    @pytest.mark.parametrize("args", [
-        [],
-        ["--config", "/nonexistent/path/config.yaml"],
-    ])
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            [],
+            ["--config", "/nonexistent/path/config.yaml"],
+        ],
+    )
     def test_bad_config_exits_nonzero(self, args):
         """Invoking without --config or with a non-existent path must fail."""
         runner = CliRunner()
@@ -37,6 +42,7 @@ class TestCLIMissingConfig:
 
 class TestCLINoGroundTruth:
     """Tests that an empty ground_truth_csv path triggers a clean exit-1 error."""
+
     def test_empty_ground_truth_csv_exits_one(self, tmp_path):
         """A config with data.ground_truth_csv='' must exit with code 1.
 
@@ -55,10 +61,14 @@ class TestCLINoGroundTruth:
 
 class TestCLIBadCSV:
     """Tests that a missing or malformed CSV file triggers a clean exit-1 error."""
-    @pytest.mark.parametrize("csv_content", [
-        None,  # missing file (config points at a non-existent path)
-        'smiles,pec50\n"unclosed quote,5.0\n',  # malformed CSV
-    ])
+
+    @pytest.mark.parametrize(
+        "csv_content",
+        [
+            None,  # missing file (config points at a non-existent path)
+            'smiles,pec50\n"unclosed quote,5.0\n',  # malformed CSV
+        ],
+    )
     def test_bad_csv_exits_one(self, tmp_path, csv_content):
         """A config pointing at a missing or malformed CSV must exit with code 1."""
         if csv_content is None:
@@ -78,6 +88,7 @@ class TestCLIBadCSV:
 
 class TestCLICustomColumns:
     """Tests that custom smiles_column/pec50_column config keys are correctly forwarded to the oracle."""
+
     def test_custom_column_names_accepted(self, tmp_path):
         """A config with smiles_column/pec50_column matching the CSV headers must not exit 1
         at the oracle-init stage (it will fail later at model init, which is fine here)."""
@@ -107,9 +118,7 @@ class TestCLICustomColumns:
         csv_file.write_text("smiles,pec50\nc1ccccc1,5.0\n")
         cfg = tmp_path / "config.yaml"
         cfg.write_text(
-            "data:\n"
-            f"  ground_truth_csv: {csv_file}\n"
-            "  smiles_column: nonexistent_col\n"
+            f"data:\n  ground_truth_csv: {csv_file}\n  smiles_column: nonexistent_col\n"
         )
         runner = CliRunner()
         result = runner.invoke(
@@ -121,23 +130,38 @@ class TestCLICustomColumns:
 
 class TestExampleConfig:
     """Tests that the bundled examples/default_config.yaml is valid and loadable end-to-end."""
+
     def test_example_config_is_valid_yaml_with_required_sections(self):
         """examples/default_config.yaml must parse as valid YAML and contain all
         top-level PipelineConfig sections."""
-        import yaml
         from pathlib import Path
 
+        import yaml
+
         config_path = Path(__file__).parent.parent / "examples" / "default_config.yaml"
-        assert config_path.exists(), f"examples/default_config.yaml not found at {config_path}"
+        assert config_path.exists(), (
+            f"examples/default_config.yaml not found at {config_path}"
+        )
         with open(config_path) as f:
             data = yaml.safe_load(f)
         assert isinstance(data, dict)
-        for section in ("oracle", "model", "acquisition", "trainer", "dashboard", "data", "active_learning_loop"):
-            assert section in data, f"Missing section '{section}' in default_config.yaml"
+        for section in (
+            "oracle",
+            "model",
+            "acquisition",
+            "trainer",
+            "dashboard",
+            "data",
+            "active_learning_loop",
+        ):
+            assert section in data, (
+                f"Missing section '{section}' in default_config.yaml"
+            )
 
     def test_example_config_loads_as_pipeline_config(self):
         """PipelineConfig.from_yaml must accept the example config without errors."""
         from pathlib import Path
+
         from moal.config import PipelineConfig
 
         config_path = Path(__file__).parent.parent / "examples" / "default_config.yaml"
@@ -156,12 +180,7 @@ class TestExampleConfig:
         'checkpoint not found' or 'chempeleon' error message.
         """
         csv_file = tmp_path / "data.csv"
-        csv_file.write_text(
-            "smiles,pec50\n"
-            "c1ccccc1,4.0\n"
-            "CCO,6.0\n"
-            "c1ccc(O)cc1,7.5\n"
-        )
+        csv_file.write_text("smiles,pec50\nc1ccccc1,4.0\nCCO,6.0\nc1ccc(O)cc1,7.5\n")
         cfg = tmp_path / "config.yaml"
         cfg.write_text(
             "data:\n"

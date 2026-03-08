@@ -17,30 +17,34 @@ def suppress_noisy_loggers() -> None:
     Safe to call multiple times (idempotent).
     """
     _silence_rdkit()
-    _set_level(logging.WARNING, [
-        "lightning",
-        "lightning.pytorch",
-        "lightning.pytorch.utilities",
-        "lightning.pytorch.trainer",
-        "lightning.pytorch.accelerators",
-        "lightning.pytorch.callbacks",
-        "lightning.pytorch.core",
-        "torch",
-        "matplotlib",
-        "matplotlib.font_manager",
-        "PIL",
-        "urllib3",
-        "filelock",
-        "fsspec",
-        "importlib_metadata",
-        "pkg_resources",
-    ])
+    _set_level(
+        logging.WARNING,
+        [
+            "lightning",
+            "lightning.pytorch",
+            "lightning.pytorch.utilities",
+            "lightning.pytorch.trainer",
+            "lightning.pytorch.accelerators",
+            "lightning.pytorch.callbacks",
+            "lightning.pytorch.core",
+            "torch",
+            "matplotlib",
+            "matplotlib.font_manager",
+            "PIL",
+            "urllib3",
+            "filelock",
+            "fsspec",
+            "importlib_metadata",
+            "pkg_resources",
+        ],
+    )
 
 
 def _silence_rdkit() -> None:
     """Disable RDKit's C++ logger and set the Python rdkit logger to WARNING."""
     try:
         from rdkit import RDLogger
+
         RDLogger.DisableLog("rdApp.*")
     except ImportError:
         pass

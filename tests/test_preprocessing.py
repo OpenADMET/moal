@@ -13,6 +13,7 @@ def pp():
 
 class TestCanonicalize:
     """Tests for SMILESPreprocessor.canonicalize()."""
+
     def test_valid_smiles(self, pp):
         """Valid SMILES must return a non-empty canonical string, not None."""
         result = pp.canonicalize("c1ccccc1")
@@ -49,6 +50,7 @@ class TestCanonicalize:
 
 class TestProcessBatch:
     """Tests for SMILESPreprocessor.process_batch()."""
+
     def test_valid_batch(self, pp):
         """All valid SMILES must be returned in the canonical list with no failures."""
         smiles = ["c1ccccc1", "CCO", "c1ccc(N)cc1"]
@@ -74,10 +76,13 @@ class TestProcessBatch:
 class TestChiralityPreservation:
     """Tests that chirality information survives the canonicalization pipeline."""
 
-    @pytest.mark.parametrize("smi", [
-        "[C@@H](Br)(CC)C",  # (R)-2-bromobutane
-        "[C@H](Br)(CC)C",   # (S)-2-bromobutane
-    ])
+    @pytest.mark.parametrize(
+        "smi",
+        [
+            "[C@@H](Br)(CC)C",  # (R)-2-bromobutane
+            "[C@H](Br)(CC)C",  # (S)-2-bromobutane
+        ],
+    )
     def test_chirality_preserved(self, pp, smi):
         """Both R and S stereocentres must survive canonicalization."""
         result = pp.canonicalize(smi)

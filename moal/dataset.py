@@ -14,8 +14,9 @@ from moal.types import LabelRecord
 logger = logging.getLogger(__name__)
 
 try:
-    from chemprop.data import MoleculeDataset, MoleculeDatapoint
+    from chemprop.data import MoleculeDatapoint, MoleculeDataset
     from chemprop.featurizers import SimpleMoleculeMolGraphFeaturizer
+
     _CHEMPROP_AVAILABLE = True
 except ImportError:  # pragma: no cover
     _CHEMPROP_AVAILABLE = False
@@ -68,7 +69,9 @@ class MixedFidelityDataset(Dataset):
         return self._mol_graphs[idx], self.records[idx]
 
     @staticmethod
-    def collate_fn(batch: list[tuple[Any, LabelRecord]]) -> tuple[Any, list[LabelRecord]]:
+    def collate_fn(
+        batch: list[tuple[Any, LabelRecord]],
+    ) -> tuple[Any, list[LabelRecord]]:
         """Collate a list of (MolGraph, LabelRecord) into a batch.
 
         Returns
@@ -134,7 +137,9 @@ class MixedFidelityDataModule(L.LightningDataModule):
         full = MixedFidelityDataset(self.records, featurizer=self.featurizer)
         if n_val > 0:
             train_subset, val_subset = random_split(
-                full, [n_train, n_val], generator=torch.Generator().manual_seed(self.seed)
+                full,
+                [n_train, n_val],
+                generator=torch.Generator().manual_seed(self.seed),
             )
             # Wrap subsets so we can access .records for collate
             self._train_dataset = _SubsetWrapper(train_subset, full)
