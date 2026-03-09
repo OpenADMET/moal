@@ -7,65 +7,6 @@
 # See moal/config.py for full documentation of each parameter.
 
 # --------------------------------------------------------------------------
-# Oracle / assay parameters
-# --------------------------------------------------------------------------
-oracle:
-  cost_ps: 1.0          # Cost ($) of a Primary Screen query
-  cost_drc: 10.0        # Cost ($) of a Dose-Response Curve query
-  ps_threshold: 5.0     # pEC50 threshold used by the primary screen (10 µM IC50).
-                        #   Compounds with true pEC50 < ps_threshold → LEFT label ("< 5")
-                        #   Compounds with true pEC50 >= ps_threshold → INTERVAL label (">= 5")
-  upper_bound: 11.0     # Practical pEC50 ceiling for INTERVAL labels (100 fM IC50)
-  activity_threshold: 7.0  # pEC50 defining an "active" compound for evaluation (100 nM IC50)
-
-# --------------------------------------------------------------------------
-# ChemProp / CheMeleon model
-# --------------------------------------------------------------------------
-model:
-  ffn_hidden_size: 300
-  ffn_num_layers: 2
-  freeze_epochs: 10          # Epochs to train only the FFN head before unfreezing the encoder
-  lr_encoder: 1.0e-5         # Learning rate for the message-passing encoder (after unfreezing)
-  lr_head: 1.0e-3            # Learning rate for the FFN head throughout training
-  sigma: 0.5                 # Tobit loss noise scale (pEC50 log-units); typical intra-assay CV
-  w_drc: 1.0                 # Loss weight for DRC (exact) labels
-  w_ps: 0.3                  # Loss weight for PS (inequality) labels
-  learnable_sigma: false     # If true, sigma is a learned parameter
-  fast: false                # When true, bypass CheMeleon and use a noisy oracle predictor (no checkpoint needed)
-  initial_error: 1.0         # Starting noise magnitude (pEC50 units) for the error ramp in fast mode
-  final_error: 0.5           # Ending noise magnitude for the ramp; set equal to initial_error for constant noise
-
-# --------------------------------------------------------------------------
-# Acquisition function
-# --------------------------------------------------------------------------
-acquisition:
-  ps_threshold: 5.0      # Must match oracle.ps_threshold
-  target_threshold: 7.0  # pEC50 optimization target; drives DRC exploitation score
-  tau: 0.5               # Sigmoid temperature (lower = more exploitative)
-
-# --------------------------------------------------------------------------
-# PyTorch Lightning trainer (used during model.refit())
-# --------------------------------------------------------------------------
-trainer:
-  max_epochs: 20
-  accelerator: auto         # "cpu", "gpu", "mps", or "auto"
-  enable_progress_bar: false
-  enable_model_summary: false
-  val_fraction: 0.0         # Fraction of labeled records held out for validation
-  split_seed: 42            # Seed for the train/val split inside MixedFidelityDataModule
-  num_workers: 1            # DataLoader worker processes (0 = main process only)
-  log_every_n_steps: 1     # Log every N training steps (default 1; AL pools are small and often have fewer than 50 batches/epoch)
-
-# --------------------------------------------------------------------------
-# Live dashboard
-# --------------------------------------------------------------------------
-dashboard:
-  enabled: true
-  model_metric: mae         # Metric displayed in panel 3: mae | rmse | kendall_tau | spearman_r | r2
-  figsize: [12, 8]          # Figure size in inches [width, height]
-  show: true                # Set to false for headless/server environments
-
-# --------------------------------------------------------------------------
 # Dataset and I/O
 # --------------------------------------------------------------------------
 data:
@@ -79,6 +20,31 @@ data:
                          # performance tracking. Set to 0.0 to disable.
 
 # --------------------------------------------------------------------------
+# Random seed
+# --------------------------------------------------------------------------
+seed: 42               # Master random seed (scaffold split, tie-breaking)
+
+# --------------------------------------------------------------------------
+# Oracle / assay parameters
+# --------------------------------------------------------------------------
+oracle:
+  cost_ps: 1.0             # Cost ($) of a Primary Screen query
+  cost_drc: 10.0           # Cost ($) of a Dose-Response Curve query
+  ps_threshold: 5.0        # pEC50 threshold used by the primary screen (10 µM IC50).
+                           #   Compounds with true pEC50 < ps_threshold → LEFT label ("< 5")
+                           #   Compounds with true pEC50 >= ps_threshold → INTERVAL label (">= 5")
+  upper_bound: 11.0        # Practical pEC50 ceiling for INTERVAL labels (100 fM IC50)
+  activity_threshold: 7.0  # pEC50 defining an "active" compound for evaluation (100 nM IC50)
+
+# --------------------------------------------------------------------------
+# Acquisition function
+# --------------------------------------------------------------------------
+acquisition:
+  ps_threshold: 5.0      # Must match oracle.ps_threshold
+  target_threshold: 7.0  # pEC50 optimization target; drives DRC exploitation score
+  tau: 0.5               # Sigmoid temperature (lower = more exploitative)
+
+# --------------------------------------------------------------------------
 # Active learning loop
 # --------------------------------------------------------------------------
 active_learning_loop:
@@ -86,6 +52,40 @@ active_learning_loop:
   k_per_iteration: 10    # Number of queries selected per iteration (k)
 
 # --------------------------------------------------------------------------
-# Campaign-level settings
+# ChemProp / CheMeleon model
 # --------------------------------------------------------------------------
-seed: 42               # Master random seed (scaffold split, tie-breaking)
+model:
+  ffn_hidden_size: 300       # Hidden layer size for the FFN head
+  ffn_num_layers: 2          # Number of layers in the FFN head (not counting the input layer)
+  freeze_epochs: 10          # Epochs to train only the FFN head before unfreezing the encoder
+  lr_encoder: 1.0e-5         # Learning rate for the message-passing encoder (after unfreezing)
+  lr_head: 1.0e-3            # Learning rate for the FFN head throughout training
+  sigma: 0.5                 # Tobit loss noise scale (pEC50 log-units); typical intra-assay CV
+  w_drc: 1.0                 # Loss weight for DRC (exact) labels
+  w_ps: 0.3                  # Loss weight for PS (inequality) labels
+  learnable_sigma: false     # If true, sigma is a learned parameter
+  fast: false                # When true, bypass CheMeleon and use a noisy oracle predictor
+  initial_error: 1.0         # Fast mode: Starting noise magnitude (pEC50 units) for the error ramp in fast mode
+  final_error: 0.5           # Fast mode: Ending noise magnitude for the ramp; set equal to initial_error for constant noise
+
+# --------------------------------------------------------------------------
+# PyTorch Lightning trainer (used during model.refit())
+# --------------------------------------------------------------------------
+trainer:
+  max_epochs: 20               # Max epochs per iteration
+  accelerator: auto            # "cpu", "gpu", "mps", or "auto"
+  enable_progress_bar: false   # Show training progress bar at each iteration
+  enable_model_summary: false  # Show Lightning model summary during training at each iteration
+  val_fraction: 0.0            # Fraction of labeled records held out for validation
+  split_seed: 42               # Seed for the train/val split inside MixedFidelityDataModule
+  num_workers: 1               # DataLoader worker processes (0 = main process only)
+  log_every_n_steps: 1         # Log every N training steps (default 1; AL pools are small and often have fewer than 50 batches/epoch)
+
+# --------------------------------------------------------------------------
+# Dashboard
+# --------------------------------------------------------------------------
+dashboard:
+  enabled: true
+  model_metric: mae         # Metric displayed in panel 3: mae | rmse | kendall_tau | spearman_r | r2
+  figsize: [12, 8]          # Figure size in inches [width, height]
+  show: true                # Set to false for headless/server environments
