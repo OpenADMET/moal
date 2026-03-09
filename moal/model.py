@@ -27,23 +27,12 @@ from moal.types import LabelRecord
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# CheMeleon atom feature specification
-# ---------------------------------------------------------------------------
-# These constants mirror the exact feature set used during CheMeleon
-# pretraining. Changing any of these will corrupt the pretrained embedding
-# space.  If CheMeleon releases an updated feature spec, update these
-# constants and bump _CHEMELEON_ATOM_FDIM / _CHEMELEON_BOND_FDIM.
-#
-# Feature order: atomic_num_one_hot (100), degree (6), formal_charge (5),
-#   chiral_tag (4), num_Hs (5), hybridization (5), aromaticity (1),
-#   mass (1)  →  total = 127 (atom), bond: 14 (type + stereo + conjugated etc.)
-
-_CHEMELEON_ATOM_FDIM: int = 72  # as used in CheMeleon / default chemprop v2
-_CHEMELEON_BOND_FDIM: int = 14  # as used in CheMeleon / default chemprop v2
-
 
 def download_chemeleon():
+    """
+    Download CheMeleon checkpoint if not already cached locally.
+
+    """
     logger.info(
         "Please cite DOI: 10.48550/arXiv.2506.15792 when using CheMeleon in published work"
     )
@@ -60,32 +49,6 @@ def download_chemeleon():
         )
     else:
         logger.info(f"Loading cached CheMeleon from {model_path}")
-
-
-def _assert_feature_dims(model: nn.Module) -> None:
-    """Verify that the model's input feature dimensions match CheMeleon's.
-
-    Parameters
-    ----------
-    model : nn.Module
-        ChemProp MPNN model whose ``message_passing.W_i`` input dimension is
-        checked against ``_CHEMELEON_ATOM_FDIM + _CHEMELEON_BOND_FDIM``.
-    """
-    try:
-        atom_fdim = model.message_passing.W_i.in_features  # type: ignore[attr-defined]
-    except AttributeError:
-        logger.warning(
-            "Could not verify atom feature dimension — "
-            "ensure CheMeleon feature spec matches _CHEMELEON_ATOM_FDIM=%d.",
-            _CHEMELEON_ATOM_FDIM,
-        )
-        return
-    if atom_fdim != _CHEMELEON_ATOM_FDIM + _CHEMELEON_BOND_FDIM:
-        raise ValueError(
-            f"Model atom+bond feature dimension ({atom_fdim}) does not match "
-            f"expected CheMeleon dimension ({_CHEMELEON_ATOM_FDIM + _CHEMELEON_BOND_FDIM}). "
-            "Ensure the featurizer uses the exact CheMeleon feature set."
-        )
 
 
 class ChemPropLightningModule(L.LightningModule):
@@ -121,8 +84,6 @@ class ChemPropLightningModule(L.LightningModule):
 
     def __init__(
         self,
-        hidden_size: int = 300,
-        depth: int = 3,
         ffn_hidden_size: int = 300,
         ffn_num_layers: int = 2,
         freeze_epochs: int = 10,
@@ -146,12 +107,9 @@ class ChemPropLightningModule(L.LightningModule):
         )
 
         self.model = self._build_model(
-            hidden_size=hidden_size,
-            depth=depth,
             ffn_hidden_size=ffn_hidden_size,
             ffn_num_layers=ffn_num_layers,
         )
-        self._load_chemeleon_weights()
         self._freeze_encoder()
 
     # ------------------------------------------------------------------
@@ -160,8 +118,6 @@ class ChemPropLightningModule(L.LightningModule):
 
     def _build_model(
         self,
-        hidden_size: int,
-        depth: int,
         ffn_hidden_size: int,
         ffn_num_layers: int,
     ) -> nn.Module:
@@ -173,39 +129,35 @@ class ChemPropLightningModule(L.LightningModule):
                 "chemprop>=2.0 is required. Install with: pip install chemprop"
             ) from exc
 
-        mp = BondMessagePassing(d_h=hidden_size, depth=depth)
+        # Load message passing from CheMeleon
+        chemeleon_weights = self._get_chemeleon_mp()
+
+        # Mean aggregation
         agg = MeanAggregation()
+
+        # Message passing
+        mp = BondMessagePassing(**chemeleon_weights["hyper_parameters"])
+        mp.load_state_dict(chemeleon_weights["state_dict"])
+
+        # FFN predictor head
         ffn = RegressionFFN(
-            input_dim=hidden_size,
+            input_dim=mp.output_dim,  # Infer input dim from mp output
             hidden_dim=ffn_hidden_size,
             n_layers=ffn_num_layers,
         )
         return MPNN(message_passing=mp, agg=agg, predictor=ffn)
 
-    def _load_chemeleon_weights(self) -> None:
+    def _get_chemeleon_mp(self) -> None:
+        # Ensure CheMeleon checkpoint is downloaded``
         download_chemeleon()
 
+        # Path to checkpoint
         ckpt_path = Path().home() / ".chemprop" / "chemeleon_mp.pt"
-        _assert_feature_dims(self.model)
 
-        checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=True)
-        state_dict = checkpoint.get("state_dict", checkpoint)
+        # Load weights
+        weights = torch.load(ckpt_path, weights_only=True)
 
-        try:
-            self.model.load_state_dict(state_dict, strict=True)
-            logger.info("CheMeleon weights loaded successfully from %s", ckpt_path)
-        except RuntimeError as exc:
-            # Surface a helpful diff of missing / unexpected keys.
-            loaded_keys = set(state_dict.keys())
-            model_keys = set(self.model.state_dict().keys())
-            missing = model_keys - loaded_keys
-            unexpected = loaded_keys - model_keys
-            raise RuntimeError(
-                f"Failed to load CheMeleon weights (strict=True).\n"
-                f"  Missing keys  ({len(missing)}): {sorted(missing)[:10]}...\n"
-                f"  Unexpected keys ({len(unexpected)}): {sorted(unexpected)[:10]}...\n"
-                f"Original error: {exc}"
-            ) from exc
+        return weights
 
     # ------------------------------------------------------------------
     # Freeze / unfreeze schedule
@@ -367,6 +319,7 @@ class ChemPropLightningModule(L.LightningModule):
         dm.setup()
 
         kwargs: dict[str, Any] = {
+            # TODO: why isn't this configurable?
             "max_epochs": 30,
             "enable_progress_bar": False,
             "enable_model_summary": False,
