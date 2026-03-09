@@ -73,6 +73,8 @@ data:
   is_canonical: false    # Set to true to skip RDKit canonicalization (input SMILES must already be canonical)
   output_dir: results    # Directory for iteration_metrics.csv, cumulative_actives_curve.csv,
                          # dashboard_final.png, dashboard_animation.gif, and config_used.yaml
+  test_set_size: 0.15    # Fraction of compounds held out as scaffold-split test set for model
+                         # performance tracking. Set to 0.0 to disable.
 
 # --------------------------------------------------------------------------
 # Active learning loop
@@ -84,6 +86,4 @@ active_learning_loop:
 # --------------------------------------------------------------------------
 # Campaign-level settings
 # --------------------------------------------------------------------------
-test_set_size: 0.15    # Fraction of compounds held out as scaffold-split test set for model
-                       # performance tracking. Set to 0.0 to disable.
 seed: 42               # Master random seed (scaffold split, tie-breaking)

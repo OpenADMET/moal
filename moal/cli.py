@@ -140,9 +140,9 @@ def main(config: str, output_dir: str | None, verbose: bool) -> None:
 
     all_smiles = oracle.get_unlabeled_smiles()
     test_set = None
-    if all_smiles and cfg.test_set_size > 0:
+    if all_smiles and cfg.data.test_set_size > 0:
         _, test_idx = scaffold_split(
-            all_smiles, test_size=cfg.test_set_size, seed=cfg.seed
+            all_smiles, test_size=cfg.data.test_set_size, seed=cfg.seed
         )
         if test_idx:
             test_smiles = [all_smiles[i] for i in test_idx]

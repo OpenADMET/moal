@@ -178,6 +178,10 @@ class DataConfig:
     """Directory to write campaign outputs (metrics CSV, dashboard PNG,
     config snapshot)."""
 
+    test_set_size: float = 0.15
+    """Fraction of the compound pool held out as a scaffold-split test set for
+    model performance tracking. Set to 0.0 to disable test-set evaluation."""
+
 
 @dataclass(frozen=True)
 class ActiveLearningLoopConfig:
@@ -203,10 +207,6 @@ class PipelineConfig:
     active_learning_loop: ActiveLearningLoopConfig = field(
         default_factory=ActiveLearningLoopConfig
     )
-
-    test_set_size: float = 0.15
-    """Fraction of the compound pool held out as a scaffold-split test set for
-    model performance tracking. Set to 0.0 to disable test-set evaluation."""
 
     seed: int = 42
 
@@ -236,7 +236,6 @@ class PipelineConfig:
             active_learning_loop=ActiveLearningLoopConfig(
                 **raw.get("active_learning_loop", {})
             ),
-            test_set_size=raw.get("test_set_size", 0.15),
             seed=raw.get("seed", 42),
         )
 

@@ -115,9 +115,9 @@ All campaign parameters live in `moal/config.py` as frozen dataclasses. The YAML
 | `acquisition:` | `AcquisitionConfig` | `ps_threshold`, `target_threshold`, **`tau`** |
 | `trainer:` | `TrainerConfig` | `max_epochs`, `accelerator`, `enable_progress_bar`, `enable_model_summary`, `val_fraction`, `split_seed` |
 | `dashboard:` | `DashboardConfig` | `enabled`, `model_metric`, `figsize`, `show` |
-| `data:` | `DataConfig` | `ground_truth_csv`, `smiles_column`, `pec50_column`, `is_canonical`, `output_dir` |
+| `data:` | `DataConfig` | `ground_truth_csv`, `smiles_column`, `pec50_column`, `is_canonical`, `output_dir`, `test_set_size` |
 | `active_learning_loop:` | `ActiveLearningLoopConfig` | `n_iterations`, `k_per_iteration` |
-| *(top-level)* | `PipelineConfig` | `test_set_size`, `seed` |
+| *(top-level)* | `PipelineConfig` | `seed` |
 
 ### Fast mode (NoisyOracleModel)
 
@@ -143,7 +143,7 @@ All modules use `logger = logging.getLogger(__name__)`. The `suppress_noisy_logg
 
 ### Scaffold split
 
-`scaffold_split()` in `evaluation.py` uses Bemis-Murcko scaffolds, assigns groups largest-first to the test set, and may slightly exceed the requested `test_size` if the first scaffold group is large. This is acceptable — scaffold groups cannot be split. This split is used only for the held-out model evaluation test set (built in `cli.main()` when `test_set_size > 0`); the train/val split inside `MixedFidelityDataModule` is a plain random split.
+`scaffold_split()` in `evaluation.py` uses Bemis-Murcko scaffolds, assigns groups largest-first to the test set, and may slightly exceed the requested `test_size` if the first scaffold group is large. This is acceptable — scaffold groups cannot be split. This split is used only for the held-out model evaluation test set (built in `cli.main()` when `cfg.data.test_set_size > 0`); the train/val split inside `MixedFidelityDataModule` is a plain random split.
 
 ### Model evaluation metrics
 
