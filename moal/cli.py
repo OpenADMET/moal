@@ -111,8 +111,6 @@ def main(config: str, output_dir: str | None, verbose: bool) -> None:
         )
     else:
         model = ChemPropLightningModule(
-            hidden_size=cfg.model.hidden_size,
-            depth=cfg.model.depth,
             ffn_hidden_size=cfg.model.ffn_hidden_size,
             ffn_num_layers=cfg.model.ffn_num_layers,
             freeze_epochs=cfg.model.freeze_epochs,
