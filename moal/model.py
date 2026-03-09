@@ -258,20 +258,29 @@ class ChemPropLightningModule(L.LightningModule):
             Array of shape ``(N,)`` with pEC50 point estimates, aligned with
             ``smiles_list``.
         """
-        from chemprop.data import BatchMolGraph, MoleculeDatapoint
-        from chemprop.featurizers import SimpleMoleculeMolGraphFeaturizer
+        from chemprop.data import MoleculeDatapoint, MoleculeDataset
+        from chemprop.data.dataloader import build_dataloader
 
-        featurizer = SimpleMoleculeMolGraphFeaturizer()
-        self.eval()
-        all_preds: list[float] = []
+        # Create the full dataset once rather than chunking manually.
+        # Note that if using ChemProp v2 you may also need to pass a featurizer to this class.
+        dataset = MoleculeDataset([MoleculeDatapoint.from_smi(s) for s in smiles_list])
 
-        for i in range(0, len(smiles_list), batch_size):
-            chunk = smiles_list[i : i + batch_size]
-            graphs = [featurizer(MoleculeDatapoint.from_smi(s).mol) for s in chunk]
-            bmg = BatchMolGraph(graphs)
-            bmg = bmg.to(self.device)
-            preds = self(bmg).cpu().numpy().tolist()
-            all_preds.extend(preds)
+        # Let the dataloader handle the batching and graph collation automatically.
+        dataloader = build_dataloader(dataset, batch_size=batch_size, shuffle=False)
+
+        all_preds = []
+
+        # Disable gradient tracking for inference.
+        with torch.inference_mode():
+            for batch in dataloader:
+                # Move bactch to the device
+                batch.bmg.to(self.device)
+
+                # Make predictions and detach
+                preds = self(batch.bmg).cpu().numpy().tolist()
+
+                # Accumulate predictions
+                all_preds.extend(preds)
 
         return np.array(all_preds, dtype=np.float32)
 
@@ -312,7 +321,7 @@ class ChemPropLightningModule(L.LightningModule):
         from moal.dataset import MixedFidelityDataModule
 
         if reset_weights:
-            self._load_chemeleon_weights()
+            self._build_model()
             self._freeze_encoder()
 
         dm = MixedFidelityDataModule(records, **(datamodule_kwargs or {}))
