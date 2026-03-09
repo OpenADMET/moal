@@ -13,66 +13,41 @@ from moal.types import LabelRecord
 
 logger = logging.getLogger(__name__)
 
-try:
-    from chemprop.data import MoleculeDatapoint, MoleculeDataset
-    from chemprop.featurizers import SimpleMoleculeMolGraphFeaturizer
-
-    _CHEMPROP_AVAILABLE = True
-except ImportError:  # pragma: no cover
-    _CHEMPROP_AVAILABLE = False
-    logger.warning(
-        "chemprop is not installed. MixedFidelityDataset will be unusable. "
-        "Install with: pip install chemprop"
-    )
-
-
-def _make_datapoint(canonical_smiles: str) -> "MoleculeDatapoint":
-    """Construct a chemprop MoleculeDatapoint without a target (for inference)."""
-    return MoleculeDatapoint.from_smi(canonical_smiles)
+from chemprop.data import MoleculeDatapoint, MoleculeDataset
 
 
 class MixedFidelityDataset(Dataset):
     """Thin PyTorch Dataset wrapping a list of LabelRecords.
 
-    Each item is a (MolGraph, LabelRecord) pair. The MolGraph is built
+    Each item is a (MoleculeDatapoint, LabelRecord) pair. The MolGraph is built
     lazily and cached on first access.
 
     Parameters
     ----------
     records : list[LabelRecord]
         Labeled observations from the oracle.
-    featurizer : any, optional
-        A chemprop MoleculeFeaturizer (e.g.,
-        ``SimpleMoleculeMolGraphFeaturizer``). If None, a default instance
-        is created.
     """
 
     def __init__(
         self,
         records: list[LabelRecord],
-        featurizer: Any | None = None,
     ) -> None:
-        if not _CHEMPROP_AVAILABLE:
-            raise ImportError("chemprop is required for MixedFidelityDataset.")
         self.records = records
-        self.featurizer = featurizer or SimpleMoleculeMolGraphFeaturizer()
-        self._mol_graphs: list[Any] = [None] * len(records)
+        self._mol_graphs = MoleculeDataset(
+            [MoleculeDatapoint.from_smi(r.canonical_smiles) for r in self.records]
+        )
 
     def __len__(self) -> int:
         return len(self.records)
 
     def __getitem__(self, idx: int) -> tuple[Any, LabelRecord]:
-        if self._mol_graphs[idx] is None:
-            smi = self.records[idx].canonical_smiles
-            dp = _make_datapoint(smi)
-            self._mol_graphs[idx] = self.featurizer(dp.mol)
         return self._mol_graphs[idx], self.records[idx]
 
     @staticmethod
     def collate_fn(
         batch: list[tuple[Any, LabelRecord]],
     ) -> tuple[Any, list[LabelRecord]]:
-        """Collate a list of (MolGraph, LabelRecord) into a batch.
+        """Collate a list of (MoleculeDatapoint, LabelRecord) into a batch.
 
         Returns
         -------
@@ -81,8 +56,13 @@ class MixedFidelityDataset(Dataset):
         """
         from chemprop.data import BatchMolGraph
 
-        graphs, records = zip(*batch)
-        return BatchMolGraph(list(graphs)), list(records)
+        # Unzip the batch into separate tuples.
+        datapoints, records = zip(*batch)
+
+        # Extract the underlying MolGraph from each datapoint to build the batch.
+        bmg = BatchMolGraph([dp.mg for dp in datapoints])
+
+        return bmg, list(records)
 
 
 class MixedFidelityDataModule(L.LightningDataModule):
@@ -92,8 +72,6 @@ class MixedFidelityDataModule(L.LightningDataModule):
     ----------
     records : list[LabelRecord]
         All labeled observations (train + val pool).
-    featurizer : any, optional
-        chemprop MoleculeFeaturizer. If None, a default instance is created.
     batch_size : int, optional
         Number of samples per mini-batch. Default is 64.
     val_fraction : float, optional
@@ -107,7 +85,6 @@ class MixedFidelityDataModule(L.LightningDataModule):
     def __init__(
         self,
         records: list[LabelRecord],
-        featurizer: Any | None = None,
         batch_size: int = 64,
         val_fraction: float = 0.1,
         num_workers: int = 0,
@@ -115,7 +92,6 @@ class MixedFidelityDataModule(L.LightningDataModule):
     ) -> None:
         super().__init__()
         self.records = records
-        self.featurizer = featurizer
         self.batch_size = batch_size
         self.val_fraction = val_fraction
         self.num_workers = num_workers
@@ -134,7 +110,7 @@ class MixedFidelityDataModule(L.LightningDataModule):
             )
             n_train, n_val = len(self.records), 0
 
-        full = MixedFidelityDataset(self.records, featurizer=self.featurizer)
+        full = MixedFidelityDataset(self.records)
         if n_val > 0:
             train_subset, val_subset = random_split(
                 full,
