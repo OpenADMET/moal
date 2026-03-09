@@ -54,6 +54,7 @@ trainer:
   val_fraction: 0.0         # Fraction of labeled records held out for validation
   split_seed: 42            # Seed for the train/val split inside MixedFidelityDataModule
   num_workers: 1            # DataLoader worker processes (0 = main process only)
+  log_every_n_steps: 1     # Log every N training steps (default 1; AL pools are small and often have fewer than 50 batches/epoch)
 
 # --------------------------------------------------------------------------
 # Live dashboard
