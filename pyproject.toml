@@ -37,3 +37,9 @@ include = ["moal*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+    # lightning 2.6.1 uses LeafSpec() internally; torch 2.10+ deprecated it.
+    # The warning surfaces from lightning's own _pytree.py (the call site).
+    # Remove once Lightning ships a fix upstream.
+    "ignore:`isinstance\\(treespec, LeafSpec\\)` is deprecated:FutureWarning:lightning\\.pytorch\\.utilities\\._pytree",
+]

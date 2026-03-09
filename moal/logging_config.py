@@ -9,6 +9,7 @@ internal status messages.
 from __future__ import annotations
 
 import logging
+import warnings
 
 
 def suppress_noisy_loggers() -> None:
@@ -17,6 +18,7 @@ def suppress_noisy_loggers() -> None:
     Safe to call multiple times (idempotent).
     """
     _silence_rdkit()
+    _silence_third_party_warnings()
     _set_level(
         logging.WARNING,
         [
@@ -50,6 +52,27 @@ def _silence_rdkit() -> None:
         pass
     # Also silence the Python-side rdkit logger.
     logging.getLogger("rdkit").setLevel(logging.WARNING)
+
+
+def _silence_third_party_warnings() -> None:
+    """Suppress FutureWarnings from third-party libraries that use deprecated torch internals.
+
+    lightning 2.6.1 uses ``LeafSpec()`` from ``torch.utils._pytree``, which torch 2.10+
+    deprecated. The warning surfaces from lightning's own ``_pytree.py`` (the call site).
+    This is an upstream Lightning bug; remove this filter once Lightning ships a fix.
+    """
+    warnings.filterwarnings(
+        "ignore",
+        message=r"`isinstance\(treespec, LeafSpec\)` is deprecated",
+        category=FutureWarning,
+        module=r"lightning\.pytorch\.utilities\._pytree",
+    )
+    warnings.filterwarnings(
+        "ignore",
+        message=r"The .* does not have many workers",
+        category=UserWarning,
+        module=r"lightning\.pytorch",
+    )
 
 
 def _set_level(level: int, names: list[str]) -> None:
