@@ -309,6 +309,7 @@ class ChemPropLightningModule(L.LightningModule):
         trainer_kwargs: dict[str, Any] | None = None,
         datamodule_kwargs: dict[str, Any] | None = None,
         reset_weights: bool = False,
+        output_dir: str | Path | None = None,
     ) -> "ChemPropLightningModule":
         """Refit the model on a (growing) labeled pool.
 
@@ -338,6 +339,12 @@ class ChemPropLightningModule(L.LightningModule):
             If True, reload CheMeleon weights before refitting (full warm-start
             from pretrained). Default is False (continue fine-tuning from
             current weights).
+        output_dir : str or Path, optional
+            Directory where Lightning should write its default logs
+            (``lightning_logs/``). When provided and ``default_root_dir`` is
+            not already present in ``trainer_kwargs``, it is injected as
+            ``default_root_dir`` into the ``L.Trainer`` constructor. If None
+            (default), Lightning writes to the current working directory.
 
         Returns
         -------
@@ -360,6 +367,8 @@ class ChemPropLightningModule(L.LightningModule):
         }
         if trainer_kwargs:
             kwargs.update(trainer_kwargs)
+        if output_dir is not None and "default_root_dir" not in kwargs:
+            kwargs["default_root_dir"] = str(output_dir)
 
         trainer = L.Trainer(**kwargs)
         trainer.fit(self, datamodule=dm)
@@ -462,6 +471,7 @@ class NoisyOracleModel:
         trainer_kwargs: dict[str, Any] | None = None,
         datamodule_kwargs: dict[str, Any] | None = None,
         reset_weights: bool = False,
+        output_dir: str | Path | None = None,
     ) -> "NoisyOracleModel":
         """No-op refit — fast mode has no learnable parameters to update.
 

@@ -176,6 +176,7 @@ def main(config: str, output_dir: str | None, verbose: bool) -> None:
         model_metric=model_metric,
         initial_error=cfg.model.initial_error,
         final_error=cfg.model.final_error,
+        output_dir=out_dir,
     )
 
     results = loop.run(
