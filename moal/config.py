@@ -109,6 +109,15 @@ class TrainerConfig:
     1 = one background worker per DataLoader (recommended default).
     Increase for large datasets where data loading is the bottleneck."""
 
+    log_every_n_steps: int = 1
+    """How often (in training steps) Lightning logs metrics.
+
+    Default is 1 rather than Lightning's built-in default of 50 because AL
+    labeled pools are small: even late in a campaign the number of training
+    batches per epoch is typically well below 50, which would trigger a
+    ``UserWarning`` from Lightning and suppress all step-level logs.
+    """
+
     def to_dict(self) -> dict[str, Any]:
         """Return only the kwargs that ``lightning.Trainer`` accepts.
 
@@ -120,13 +129,15 @@ class TrainerConfig:
         -------
         dict[str, Any]
             Dictionary with keys ``max_epochs``, ``accelerator``,
-            ``enable_progress_bar``, and ``enable_model_summary``.
+            ``enable_progress_bar``, ``enable_model_summary``, and
+            ``log_every_n_steps``.
         """
         return {
             "max_epochs": self.max_epochs,
             "accelerator": self.accelerator,
             "enable_progress_bar": self.enable_progress_bar,
             "enable_model_summary": self.enable_model_summary,
+            "log_every_n_steps": self.log_every_n_steps,
         }
 
     def to_datamodule_kwargs(self) -> dict[str, Any]:
