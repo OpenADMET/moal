@@ -1,9 +1,10 @@
 """Tests for ChemPropLightningModule initialization and NoisyOracleModel.
 
 CheMeleon weight downloading is patched out for all tests via an autouse
-fixture that replaces ``_load_chemeleon_weights`` with a no-op.  This means
-the model carries random (PyTorch-initialised) weights, which is sufficient
-for every structural and hyperparameter assertion in this module.
+fixture that replaces ``_build_model`` with a function that constructs a real
+MPNN from default (randomly-initialised) ChemProp layers.  This means the
+model carries random weights, which is sufficient for every structural and
+hyperparameter assertion in this module.
 """
 
 from __future__ import annotations
@@ -24,14 +25,25 @@ from moal.model import ChemPropLightningModule, NoisyOracleModel
 def _patch_chemeleon_download(monkeypatch):
     """Patch out CheMeleon weight loading for all tests in this module.
 
-    Replaces ``_load_chemeleon_weights`` with a no-op so tests never trigger
-    a network download or require the cached checkpoint file.
+    Replaces ``_build_model`` with a function that constructs a real MPNN from
+    default ChemProp layers (no checkpoint required), so tests never trigger a
+    network download or require the cached checkpoint file.
     """
-    monkeypatch.setattr(
-        ChemPropLightningModule,
-        "_load_chemeleon_weights",
-        lambda self: None,
-    )
+
+    def _fake_build_model(self, ffn_hidden_size, ffn_num_layers):
+        from chemprop.models import MPNN
+        from chemprop.nn import BondMessagePassing, MeanAggregation, RegressionFFN
+
+        mp = BondMessagePassing()
+        agg = MeanAggregation()
+        ffn = RegressionFFN(
+            input_dim=mp.output_dim,
+            hidden_dim=ffn_hidden_size,
+            n_layers=ffn_num_layers,
+        )
+        return MPNN(message_passing=mp, agg=agg, predictor=ffn)
+
+    monkeypatch.setattr(ChemPropLightningModule, "_build_model", _fake_build_model)
 
 
 @pytest.fixture
@@ -71,8 +83,6 @@ class TestDefaultInit:
     def test_hparams_contains_architecture_keys(self, model):
         """save_hyperparameters must record all architecture and training params."""
         expected = {
-            "hidden_size",
-            "depth",
             "ffn_hidden_size",
             "ffn_num_layers",
             "freeze_epochs",
@@ -87,8 +97,6 @@ class TestDefaultInit:
 
     def test_hparams_default_values(self, model):
         """Default hyperparameters must match the documented defaults."""
-        assert model.hparams["hidden_size"] == 300
-        assert model.hparams["depth"] == 3
         assert model.hparams["ffn_hidden_size"] == 300
         assert model.hparams["ffn_num_layers"] == 2
         assert model.hparams["freeze_epochs"] == 10
@@ -104,20 +112,7 @@ class TestDefaultInit:
 
 
 class TestArchitectureParams:
-    """Tests that architecture hyperparameters (hidden_size, depth, FFN layers) are correctly forwarded to the underlying MPNN."""
-
-    @pytest.mark.parametrize("hidden_size", [128, 256, 512])
-    def test_hidden_size_sets_message_passing_width(self, hidden_size):
-        """W_h in the message-passing layer must reflect the configured hidden size."""
-        m = ChemPropLightningModule(hidden_size=hidden_size)
-        assert m.model.message_passing.W_h.in_features == hidden_size
-        assert m.model.message_passing.W_h.out_features == hidden_size
-
-    @pytest.mark.parametrize("depth", [2, 3, 5])
-    def test_depth_sets_message_passing_depth(self, depth):
-        """The message-passing depth attribute must match the configured depth."""
-        m = ChemPropLightningModule(depth=depth)
-        assert m.model.message_passing.depth == depth
+    """Tests that FFN architecture hyperparameters are correctly forwarded to the predictor head."""
 
     @pytest.mark.parametrize("ffn_num_layers", [1, 2, 4])
     def test_ffn_num_layers_sets_predictor_depth(self, ffn_num_layers):
@@ -132,25 +127,6 @@ class TestArchitectureParams:
         m = ChemPropLightningModule(ffn_hidden_size=ffn_hidden_size)
         # Block 1 is the first hidden layer; index [2] is the Linear within the Sequential.
         assert m.model.predictor.ffn[1][2].in_features == ffn_hidden_size
-
-    @pytest.mark.parametrize(
-        "hidden_size,depth,ffn_num_layers",
-        [
-            (128, 2, 1),
-            (256, 4, 3),
-            (512, 3, 2),
-        ],
-    )
-    def test_combined_architecture_params(self, hidden_size, depth, ffn_num_layers):
-        """Combinations of architecture params must all be reflected in the built model."""
-        m = ChemPropLightningModule(
-            hidden_size=hidden_size,
-            depth=depth,
-            ffn_num_layers=ffn_num_layers,
-        )
-        assert m.model.message_passing.W_h.in_features == hidden_size
-        assert m.model.message_passing.depth == depth
-        assert len(m.model.predictor.ffn) == ffn_num_layers + 1
 
 
 # ---------------------------------------------------------------------------
