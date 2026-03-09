@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -82,6 +83,10 @@ class ActiveLearningLoop:
         schedule from ``initial_error`` to ``final_error`` is applied over all
         iterations. Set equal to ``initial_error`` for constant noise.
         Default is 0.5.
+    output_dir : str or Path, optional
+        Directory for Lightning default logs (``lightning_logs/``). Forwarded
+        as ``output_dir`` to every ``model.refit()`` call. When None (default),
+        Lightning writes to the current working directory.
     """
 
     def __init__(
@@ -98,6 +103,7 @@ class ActiveLearningLoop:
         model_metric: ModelMetric = ModelMetric.MAE,
         initial_error: float = 0.7,
         final_error: float = 0.5,
+        output_dir: str | Path | None = None,
     ) -> None:
         self.oracle = oracle
         self.model = model
@@ -111,6 +117,7 @@ class ActiveLearningLoop:
         self.model_metric = model_metric
         self.initial_error = initial_error
         self.final_error = final_error
+        self.output_dir = output_dir
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -283,6 +290,7 @@ class ActiveLearningLoop:
                         records=self.oracle.training_records,
                         trainer_kwargs=self.trainer_kwargs,
                         datamodule_kwargs=self.datamodule_kwargs,
+                        output_dir=self.output_dir,
                     )
 
                 # Evaluate model metric on held-out test set.
