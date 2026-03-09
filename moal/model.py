@@ -303,6 +303,9 @@ class ChemPropLightningModule(L.LightningModule):
     def refit(
         self,
         records: list[LabelRecord],
+        max_epochs: int = 30,
+        enable_progress_bar: bool = False,
+        enable_model_summary: bool = False,
         trainer_kwargs: dict[str, Any] | None = None,
         datamodule_kwargs: dict[str, Any] | None = None,
         reset_weights: bool = False,
@@ -313,12 +316,19 @@ class ChemPropLightningModule(L.LightningModule):
         ----------
         records : list[LabelRecord]
             All labeled records accumulated so far.
+        max_epochs : int, optional
+            Number of training epochs. Default is 30. When using the CLI this
+            is inferred from ``TrainerConfig.max_epochs`` via
+            ``TrainerConfig.to_dict()``.
+        enable_progress_bar : bool, optional
+            Whether to show the Lightning progress bar. Default is False.
+        enable_model_summary : bool, optional
+            Whether to print the model summary at the start of training.
+            Default is False.
         trainer_kwargs : dict[str, Any], optional
-            Passed directly to ``lightning.Trainer``. When using the CLI,
-            these come from ``TrainerConfig.to_dict()`` so ``max_epochs`` and
-            other defaults are visible in the YAML config. If not provided,
-            the hard-coded fallback of ``max_epochs=30`` is used — prefer
-            passing an explicit dict.
+            Additional keyword arguments forwarded directly to
+            ``lightning.Trainer`` (e.g. ``accelerator``). Any keys that
+            overlap with the explicit parameters above take precedence.
         datamodule_kwargs : dict[str, Any], optional
             Passed to ``MixedFidelityDataModule`` (e.g. ``val_fraction``,
             ``seed``). Use ``TrainerConfig.to_datamodule_kwargs()`` to
@@ -344,10 +354,9 @@ class ChemPropLightningModule(L.LightningModule):
         dm.setup()
 
         kwargs: dict[str, Any] = {
-            # TODO: why isn't this configurable?
-            "max_epochs": 30,
-            "enable_progress_bar": False,
-            "enable_model_summary": False,
+            "max_epochs": max_epochs,
+            "enable_progress_bar": enable_progress_bar,
+            "enable_model_summary": enable_model_summary,
         }
         if trainer_kwargs:
             kwargs.update(trainer_kwargs)
@@ -447,6 +456,9 @@ class NoisyOracleModel:
     def refit(
         self,
         records: list[LabelRecord],
+        max_epochs: int = 30,
+        enable_progress_bar: bool = False,
+        enable_model_summary: bool = False,
         trainer_kwargs: dict[str, Any] | None = None,
         datamodule_kwargs: dict[str, Any] | None = None,
         reset_weights: bool = False,

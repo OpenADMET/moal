@@ -91,7 +91,11 @@ class TestCLICustomColumns:
 
     def test_custom_column_names_accepted(self, tmp_path):
         """A config with smiles_column/pec50_column matching the CSV headers must not exit 1
-        at the oracle-init stage (it will fail later at model init, which is fine here)."""
+        at the oracle-init stage.
+
+        Uses model.fast=true so the loop runs via NoisyOracleModel and completes instantly
+        without requiring the CheMeleon checkpoint.
+        """
         csv_file = tmp_path / "data.csv"
         csv_file.write_text("mol,potency\nc1ccccc1,5.0\nCCO,7.0\n")
         cfg = tmp_path / "config.yaml"
@@ -100,6 +104,8 @@ class TestCLICustomColumns:
             f"  ground_truth_csv: {csv_file}\n"
             "  smiles_column: mol\n"
             "  pec50_column: potency\n"
+            "model:\n"
+            "  fast: true\n"
         )
         runner = CliRunner()
         result = runner.invoke(
