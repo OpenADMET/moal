@@ -100,10 +100,14 @@ class LiveDashboard:
 
         if show:
             try:
+                import warnings
+
                 plt.ion()
-                plt.pause(0.05)
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error", UserWarning)
+                    plt.pause(0.05)
                 self._interactive = True
-            except (OSError, RuntimeError):
+            except (OSError, RuntimeError, UserWarning):
                 logger.debug(
                     "Interactive display unavailable; using file-save-only mode."
                 )
@@ -225,9 +229,13 @@ class LiveDashboard:
 
         if self._interactive:
             try:
+                import warnings
+
                 self._fig.canvas.draw_idle()
-                plt.pause(0.05)
-            except (OSError, RuntimeError):
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error", UserWarning)
+                    plt.pause(0.05)
+            except (OSError, RuntimeError, UserWarning):
                 self._interactive = False
 
         self._capture_frame()
