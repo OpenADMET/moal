@@ -39,8 +39,6 @@ class OracleConfig:
 class ModelConfig:
     """ChemProp + CheMeleon model parameters."""
 
-    hidden_size: int = 300
-    depth: int = 3
     ffn_hidden_size: int = 300
     ffn_num_layers: int = 2
 

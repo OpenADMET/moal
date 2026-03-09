@@ -22,8 +22,6 @@ oracle:
 # ChemProp / CheMeleon model
 # --------------------------------------------------------------------------
 model:
-  hidden_size: 300
-  depth: 3
   ffn_hidden_size: 300
   ffn_num_layers: 2
   freeze_epochs: 10          # Epochs to train only the FFN head before unfreezing the encoder
