@@ -103,10 +103,16 @@ class TrainerConfig:
     """Random seed for the train/val split inside MixedFidelityDataModule.
     Changing this produces a different val set without touching the oracle."""
 
+    num_workers: int = 1
+    """Number of worker processes for train and val DataLoaders.
+    0 = load data in the main process (slowest, avoids multiprocessing overhead).
+    1 = one background worker per DataLoader (recommended default).
+    Increase for large datasets where data loading is the bottleneck."""
+
     def to_dict(self) -> dict[str, Any]:
         """Return only the kwargs that ``lightning.Trainer`` accepts.
 
-        ``val_fraction`` and ``split_seed`` are consumed by
+        ``val_fraction``, ``split_seed``, and ``num_workers`` are consumed by
         ``MixedFidelityDataModule`` and must not be forwarded to
         ``L.Trainer``.
 
@@ -129,11 +135,12 @@ class TrainerConfig:
         Returns
         -------
         dict[str, Any]
-            Dictionary with keys ``val_fraction`` and ``seed``.
+            Dictionary with keys ``val_fraction``, ``seed``, and ``num_workers``.
         """
         return {
             "val_fraction": self.val_fraction,
             "seed": self.split_seed,
+            "num_workers": self.num_workers,
         }
 
 

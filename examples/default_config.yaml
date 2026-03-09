@@ -53,6 +53,7 @@ trainer:
   enable_model_summary: false
   val_fraction: 0.0         # Fraction of labeled records held out for validation
   split_seed: 42            # Seed for the train/val split inside MixedFidelityDataModule
+  num_workers: 1            # DataLoader worker processes (0 = main process only)
 
 # --------------------------------------------------------------------------
 # Live dashboard
