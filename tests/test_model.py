@@ -9,12 +9,15 @@ hyperparameter assertion in this module.
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pytest
 import torch.nn as nn
 
 from moal.loss import CensoredRegressionLoss
 from moal.model import ChemPropLightningModule, NoisyOracleModel
+from moal.types import CensoringType, LabelRecord, QueryType
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -237,6 +240,52 @@ class TestFreezeUnfreeze:
             id(p) for p in model._head_params()
         }
         assert covered == all_ids
+
+
+class TestRefit:
+    """Tests for the real Lightning refit path."""
+
+    def test_refit_with_datamodule_emits_no_transfer_warning(self, model, tmp_path):
+        """Moving batch-transfer logic to the datamodule should silence the warning."""
+        records = [
+            LabelRecord(
+                smiles="CCO",
+                canonical_smiles="CCO",
+                value=6.0,
+                upper_bound=6.0,
+                censoring_type=CensoringType.EXACT,
+                fidelity=QueryType.DOSE_RESPONSE,
+                cost=10.0,
+                iteration=0,
+            ),
+            LabelRecord(
+                smiles="c1ccccc1",
+                canonical_smiles="c1ccccc1",
+                value=5.5,
+                upper_bound=5.5,
+                censoring_type=CensoringType.EXACT,
+                fidelity=QueryType.DOSE_RESPONSE,
+                cost=10.0,
+                iteration=0,
+            ),
+        ]
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            returned = model.refit(
+                records=records,
+                max_epochs=1,
+                enable_progress_bar=False,
+                enable_model_summary=False,
+                datamodule_kwargs={"val_fraction": 0.5, "seed": 0},
+                trainer_kwargs={"accelerator": "cpu"},
+                output_dir=tmp_path / "out",
+            )
+
+        assert returned is model
+        assert not any(
+            "transfer_batch_to_device" in str(w.message) for w in caught
+        ), caught
 
 
 # ---------------------------------------------------------------------------
