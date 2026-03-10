@@ -325,7 +325,7 @@ class TestPlanCommand:
             for update in progress.updated_tasks
             if "description" in update
         ]
-        assert "[yellow]Retraining model - 2 records[/yellow]" in descriptions
+        assert "[yellow]Retraining model — 2 records ([orange1]1 DRC[/orange1], [steel_blue1]1 PS[/steel_blue1])[/yellow]" in descriptions
         assert (
             "[green]Scoring compounds[/green] - [white]2[/white], "
             "[magenta]1 PS hits eligible for upgrade[/magenta]"

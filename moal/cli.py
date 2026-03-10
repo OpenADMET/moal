@@ -34,6 +34,7 @@ from moal.planning import (
     training_records_for_refit,
 )
 from moal.preprocessing import SMILESPreprocessor
+from moal.types import QueryType
 
 logger = logging.getLogger(__name__)
 _console = Console(stderr=True)
@@ -188,21 +189,6 @@ def simulate(config: Path, output_dir: Path | None, verbose: bool) -> None:
     curve_df.to_csv(curve_path, index=False)
     logger.info("Cumulative actives curve written to %s", curve_path)
 
-    n_final_upgrades = int(results.final_metrics.get("n_ps_to_drc_upgrades", 0))
-    n_final_drc = int(results.final_metrics.get("n_drc_queries", 0))
-    n_final_ps = int(results.final_metrics.get("n_ps_queries", 0))
-    n_true_actives = oracle.n_true_actives(evaluator.activity_threshold)
-    upgrade_detail = f" ({n_final_upgrades} upgrades)" if n_final_upgrades > 0 else ""
-    logger.info(
-        "Campaign complete. Total cost: $%.2f | PS: %d | DRC: %d%s | Confirmed actives: %d (of %d)",
-        results.total_cost,
-        n_final_ps,
-        n_final_drc,
-        upgrade_detail,
-        int(results.final_metrics.get("n_confirmed_actives", 0)),
-        n_true_actives,
-    )
-
 
 @main.command()
 @_common_cli_options(required=True)
@@ -273,7 +259,7 @@ def plan(config: Path, output_dir: Path | None, verbose: bool) -> None:
 
             scoring_description = (
                 "[green]Scoring compounds[/green] - "
-                f"[white]{len(state.unqueried_rows)}[/white], "
+                f"[white]{len(state.unqueried_rows)} unqueried[/white], "
                 f"[magenta]{len(state.ps_upgrade_rows)} PS hits[/magenta] eligible for upgrade"
             )
 
@@ -289,8 +275,30 @@ def plan(config: Path, output_dir: Path | None, verbose: bool) -> None:
                 annotated_df.to_csv(plan_path, index=False)
                 progress.advance(task)
             else:
+                n_labeled = len(state.training_records)
+                n_labeled_drc = sum(
+                    1
+                    for r in state.training_records
+                    if r.fidelity == QueryType.DOSE_RESPONSE
+                )
+                n_labeled_ps = sum(
+                    1
+                    for r in state.training_records
+                    if r.fidelity == QueryType.PRIMARY_SCREEN
+                )
+                # Upgrades are PS-INTERVAL records that also have a DRC record;
+                # training_records_for_refit removes them, so the difference is the count.
+                n_upgrades = n_labeled - len(fit_records)
+                upgrade_suffix = (
+                    f", [magenta]{n_upgrades} upgrades[/magenta]"
+                    if n_upgrades > 0
+                    else ""
+                )
                 retraining_description = (
-                    f"Retraining model - {len(fit_records)} records"
+                    f"Retraining model — {n_labeled} records "
+                    f"([orange1]{n_labeled_drc} DRC[/orange1], "
+                    f"[steel_blue1]{n_labeled_ps} PS[/steel_blue1]"
+                    f"{upgrade_suffix})"
                 )
                 progress.update(task, description=retraining_description)
                 model = _build_plan_model(cfg)
