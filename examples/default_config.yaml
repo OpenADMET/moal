@@ -22,17 +22,18 @@ data:
     test_set_size: 0.15               # Fraction held out as scaffold-split test set for model tracking
 
   plan:
-    output_csv: acquisition_plan.csv  # Ranked plan output; relative paths resolve under data.output_dir
-    training:
-      input_csv: ""                   # REQUIRED for `moal plan`: mixed-fidelity training CSV
-      smiles_column: smiles           # SMILES column in plan.training.input_csv
-      relation_column: relation       # Relation column in plan.training.input_csv (`<`, `>=`, `==`)
-      value_column: value             # pEC50 / threshold column in plan.training.input_csv
-      is_canonical: false             # Set to true to skip RDKit canonicalization for plan.training input
-    candidate_pool:
-      input_csv: ""                   # REQUIRED for `moal plan`: unlabeled candidate-pool CSV
-      smiles_column: smiles           # SMILES column in plan.candidate_pool.input_csv
-      is_canonical: false             # Set to true to skip RDKit canonicalization for plan.candidate_pool input
+    input_csv: ""                     # REQUIRED for `moal plan`: path to the unified campaign state CSV
+                                      # Expected columns: smiles, relation (`<`, `>=`, `==`, or empty), value
+                                      # Rows with populated relation+value = training set
+                                      # Rows with empty relation+value = unqueried inference targets
+                                      # PS-hit rows (`>=`) appear in both training and as DRC upgrade candidates
+    output_csv: campaign_state.csv    # Annotated state CSV; relative paths resolve under data.output_dir
+                                      # Preserves original columns and appends ps_score, drc_score,
+                                      # overall_score, recommendation for re-ingestion
+    smiles_column: smiles             # SMILES column in plan.input_csv
+    relation_column: relation         # Relation column in plan.input_csv (`<`, `>=`, `==`, or empty)
+    value_column: value               # pEC50 / threshold column in plan.input_csv
+    is_canonical: false               # Set to true to skip RDKit canonicalization for plan input
 
 # --------------------------------------------------------------------------
 # Random seed
