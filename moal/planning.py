@@ -1,9 +1,10 @@
-"""Helpers for one-shot acquisition planning from mixed-fidelity CSV inputs."""
+"""Helpers for one-shot acquisition planning from a unified campaign state CSV."""
 
 from __future__ import annotations
 
 import logging
 import math
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
@@ -20,8 +21,29 @@ _PLAN_MODE_ITERATION = 0
 """Iteration index assigned to externally supplied plan-mode training records."""
 
 
-def parse_training_records(
-    training_df: pd.DataFrame,
+@dataclass
+class CampaignState:
+    """Parsed state of an active learning campaign from a unified state CSV.
+
+    Attributes
+    ----------
+    training_records : list[LabelRecord]
+        All labeled rows (``<``, ``>=``, ``==``), ready for model training.
+    unqueried_rows : list[tuple[int, str]]
+        ``(df_row_index, canonical_smiles)`` for rows with no label — eligible
+        for either PS or DRC.
+    ps_upgrade_rows : list[tuple[int, str]]
+        ``(df_row_index, canonical_smiles)`` for PS-INTERVAL-labeled hits —
+        eligible for DRC upgrade only.
+    """
+
+    training_records: list[LabelRecord]
+    unqueried_rows: list[tuple[int, str]]
+    ps_upgrade_rows: list[tuple[int, str]]
+
+
+def parse_campaign_state(
+    df: pd.DataFrame,
     *,
     cost_ps: float,
     cost_drc: float,
@@ -32,30 +54,85 @@ def parse_training_records(
     value_column: str = "value",
     is_canonical: bool = False,
     expected_ps_threshold: float | None = None,
-) -> list[LabelRecord]:
-    """Parse a mixed-fidelity training CSV into ``LabelRecord`` objects.
+) -> CampaignState:
+    """Parse a unified campaign state CSV into training and inference partitions.
 
-    Expected columns are the configured SMILES, relation (``<``, ``>=``, or
-    ``==``), and value columns.
+    Each row falls into one of four states based on its ``relation`` and
+    ``value`` columns:
 
-    All produced records are assigned ``iteration=0`` because plan mode trains
-    on an externally supplied labeled set rather than on records acquired from
-    the active learning loop itself.
+    - Both empty → unqueried inference target (eligible for PS or DRC)
+    - ``<`` → inactive PS miss; training only
+    - ``>=`` → PS hit; training **and** DRC-upgrade inference target
+    - ``==`` → DRC / exact label; training only (terminal)
+
+    Rows with exactly one of relation / value populated are rejected as
+    inconsistent.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame loaded from the unified campaign state CSV.
+    cost_ps, cost_drc : float
+        Assay costs forwarded to each ``LabelRecord``.
+    upper_bound : float
+        pEC50 ceiling for INTERVAL labels.
+    preprocessor : SMILESPreprocessor
+        Used to canonicalize SMILES when ``is_canonical`` is False.
+    smiles_column, relation_column, value_column : str
+        Column names in ``df``.
+    is_canonical : bool
+        When True, skip RDKit canonicalization.
+    expected_ps_threshold : float or None
+        When set, every PS row's value must match this threshold exactly.
+
+    Returns
+    -------
+    CampaignState
+        Parsed partitions ready for training and inference.
     """
-    required_columns = {smiles_column, relation_column, value_column}
-    missing = required_columns.difference(training_df.columns)
-    if missing:
+    if smiles_column not in df.columns:
         raise ValueError(
-            "training CSV must contain columns "
-            f"{sorted(required_columns)}, got {sorted(training_df.columns)}"
+            f"state CSV must contain column {smiles_column!r}, "
+            f"got {sorted(df.columns)}"
         )
 
-    records: list[LabelRecord] = []
-    for row_idx, row in training_df.iterrows():
+    training_records: list[LabelRecord] = []
+    unqueried_rows: list[tuple[int, str]] = []
+    ps_upgrade_rows: list[tuple[int, str]] = []
+    seen_unqueried: set[str] = set()
+    n_unqueried_duplicates = 0
+
+    for row_idx, row in df.iterrows():
         csv_row = row_idx + 2  # account for zero indexing + header row
         raw_smiles = str(row[smiles_column])
-        relation = str(row[relation_column]).strip()
+        relation_raw = row.get(relation_column, None)
+        value_raw = row.get(value_column, None)
 
+        relation_empty = pd.isna(relation_raw) or str(relation_raw).strip() == ""
+        value_empty = pd.isna(value_raw) or str(value_raw).strip() == ""
+
+        # Partial population is an inconsistent state
+        if relation_empty != value_empty:
+            raise ValueError(
+                f"Row {csv_row}: relation and value must both be populated or "
+                "both be empty."
+            )
+
+        canonical = raw_smiles if is_canonical else preprocessor.canonicalize(raw_smiles)
+        if canonical is None:
+            raise ValueError(f"Row {csv_row}: invalid SMILES {raw_smiles!r}.")
+
+        if relation_empty:
+            # Unqueried compound — deduplicate and warn rather than raise, mirroring
+            # the original candidate pool parsing behavior
+            if canonical in seen_unqueried:
+                n_unqueried_duplicates += 1
+                continue
+            seen_unqueried.add(canonical)
+            unqueried_rows.append((row_idx, canonical))
+            continue
+
+        relation = str(relation_raw).strip()
         if relation not in {"<", ">=", "=="}:
             raise ValueError(
                 f"Row {csv_row}: relation must be one of '<', '>=', or '==', "
@@ -63,7 +140,7 @@ def parse_training_records(
             )
 
         try:
-            value = float(row[value_column])
+            value = float(value_raw)
         except (TypeError, ValueError) as exc:
             raise ValueError(
                 f"Row {csv_row}: value must be a finite numeric pEC50 datum."
@@ -71,17 +148,13 @@ def parse_training_records(
 
         if not math.isfinite(value):
             raise ValueError(
-                f"Row {csv_row}: value must be finite, got {row[value_column]!r}."
+                f"Row {csv_row}: value must be finite, got {value_raw!r}."
             )
         if not (_PECO50_MIN <= value <= _PECO50_MAX):
             raise ValueError(
                 f"Row {csv_row}: value must be within [{_PECO50_MIN:.1f}, {_PECO50_MAX:.1f}], "
                 f"got {value}."
             )
-
-        canonical = raw_smiles if is_canonical else preprocessor.canonicalize(raw_smiles)
-        if canonical is None:
-            raise ValueError(f"Row {csv_row}: invalid SMILES {raw_smiles!r}.")
 
         if relation == "==":
             record = LabelRecord(
@@ -108,19 +181,40 @@ def parse_training_records(
                 value=value,
                 upper_bound=value if relation == "<" else upper_bound,
                 censoring_type=(
-                    CensoringType.LEFT
-                    if relation == "<"
-                    else CensoringType.INTERVAL
+                    CensoringType.LEFT if relation == "<" else CensoringType.INTERVAL
                 ),
                 fidelity=QueryType.PRIMARY_SCREEN,
                 cost=cost_ps,
                 iteration=_PLAN_MODE_ITERATION,
             )
+            # PS hits are DRC-upgrade inference targets in addition to training records
+            if relation == ">=":
+                ps_upgrade_rows.append((row_idx, canonical))
 
-        records.append(record)
+        training_records.append(record)
 
-    _validate_training_records(records)
-    return records
+    if n_unqueried_duplicates:
+        logger.warning(
+            "Skipped %d duplicate unqueried SMILES after canonicalization.",
+            n_unqueried_duplicates,
+        )
+
+    # Reject cross-partition duplicates — a compound can't be both labeled and unqueried
+    training_canonical = {rec.canonical_smiles for rec in training_records}
+    cross_partition = [smi for _, smi in unqueried_rows if smi in training_canonical]
+    if cross_partition:
+        example = ", ".join(cross_partition[:3])
+        raise ValueError(
+            "State CSV contains compounds that appear as both labeled and unqueried; "
+            f"first few: {example}"
+        )
+
+    _validate_training_records(training_records)
+    return CampaignState(
+        training_records=training_records,
+        unqueried_rows=unqueried_rows,
+        ps_upgrade_rows=ps_upgrade_rows,
+    )
 
 
 def training_records_for_refit(records: list[LabelRecord]) -> list[LabelRecord]:
@@ -141,106 +235,91 @@ def training_records_for_refit(records: list[LabelRecord]) -> list[LabelRecord]:
     ]
 
 
-def parse_candidate_smiles(
-    candidate_df: pd.DataFrame,
-    *,
-    smiles_column: str,
-    preprocessor: SMILESPreprocessor,
-    is_canonical: bool = False,
-) -> list[str]:
-    """Parse, canonicalize, and deduplicate candidate-pool SMILES."""
-    if smiles_column not in candidate_df.columns:
-        raise ValueError(
-            f"candidate CSV must contain column {smiles_column!r}, got "
-            f"{sorted(candidate_df.columns)}"
-        )
-
-    candidates: list[str] = []
-    seen: set[str] = set()
-    n_duplicates = 0
-    for row_idx, row in candidate_df.iterrows():
-        csv_row = row_idx + 2
-        raw_smiles = str(row[smiles_column])
-        canonical = raw_smiles if is_canonical else preprocessor.canonicalize(raw_smiles)
-        if canonical is None:
-            raise ValueError(f"Row {csv_row}: invalid candidate SMILES {raw_smiles!r}.")
-        if canonical in seen:
-            n_duplicates += 1
-            continue
-        seen.add(canonical)
-        candidates.append(canonical)
-
-    if n_duplicates:
-        logger.warning(
-            "Skipped %d duplicate candidate SMILES after canonicalization.",
-            n_duplicates,
-        )
-    return candidates
-
-
-def build_acquisition_plan_dataframe(
-    candidate_smiles: list[str],
+def annotate_campaign_state(
+    df: pd.DataFrame,
+    state: CampaignState,
     predictions: np.ndarray,
     acquisition: CostAwareGreedyAcquisition,
 ) -> pd.DataFrame:
-    """Build the ranked acquisition plan output DataFrame.
+    """Annotate the campaign state DataFrame with acquisition scores.
 
-    ``Overall Score`` is defined as ``max(PS Score, DRC Score)``. ``Query type``
-    is ``"DRC"`` when ``DRC Score >= PS Score`` and ``"PS"`` otherwise, so ties
-    are resolved in favor of DRC. Rows are sorted by ``Overall Score``
-    descending, with original candidate input order used as a stable tie-break.
+    The ``predictions`` array must be aligned with the concatenation of
+    ``state.unqueried_rows + state.ps_upgrade_rows`` in that order — the same
+    ordering used when calling ``model.predict_smiles``.
+
+    Four columns are appended to a copy of ``df``:
+
+    - ``ps_score`` — PS exploration score; NaN for non-unqueried rows
+    - ``drc_score`` — DRC exploitation score; NaN for training-only rows
+    - ``overall_score`` — ``max(ps_score, drc_score)`` for unqueried rows,
+      ``drc_score`` for PS upgrades, NaN for training-only rows
+    - ``recommendation`` — ``"ps"`` or ``"drc"`` for inference targets; NaN for
+      training-only rows
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Original campaign state DataFrame (not mutated; a copy is returned).
+    state : CampaignState
+        Parsed campaign state from ``parse_campaign_state``.
+    predictions : np.ndarray
+        Model pEC50 predictions aligned with unqueried + ps_upgrade rows.
+    acquisition : CostAwareGreedyAcquisition
+        Acquisition function used to compute per-compound scores.
+
+    Returns
+    -------
+    pd.DataFrame
+        Annotated copy with four new columns appended.
     """
     predictions = np.asarray(predictions, dtype=np.float32)
-    if len(candidate_smiles) != len(predictions):
+    n_inference = len(state.unqueried_rows) + len(state.ps_upgrade_rows)
+    if len(predictions) != n_inference:
         raise ValueError(
-            f"candidate_smiles length ({len(candidate_smiles)}) must match "
-            f"predictions length ({len(predictions)})."
+            f"predictions length ({len(predictions)}) must match the number of "
+            f"inference targets ({n_inference})."
         )
-    if len(predictions) > 0 and not np.all(np.isfinite(predictions)):
+    if n_inference > 0 and not np.all(np.isfinite(predictions)):
         raise ValueError(
             "predictions must contain only finite values; NaN or inf values "
-            "produce undefined acquisition scores and must be filtered before "
-            "building the acquisition plan."
+            "produce undefined acquisition scores."
         )
 
-    rows = []
-    for input_rank, summary in enumerate(
-        acquisition.score_summary(candidate_smiles, predictions)
-    ):
-        drc_score = float(summary["score_drc"])
-        ps_score = float(summary["score_ps"])
-        # Overall Score is max(DRC, PS); ties go to DRC because it is the more
-        # informative follow-up assay when both actions look equally valuable.
-        query_type = "DRC" if drc_score >= ps_score else "PS"
-        overall_score = max(drc_score, ps_score)
-        rows.append(
-            {
-                "_input_order": input_rank,
-                "Compound (SMILES)": summary["smiles"],
-                "Query type": query_type,
-                "PS Score": ps_score,
-                "DRC Score": drc_score,
-                "Overall Score": overall_score,
-            }
-        )
+    result = df.copy()
+    result["ps_score"] = np.nan
+    result["drc_score"] = np.nan
+    result["overall_score"] = np.nan
+    result["recommendation"] = None  # Object dtype so string values can be assigned
 
-    ranked = pd.DataFrame(rows).sort_values(
-        by=["Overall Score", "_input_order"],
-        ascending=[False, True],
-        kind="mergesort",
-    )
-    ranked = ranked.reset_index(drop=True)
-    ranked.insert(0, "Rank", np.arange(1, len(ranked) + 1))
-    return ranked[
-        [
-            "Rank",
-            "Compound (SMILES)",
-            "Query type",
-            "PS Score",
-            "DRC Score",
-            "Overall Score",
-        ]
-    ]
+    n_unqueried = len(state.unqueried_rows)
+    unqueried_preds = predictions[:n_unqueried]
+    upgrade_preds = predictions[n_unqueried:]
+
+    # Score unqueried compounds — both PS and DRC are valid next actions
+    if state.unqueried_rows:
+        unqueried_canonical = [smi for _, smi in state.unqueried_rows]
+        summaries = acquisition.score_summary(unqueried_canonical, unqueried_preds)
+        for (row_idx, _), summary in zip(state.unqueried_rows, summaries):
+            drc = float(summary["score_drc"])
+            ps = float(summary["score_ps"])
+            overall = max(drc, ps)
+            rec = "drc" if drc >= ps else "ps"
+            result.at[row_idx, "ps_score"] = ps
+            result.at[row_idx, "drc_score"] = drc
+            result.at[row_idx, "overall_score"] = overall
+            result.at[row_idx, "recommendation"] = rec
+
+    # Score PS hits — only DRC upgrade is a valid next action; ps_score stays NaN
+    if state.ps_upgrade_rows:
+        upgrade_canonical = [smi for _, smi in state.ps_upgrade_rows]
+        summaries = acquisition.score_summary(upgrade_canonical, upgrade_preds)
+        for (row_idx, _), summary in zip(state.ps_upgrade_rows, summaries):
+            drc = float(summary["score_drc"])
+            result.at[row_idx, "drc_score"] = drc
+            result.at[row_idx, "overall_score"] = drc
+            result.at[row_idx, "recommendation"] = "drc"
+
+    return result
 
 
 def _validate_training_records(records: list[LabelRecord]) -> None:
@@ -275,3 +354,4 @@ def _validate_training_records(records: list[LabelRecord]) -> None:
                 f"Compound {canonical_smiles!r} has both a PS '<' row and a DRC row. "
                 "This mixed-fidelity combination is unsupported in plan mode."
             )
+

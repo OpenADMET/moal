@@ -10,9 +10,9 @@ import pytest
 
 from moal.acquisition import CostAwareGreedyAcquisition
 from moal.planning import (
-    build_acquisition_plan_dataframe,
-    parse_candidate_smiles,
-    parse_training_records,
+    CampaignState,
+    annotate_campaign_state,
+    parse_campaign_state,
     training_records_for_refit,
 )
 from moal.preprocessing import SMILESPreprocessor
@@ -24,17 +24,32 @@ def preprocessor() -> SMILESPreprocessor:
     return SMILESPreprocessor()
 
 
-class TestParseTrainingRecords:
-    def test_relations_map_to_expected_label_types(self, preprocessor):
-        df = pd.DataFrame(
-            [
-                {"smiles": "CCO", "relation": "<", "value": 5.0},
-                {"smiles": "CCN", "relation": ">=", "value": 5.0},
-                {"smiles": "CCC", "relation": "==", "value": 7.4},
-            ]
+@pytest.fixture
+def acquisition() -> CostAwareGreedyAcquisition:
+    return CostAwareGreedyAcquisition(
+        cost_ps=1.0,
+        cost_drc=10.0,
+        ps_threshold=5.0,
+        target_threshold=7.0,
+        tau=0.5,
+    )
+
+
+def _state_df(*rows: dict) -> pd.DataFrame:
+    """Build a campaign state DataFrame from a list of row dicts."""
+    return pd.DataFrame(rows)
+
+
+class TestParseCampaignState:
+    def test_all_four_row_states_are_classified_correctly(self, preprocessor):
+        df = _state_df(
+            {"smiles": "CCO", "relation": "", "value": ""},
+            {"smiles": "CCN", "relation": "<", "value": 5.0},
+            {"smiles": "CCC", "relation": ">=", "value": 5.0},
+            {"smiles": "c1ccccc1", "relation": "==", "value": 7.4},
         )
 
-        records = parse_training_records(
+        state = parse_campaign_state(
             df,
             cost_ps=1.0,
             cost_drc=10.0,
@@ -43,25 +58,125 @@ class TestParseTrainingRecords:
             expected_ps_threshold=5.0,
         )
 
-        assert [record.fidelity for record in records] == [
-            QueryType.PRIMARY_SCREEN,
-            QueryType.PRIMARY_SCREEN,
-            QueryType.DOSE_RESPONSE,
-        ]
-        assert [record.censoring_type for record in records] == [
+        assert len(state.training_records) == 3
+        assert len(state.unqueried_rows) == 1
+        assert len(state.ps_upgrade_rows) == 1
+        assert state.unqueried_rows[0][0] == 0
+        assert state.ps_upgrade_rows[0][0] == 2
+
+    def test_unqueried_rows_have_correct_row_indices(self, preprocessor):
+        df = _state_df(
+            {"smiles": "CCO", "relation": "==", "value": 7.0},
+            {"smiles": "CCN", "relation": "", "value": ""},
+            {"smiles": "CCC", "relation": "", "value": ""},
+        )
+
+        state = parse_campaign_state(
+            df, cost_ps=1.0, cost_drc=10.0, upper_bound=11.0, preprocessor=preprocessor
+        )
+
+        assert [idx for idx, _ in state.unqueried_rows] == [1, 2]
+
+    def test_ps_hits_appear_in_both_training_and_ps_upgrade_rows(self, preprocessor):
+        df = _state_df(
+            {"smiles": "CCO", "relation": ">=", "value": 5.0},
+        )
+
+        state = parse_campaign_state(
+            df,
+            cost_ps=1.0,
+            cost_drc=10.0,
+            upper_bound=11.0,
+            preprocessor=preprocessor,
+            expected_ps_threshold=5.0,
+        )
+
+        assert len(state.training_records) == 1
+        assert state.training_records[0].fidelity == QueryType.PRIMARY_SCREEN
+        assert state.training_records[0].censoring_type == CensoringType.INTERVAL
+        assert len(state.ps_upgrade_rows) == 1
+        assert state.ps_upgrade_rows[0][1] == state.training_records[0].canonical_smiles
+
+    def test_ps_misses_are_training_only(self, preprocessor):
+        df = _state_df({"smiles": "CCO", "relation": "<", "value": 5.0})
+
+        state = parse_campaign_state(
+            df,
+            cost_ps=1.0,
+            cost_drc=10.0,
+            upper_bound=11.0,
+            preprocessor=preprocessor,
+            expected_ps_threshold=5.0,
+        )
+
+        assert len(state.training_records) == 1
+        assert state.training_records[0].censoring_type == CensoringType.LEFT
+        assert len(state.unqueried_rows) == 0
+        assert len(state.ps_upgrade_rows) == 0
+
+    def test_drc_rows_are_training_only(self, preprocessor):
+        df = _state_df({"smiles": "CCO", "relation": "==", "value": 7.2})
+
+        state = parse_campaign_state(
+            df, cost_ps=1.0, cost_drc=10.0, upper_bound=11.0, preprocessor=preprocessor
+        )
+
+        assert len(state.training_records) == 1
+        assert state.training_records[0].censoring_type == CensoringType.EXACT
+        assert len(state.unqueried_rows) == 0
+        assert len(state.ps_upgrade_rows) == 0
+
+    def test_label_types_match_relations(self, preprocessor):
+        df = _state_df(
+            {"smiles": "CCO", "relation": "<", "value": 5.0},
+            {"smiles": "CCN", "relation": ">=", "value": 5.0},
+            {"smiles": "CCC", "relation": "==", "value": 7.4},
+        )
+
+        state = parse_campaign_state(
+            df,
+            cost_ps=1.0,
+            cost_drc=10.0,
+            upper_bound=11.0,
+            preprocessor=preprocessor,
+            expected_ps_threshold=5.0,
+        )
+
+        assert [r.censoring_type for r in state.training_records] == [
             CensoringType.LEFT,
             CensoringType.INTERVAL,
             CensoringType.EXACT,
         ]
-        assert records[1].upper_bound == 11.0
-        assert records[2].upper_bound == pytest.approx(7.4)
-        assert all(record.iteration == 0 for record in records)
+        assert [r.fidelity for r in state.training_records] == [
+            QueryType.PRIMARY_SCREEN,
+            QueryType.PRIMARY_SCREEN,
+            QueryType.DOSE_RESPONSE,
+        ]
+        assert state.training_records[1].upper_bound == 11.0
+        assert state.training_records[2].upper_bound == pytest.approx(7.4)
+        assert all(r.iteration == 0 for r in state.training_records)
+
+    def test_partial_row_population_raises(self, preprocessor):
+        df = _state_df({"smiles": "CCO", "relation": ">=", "value": float("nan")})
+
+        with pytest.raises(ValueError, match="both be populated or both be empty"):
+            parse_campaign_state(
+                df, cost_ps=1.0, cost_drc=10.0, upper_bound=11.0, preprocessor=preprocessor
+            )
+
+    def test_missing_smiles_column_raises(self, preprocessor):
+        df = pd.DataFrame([{"compound": "CCO", "relation": "", "value": ""}])
+
+        with pytest.raises(ValueError, match="state CSV must contain column 'smiles'"):
+            parse_campaign_state(
+                df, cost_ps=1.0, cost_drc=10.0, upper_bound=11.0, preprocessor=preprocessor
+            )
 
     def test_threshold_mismatch_raises(self, preprocessor):
-        df = pd.DataFrame([{"smiles": "CCO", "relation": ">=", "value": 4.5}])
+        df = _state_df({"smiles": "CCO", "relation": ">=", "value": 4.5})
 
         with pytest.raises(ValueError, match="does not match config oracle.ps_threshold"):
-            parse_training_records(
+            parse_campaign_state(
                 df,
                 cost_ps=1.0,
                 cost_drc=10.0,
@@ -70,11 +185,30 @@ class TestParseTrainingRecords:
                 expected_ps_threshold=5.0,
             )
 
-    def test_missing_required_columns_raises(self, preprocessor):
-        df = pd.DataFrame([{"smiles": "CCO", "pec50": 6.2}])
+    def test_invalid_relation_raises(self, preprocessor):
+        df = _state_df({"smiles": "CCO", "relation": "??", "value": 5.0})
 
-        with pytest.raises(ValueError, match="training CSV must contain columns"):
-            parse_training_records(
+        with pytest.raises(ValueError, match="relation must be one of"):
+            parse_campaign_state(
+                df, cost_ps=1.0, cost_drc=10.0, upper_bound=11.0, preprocessor=preprocessor
+            )
+
+    def test_invalid_smiles_raises(self, preprocessor):
+        df = _state_df({"smiles": "not-a-smiles", "relation": "", "value": ""})
+
+        with pytest.raises(ValueError, match="invalid SMILES"):
+            parse_campaign_state(
+                df, cost_ps=1.0, cost_drc=10.0, upper_bound=11.0, preprocessor=preprocessor
+            )
+
+    def test_left_ps_plus_drc_combination_raises(self, preprocessor):
+        df = _state_df(
+            {"smiles": "CCO", "relation": "<", "value": 5.0},
+            {"smiles": "CCO", "relation": "==", "value": 6.8},
+        )
+
+        with pytest.raises(ValueError, match="mixed-fidelity combination is unsupported"):
+            parse_campaign_state(
                 df,
                 cost_ps=1.0,
                 cost_drc=10.0,
@@ -82,16 +216,102 @@ class TestParseTrainingRecords:
                 preprocessor=preprocessor,
                 expected_ps_threshold=5.0,
             )
+
+    def test_multiple_drc_rows_for_same_compound_raises(self, preprocessor):
+        df = _state_df(
+            {"smiles": "CCO", "relation": "==", "value": 6.8},
+            {"smiles": "CCO", "relation": "==", "value": 7.1},
+        )
+
+        with pytest.raises(ValueError, match="multiple DRC rows"):
+            parse_campaign_state(
+                df, cost_ps=1.0, cost_drc=10.0, upper_bound=11.0, preprocessor=preprocessor
+            )
+
+    def test_multiple_ps_rows_for_same_compound_raises(self, preprocessor):
+        df = _state_df(
+            {"smiles": "CCO", "relation": ">=", "value": 5.0},
+            {"smiles": "CCO", "relation": ">=", "value": 5.0},
+        )
+
+        with pytest.raises(ValueError, match="multiple PS rows"):
+            parse_campaign_state(
+                df,
+                cost_ps=1.0,
+                cost_drc=10.0,
+                upper_bound=11.0,
+                preprocessor=preprocessor,
+                expected_ps_threshold=5.0,
+            )
+
+    def test_cross_partition_duplicate_raises(self, preprocessor):
+        df = _state_df(
+            {"smiles": "CCO", "relation": "==", "value": 7.0},
+            {"smiles": "CCO", "relation": "", "value": ""},
+        )
+
+        with pytest.raises(ValueError, match="appear as both labeled and unqueried"):
+            parse_campaign_state(
+                df, cost_ps=1.0, cost_drc=10.0, upper_bound=11.0, preprocessor=preprocessor
+            )
+
+    def test_duplicate_unqueried_rows_are_skipped_with_warning(
+        self, preprocessor, caplog
+    ):
+        df = _state_df(
+            {"smiles": "C(C)O", "relation": "", "value": ""},  # same as CCO after canonicalization
+            {"smiles": "CCO", "relation": "", "value": ""},
+        )
+
+        with caplog.at_level("WARNING", logger="moal.planning"):
+            state = parse_campaign_state(
+                df,
+                cost_ps=1.0,
+                cost_drc=10.0,
+                upper_bound=11.0,
+                preprocessor=preprocessor,
+            )
+
+        assert len(state.unqueried_rows) == 1
+        assert "duplicate unqueried SMILES" in caplog.text
+
+    def test_refit_records_drop_upgraded_interval_ps_rows(self, preprocessor):
+        df = _state_df(
+            {"smiles": "CCO", "relation": ">=", "value": 5.0},
+            {"smiles": "CCO", "relation": "==", "value": 7.2},
+            {"smiles": "CCN", "relation": "==", "value": 6.1},
+        )
+
+        state = parse_campaign_state(
+            df,
+            cost_ps=1.0,
+            cost_drc=10.0,
+            upper_bound=11.0,
+            preprocessor=preprocessor,
+            expected_ps_threshold=5.0,
+        )
+        fit_records = training_records_for_refit(state.training_records)
+
+        assert len(state.training_records) == 3
+        assert len(fit_records) == 2
+        assert all(
+            not (
+                r.canonical_smiles == state.training_records[0].canonical_smiles
+                and r.fidelity == QueryType.PRIMARY_SCREEN
+            )
+            for r in fit_records
+        )
 
     def test_custom_column_names_are_supported(self, preprocessor):
         df = pd.DataFrame(
             [
                 {"compound": "CCO", "kind": "<", "potency": 5.0},
                 {"compound": "CCN", "kind": "==", "potency": 7.4},
+                {"compound": "CCC", "kind": "", "potency": ""},
             ]
         )
 
-        records = parse_training_records(
+        state = parse_campaign_state(
             df,
             cost_ps=1.0,
             cost_drc=10.0,
@@ -103,22 +323,36 @@ class TestParseTrainingRecords:
             expected_ps_threshold=5.0,
         )
 
-        assert [record.canonical_smiles for record in records] == ["CCO", "CCN"]
-        assert [record.censoring_type for record in records] == [
-            CensoringType.LEFT,
-            CensoringType.EXACT,
-        ]
+        assert len(state.training_records) == 2
+        assert len(state.unqueried_rows) == 1
 
-    def test_refit_records_drop_upgraded_interval_ps_rows(self, preprocessor):
-        df = pd.DataFrame(
-            [
-                {"smiles": "CCO", "relation": ">=", "value": 5.0},
-                {"smiles": "CCO", "relation": "==", "value": 7.2},
-                {"smiles": "CCN", "relation": "==", "value": 6.1},
-            ]
+
+class TestAnnotateCampaignState:
+    def test_unqueried_rows_get_all_four_score_columns(self, preprocessor, acquisition):
+        df = _state_df(
+            {"smiles": "CCO", "relation": "", "value": ""},
+        )
+        state = parse_campaign_state(
+            df, cost_ps=1.0, cost_drc=10.0, upper_bound=11.0, preprocessor=preprocessor
+        )
+        # Prediction near the PS threshold maximizes PS entropy
+        predictions = np.array([5.0], dtype=np.float32)
+
+        result = annotate_campaign_state(df, state, predictions, acquisition)
+
+        assert not pd.isna(result.at[0, "ps_score"])
+        assert not pd.isna(result.at[0, "drc_score"])
+        assert not pd.isna(result.at[0, "overall_score"])
+        assert result.at[0, "recommendation"] in {"ps", "drc"}
+        assert result.at[0, "overall_score"] == pytest.approx(
+            max(result.at[0, "ps_score"], result.at[0, "drc_score"])
         )
 
-        records = parse_training_records(
+    def test_ps_upgrade_rows_get_drc_only(self, preprocessor, acquisition):
+        df = _state_df(
+            {"smiles": "CCO", "relation": ">=", "value": 5.0},
+        )
+        state = parse_campaign_state(
             df,
             cost_ps=1.0,
             cost_drc=10.0,
@@ -126,195 +360,154 @@ class TestParseTrainingRecords:
             preprocessor=preprocessor,
             expected_ps_threshold=5.0,
         )
-        fit_records = training_records_for_refit(records)
+        predictions = np.array([8.0], dtype=np.float32)
 
-        assert len(records) == 3
-        assert len(fit_records) == 2
-        assert all(
-            not (
-                record.canonical_smiles == records[0].canonical_smiles
-                and record.fidelity == QueryType.PRIMARY_SCREEN
-            )
-            for record in fit_records
+        result = annotate_campaign_state(df, state, predictions, acquisition)
+
+        assert pd.isna(result.at[0, "ps_score"])
+        assert not pd.isna(result.at[0, "drc_score"])
+        assert result.at[0, "overall_score"] == pytest.approx(result.at[0, "drc_score"])
+        assert result.at[0, "recommendation"] == "drc"
+
+    def test_training_only_rows_get_nan_scores(self, preprocessor, acquisition):
+        df = _state_df(
+            {"smiles": "CCO", "relation": "<", "value": 5.0},
+            {"smiles": "CCN", "relation": "==", "value": 7.2},
         )
-
-    def test_left_ps_plus_drc_combination_raises(self, preprocessor):
-        df = pd.DataFrame(
-            [
-                {"smiles": "CCO", "relation": "<", "value": 5.0},
-                {"smiles": "CCO", "relation": "==", "value": 6.8},
-            ]
-        )
-
-        with pytest.raises(
-            ValueError, match="mixed-fidelity combination is unsupported in plan mode"
-        ):
-            parse_training_records(
-                df,
-                cost_ps=1.0,
-                cost_drc=10.0,
-                upper_bound=11.0,
-                preprocessor=preprocessor,
-                expected_ps_threshold=5.0,
-            )
-
-    def test_multiple_drc_rows_raise(self, preprocessor):
-        df = pd.DataFrame(
-            [
-                {"smiles": "CCO", "relation": "==", "value": 6.8},
-                {"smiles": "CCO", "relation": "==", "value": 7.1},
-            ]
-        )
-
-        with pytest.raises(ValueError, match="multiple DRC rows"):
-            parse_training_records(
-                df,
-                cost_ps=1.0,
-                cost_drc=10.0,
-                upper_bound=11.0,
-                preprocessor=preprocessor,
-                expected_ps_threshold=5.0,
-            )
-
-    def test_multiple_ps_rows_raise(self, preprocessor):
-        df = pd.DataFrame(
-            [
-                {"smiles": "CCO", "relation": ">=", "value": 5.0},
-                {"smiles": "CCO", "relation": ">=", "value": 5.0},
-            ]
-        )
-
-        with pytest.raises(ValueError, match="multiple PS rows"):
-            parse_training_records(
-                df,
-                cost_ps=1.0,
-                cost_drc=10.0,
-                upper_bound=11.0,
-                preprocessor=preprocessor,
-                expected_ps_threshold=5.0,
-            )
-
-
-class TestParseCandidateSmiles:
-    def test_deduplicates_after_canonicalization(self, preprocessor):
-        df = pd.DataFrame({"smiles": ["C(C)O", "CCO", "CCN"]})
-
-        candidates = parse_candidate_smiles(
+        state = parse_campaign_state(
             df,
-            smiles_column="smiles",
+            cost_ps=1.0,
+            cost_drc=10.0,
+            upper_bound=11.0,
             preprocessor=preprocessor,
+            expected_ps_threshold=5.0,
         )
 
-        assert candidates == ["CCO", "CCN"]
+        result = annotate_campaign_state(
+            df, state, np.empty(0, dtype=np.float32), acquisition
+        )
 
-    def test_missing_smiles_column_raises(self, preprocessor):
-        df = pd.DataFrame({"compound": ["CCO"]})
+        for col in ("ps_score", "drc_score", "overall_score", "recommendation"):
+            assert pd.isna(result.at[0, col])
+            assert pd.isna(result.at[1, col])
 
-        with pytest.raises(ValueError, match="candidate CSV must contain column 'smiles'"):
-            parse_candidate_smiles(
-                df,
-                smiles_column="smiles",
-                preprocessor=preprocessor,
-            )
+    def test_recommendation_is_ps_when_ps_score_dominates(self, preprocessor, acquisition):
+        df = _state_df({"smiles": "CCO", "relation": "", "value": ""})
+        state = parse_campaign_state(
+            df, cost_ps=1.0, cost_drc=10.0, upper_bound=11.0, preprocessor=preprocessor
+        )
+        # y_hat at the PS threshold gives maximal PS entropy and minimal DRC score
+        predictions = np.array([5.0], dtype=np.float32)
 
-    def test_invalid_candidate_smiles_raises(self, preprocessor):
-        df = pd.DataFrame({"smiles": ["not-a-smiles"]})
+        result = annotate_campaign_state(df, state, predictions, acquisition)
 
-        with pytest.raises(ValueError, match="invalid candidate SMILES"):
-            parse_candidate_smiles(
-                df,
-                smiles_column="smiles",
-                preprocessor=preprocessor,
-            )
+        assert result.at[0, "recommendation"] == "ps"
 
+    def test_recommendation_is_drc_when_drc_score_dominates(
+        self, preprocessor, acquisition
+    ):
+        df = _state_df({"smiles": "CCO", "relation": "", "value": ""})
+        state = parse_campaign_state(
+            df, cost_ps=1.0, cost_drc=10.0, upper_bound=11.0, preprocessor=preprocessor
+        )
+        # High y_hat gives large DRC exploitation score
+        predictions = np.array([11.0], dtype=np.float32)
 
-class TestBuildAcquisitionPlanDataFrame:
-    def test_ranks_by_overall_score_and_formats_columns(self):
-        acquisition = CostAwareGreedyAcquisition(
+        result = annotate_campaign_state(df, state, predictions, acquisition)
+
+        assert result.at[0, "recommendation"] == "drc"
+
+    def test_ps_upgrade_recommendation_is_always_drc(self, preprocessor, acquisition):
+        df = _state_df(
+            {"smiles": "CCO", "relation": ">=", "value": 5.0},
+            {"smiles": "CCN", "relation": ">=", "value": 5.0},
+        )
+        state = parse_campaign_state(
+            df,
             cost_ps=1.0,
             cost_drc=10.0,
-            ps_threshold=5.0,
-            target_threshold=7.0,
-            tau=0.5,
+            upper_bound=11.0,
+            preprocessor=preprocessor,
+            expected_ps_threshold=5.0,
+        )
+        # Both near the PS threshold, but DRC is the only valid action for upgrades
+        predictions = np.array([5.0, 5.0], dtype=np.float32)
+
+        result = annotate_campaign_state(df, state, predictions, acquisition)
+
+        assert result.at[0, "recommendation"] == "drc"
+        assert result.at[1, "recommendation"] == "drc"
+
+    def test_rejects_length_mismatch(self, preprocessor, acquisition):
+        df = _state_df(
+            {"smiles": "CCO", "relation": "", "value": ""},
+            {"smiles": "CCN", "relation": "", "value": ""},
+        )
+        state = parse_campaign_state(
+            df, cost_ps=1.0, cost_drc=10.0, upper_bound=11.0, preprocessor=preprocessor
         )
 
-        result = build_acquisition_plan_dataframe(
-            candidate_smiles=["ambiguous", "high"],
-            predictions=np.array([5.0, 8.0], dtype=np.float32),
-            acquisition=acquisition,
-        )
+        with pytest.raises(ValueError, match="must match the number of inference targets"):
+            annotate_campaign_state(
+                df, state, np.array([5.0], dtype=np.float32), acquisition
+            )
 
-        assert list(result.columns) == [
-            "Rank",
-            "Compound (SMILES)",
-            "Query type",
-            "PS Score",
-            "DRC Score",
-            "Overall Score",
-        ]
-        assert result["Rank"].tolist() == [1, 2]
-        assert result["Compound (SMILES)"].tolist() == ["ambiguous", "high"]
-        assert result["Query type"].tolist() == ["PS", "DRC"]
-        assert np.allclose(
-            result["Overall Score"].to_numpy(),
-            np.maximum(result["PS Score"].to_numpy(), result["DRC Score"].to_numpy()),
-        )
-        assert result["Overall Score"].is_monotonic_decreasing
-
-    def test_ties_choose_drc_and_preserve_input_order(self):
-        acquisition = Mock(spec_set=["score_summary"])
-        acquisition.score_summary.return_value = [
-            {
-                "smiles": "first",
-                "score_ps": 0.4,
-                "score_drc": 0.4,
-            },
-            {
-                "smiles": "second",
-                "score_ps": 0.1,
-                "score_drc": 0.4,
-            },
-        ]
-
-        result = build_acquisition_plan_dataframe(
-            candidate_smiles=["first", "second"],
-            predictions=np.array([1.0, 2.0], dtype=np.float32),
-            acquisition=acquisition,
-        )
-
-        assert result["Rank"].tolist() == [1, 2]
-        assert result["Compound (SMILES)"].tolist() == ["first", "second"]
-        assert result["Query type"].tolist() == ["DRC", "DRC"]
-        assert result["Overall Score"].tolist() == pytest.approx([0.4, 0.4])
-
-    def test_rejects_non_finite_predictions(self):
-        acquisition = CostAwareGreedyAcquisition(
-            cost_ps=1.0,
-            cost_drc=10.0,
-            ps_threshold=5.0,
-            target_threshold=7.0,
-            tau=0.5,
+    def test_rejects_non_finite_predictions(self, preprocessor, acquisition):
+        df = _state_df({"smiles": "CCO", "relation": "", "value": ""})
+        state = parse_campaign_state(
+            df, cost_ps=1.0, cost_drc=10.0, upper_bound=11.0, preprocessor=preprocessor
         )
 
         with pytest.raises(ValueError, match="must contain only finite values"):
-            build_acquisition_plan_dataframe(
-                candidate_smiles=["bad"],
-                predictions=np.array([np.nan], dtype=np.float32),
-                acquisition=acquisition,
+            annotate_campaign_state(
+                df, state, np.array([np.nan], dtype=np.float32), acquisition
             )
 
-    def test_rejects_length_mismatch(self):
-        acquisition = CostAwareGreedyAcquisition(
-            cost_ps=1.0,
-            cost_drc=10.0,
-            ps_threshold=5.0,
-            target_threshold=7.0,
-            tau=0.5,
+    def test_empty_inference_targets_returns_all_nan_score_columns(
+        self, preprocessor, acquisition
+    ):
+        df = _state_df({"smiles": "CCO", "relation": "==", "value": 7.2})
+        state = parse_campaign_state(
+            df, cost_ps=1.0, cost_drc=10.0, upper_bound=11.0, preprocessor=preprocessor
         )
 
-        with pytest.raises(ValueError, match="must match predictions length"):
-            build_acquisition_plan_dataframe(
-                candidate_smiles=["a", "b"],
-                predictions=np.array([1.0], dtype=np.float32),
-                acquisition=acquisition,
-            )
+        result = annotate_campaign_state(
+            df, state, np.empty(0, dtype=np.float32), acquisition
+        )
+
+        assert all(c in result.columns for c in ("ps_score", "drc_score", "overall_score", "recommendation"))
+        assert pd.isna(result.at[0, "ps_score"])
+
+    def test_original_dataframe_is_not_mutated(self, preprocessor, acquisition):
+        df = _state_df({"smiles": "CCO", "relation": "", "value": ""})
+        state = parse_campaign_state(
+            df, cost_ps=1.0, cost_drc=10.0, upper_bound=11.0, preprocessor=preprocessor
+        )
+
+        annotate_campaign_state(df, state, np.array([5.0], dtype=np.float32), acquisition)
+
+        assert "ps_score" not in df.columns
+
+    def test_uses_acquisition_score_summary_for_scoring(self, preprocessor):
+        acquisition = Mock(spec_set=["score_summary"])
+        acquisition.score_summary.return_value = [
+            {"smiles": "CCO", "score_drc": 0.3, "score_ps": 0.7},
+        ]
+        df = _state_df({"smiles": "CCO", "relation": "", "value": ""})
+        state = parse_campaign_state(
+            df,
+            cost_ps=1.0,
+            cost_drc=10.0,
+            upper_bound=11.0,
+            preprocessor=preprocessor,
+        )
+
+        result = annotate_campaign_state(
+            df, state, np.array([5.0], dtype=np.float32), acquisition
+        )
+
+        assert result.at[0, "ps_score"] == pytest.approx(0.7)
+        assert result.at[0, "drc_score"] == pytest.approx(0.3)
+        assert result.at[0, "overall_score"] == pytest.approx(0.7)
+        assert result.at[0, "recommendation"] == "ps"
+
