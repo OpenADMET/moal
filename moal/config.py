@@ -180,30 +180,96 @@ class DashboardConfig:
 
 
 @dataclass(frozen=True)
-class DataConfig:
-    """I/O paths and SMILES preprocessing settings for the compound dataset."""
+class SimulationDataConfig:
+    """Dataset settings for the synthetic active-learning simulation workflow."""
 
-    ground_truth_csv: str = ""
+    input_csv: str = ""
     """Path to CSV containing compound SMILES and pEC50 values."""
 
     smiles_column: str = "smiles"
-    """Name of the column in ``ground_truth_csv`` that contains SMILES strings."""
+    """Name of the column in ``input_csv`` that contains SMILES strings."""
 
     pec50_column: str = "pec50"
-    """Name of the column in ``ground_truth_csv`` that contains pEC50 values."""
+    """Name of the column in ``input_csv`` that contains pEC50 values."""
 
     is_canonical: bool = False
-    """When False (default), all SMILES in ``ground_truth_csv`` are canonicalized
-    via RDKit during oracle initialization.  Set to True if the input SMILES are
-    already in canonical form to skip that preprocessing step."""
-
-    output_dir: str = "results"
-    """Directory to write campaign outputs (metrics CSV, dashboard PNG,
-    config snapshot)."""
+    """When False (default), input SMILES are canonicalized via RDKit during
+    oracle initialization. Set to True when the CSV already stores canonical
+    SMILES and preprocessing can be skipped."""
 
     test_set_size: float = 0.15
     """Fraction of the compound pool held out as a scaffold-split test set for
     model performance tracking. Set to 0.0 to disable test-set evaluation."""
+
+
+@dataclass(frozen=True)
+class PlanTrainingDataConfig:
+    """Training-set settings for offline plan mode."""
+
+    input_csv: str = ""
+    """Path to CSV containing labeled mixed-fidelity training records."""
+
+    smiles_column: str = "smiles"
+    """Name of the SMILES column in ``input_csv``."""
+
+    relation_column: str = "relation"
+    """Name of the relation column in ``input_csv`` (`<`, `>=`, `==`)."""
+
+    value_column: str = "value"
+    """Name of the pEC50 / threshold value column in ``input_csv``."""
+
+    is_canonical: bool = False
+    """When False (default), training-set SMILES are canonicalized via RDKit
+    before validation and scoring."""
+
+
+@dataclass(frozen=True)
+class PlanCandidatePoolDataConfig:
+    """Candidate-pool settings for offline plan mode."""
+
+    input_csv: str = ""
+    """Path to CSV containing unlabeled candidate compounds."""
+
+    smiles_column: str = "smiles"
+    """Name of the SMILES column in ``input_csv``."""
+
+    is_canonical: bool = False
+    """When False (default), candidate-pool SMILES are canonicalized via RDKit
+    before validation and scoring."""
+
+
+@dataclass(frozen=True)
+class PlanDataConfig:
+    """Input/output settings for offline train-and-rank planning."""
+
+    output_csv: str = "acquisition_plan.csv"
+    """Destination for the ranked acquisition plan CSV.
+
+    Relative paths are resolved under ``data.output_dir`` so both subcommands can
+    be redirected together with ``--output-dir``.
+    """
+
+    training: PlanTrainingDataConfig = field(default_factory=PlanTrainingDataConfig)
+    """Training-set settings used by ``moal plan``."""
+
+    candidate_pool: PlanCandidatePoolDataConfig = field(
+        default_factory=PlanCandidatePoolDataConfig
+    )
+    """Candidate-pool settings used by ``moal plan``."""
+
+
+@dataclass(frozen=True)
+class DataConfig:
+    """Command-specific dataset and I/O settings."""
+
+    output_dir: str = "results"
+    """Directory to write campaign outputs and config snapshots."""
+
+    simulate: SimulationDataConfig = field(default_factory=SimulationDataConfig)
+    """Dataset settings used by ``moal simulate``."""
+
+    plan: PlanDataConfig = field(default_factory=PlanDataConfig)
+    """Dataset settings used by ``moal plan``."""
 
 
 @dataclass(frozen=True)
@@ -249,13 +315,28 @@ class PipelineConfig:
         """
         with open(path) as f:
             raw = yaml.safe_load(f)
+        data_raw = raw.get("data", {})
         return cls(
             oracle=OracleConfig(**raw.get("oracle", {})),
             model=ModelConfig(**raw.get("model", {})),
             acquisition=AcquisitionConfig(**raw.get("acquisition", {})),
             trainer=TrainerConfig(**raw.get("trainer", {})),
             dashboard=DashboardConfig(**raw.get("dashboard", {})),
-            data=DataConfig(**raw.get("data", {})),
+            data=DataConfig(
+                output_dir=data_raw.get("output_dir", "results"),
+                simulate=SimulationDataConfig(**data_raw.get("simulate", {})),
+                plan=PlanDataConfig(
+                    output_csv=data_raw.get("plan", {}).get(
+                        "output_csv", "acquisition_plan.csv"
+                    ),
+                    training=PlanTrainingDataConfig(
+                        **data_raw.get("plan", {}).get("training", {})
+                    ),
+                    candidate_pool=PlanCandidatePoolDataConfig(
+                        **data_raw.get("plan", {}).get("candidate_pool", {})
+                    ),
+                ),
+            ),
             active_learning_loop=ActiveLearningLoopConfig(
                 **raw.get("active_learning_loop", {})
             ),
