@@ -193,22 +193,6 @@ class ChemPropLightningModule(L.LightningModule):
     # Lightning interface
     # ------------------------------------------------------------------
 
-    def transfer_batch_to_device(
-        self,
-        batch: tuple[Any, list[LabelRecord]],
-        device: torch.device,
-        dataloader_idx: int,
-    ) -> tuple[Any, list[LabelRecord]]:
-        """Move only the BatchMolGraph to the device; leave LabelRecords on CPU.
-
-        Lightning's default ``apply_to_collection`` recurses into dataclasses
-        and fails on frozen ones. We bypass that by handling the transfer
-        manually for our (BatchMolGraph, list[LabelRecord]) batch shape.
-        """
-        mol_graph, records = batch
-        mol_graph = super().transfer_batch_to_device(mol_graph, device, dataloader_idx)
-        return mol_graph, records
-
     def forward(self, batch_mol_graph: Any) -> Tensor:
         return self.model(batch_mol_graph).squeeze(-1)
 
