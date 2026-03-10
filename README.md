@@ -27,7 +27,7 @@ Copy and edit the example config to point at your data:
 
 ```bash
 cp examples/default_config.yaml my_campaign.yaml
-# edit my_campaign.yaml: set data.ground_truth_csv
+# edit my_campaign.yaml: set data.simulate.input_csv
 moal simulate --config my_campaign.yaml --output-dir results/
 ```
 
@@ -53,17 +53,16 @@ unlabeled candidate pool to produce a ranked acquisition plan:
 
 ```bash
 moal plan \
-  --config examples/default_config.yaml \
-  --training-csv train.csv \
-  --candidate-csv candidates.csv \
-  --output-csv results/acquisition_plan.csv
+  --config examples/default_config.yaml
 ```
 
-`plan` uses the same YAML config hierarchy as `simulate` for model, trainer,
-acquisition, and preprocessing settings. It does **not** run the active
-learning loop or dashboard; it is a one-shot train-and-rank workflow.
+`plan` is now config-first just like `simulate`: training/candidate/output CSV
+paths, column names, and canonicalization behavior all live under
+`data.plan` in the YAML file. It does **not** run the active learning loop or
+dashboard; it is a one-shot train-and-rank workflow.
 
-The training CSV must contain exactly these columns:
+By default, the training CSV uses these columns, all of which are configurable
+via `data.plan.training.*`:
 
 | Column | Meaning |
 |---|---|
@@ -78,7 +77,7 @@ The training CSV must contain exactly these columns:
 - `>=` → PS / interval-censored label
 
 The candidate CSV must contain the SMILES column configured by
-`data.smiles_column` (default: `smiles`).
+`data.plan.candidate_pool.smiles_column` (default: `smiles`).
 
 The exported planning CSV contains exactly these columns, ranked by
 `Overall Score` descending:
@@ -116,8 +115,15 @@ acquisition:
   tau: 0.5
 
 data:
-  ground_truth_csv: data/compounds.csv   # columns: smiles, pec50
   output_dir: results/
+  simulate:
+    input_csv: data/compounds.csv   # columns: smiles, pec50
+  plan:
+    output_csv: acquisition_plan.csv
+    training:
+      input_csv: data/train.csv
+    candidate_pool:
+      input_csv: data/candidates.csv
 
 active_learning_loop:
   n_iterations: 20

@@ -4,7 +4,7 @@ Install the package (``pip install -e .``) to get the ``moal`` command.
 The explicit subcommands are::
 
     moal simulate --config examples/default_config.yaml
-    moal plan --config examples/default_config.yaml --training-csv train.csv --candidate-csv pool.csv
+    moal plan --config examples/default_config.yaml
 
 """
 
@@ -76,14 +76,19 @@ def simulate(config: Path, output_dir: Path | None, verbose: bool) -> None:
 
     out_dir = _prepare_output_dir(cfg, output_dir)
 
-    if not cfg.data.ground_truth_csv:
-        raise click.ClickException("data.ground_truth_csv must be set in the config.")
+    if not cfg.data.simulate.input_csv:
+        raise click.ClickException(
+            "data.simulate.input_csv must be set in the config."
+        )
 
     ground_truth_df = _read_csv(
-        Path(cfg.data.ground_truth_csv), label="data.ground_truth_csv"
+        Path(cfg.data.simulate.input_csv),
+        label="data.simulate.input_csv",
     )
     logger.info(
-        "Loaded %d compounds from %s", len(ground_truth_df), cfg.data.ground_truth_csv
+        "Loaded %d compounds from %s",
+        len(ground_truth_df),
+        cfg.data.simulate.input_csv,
     )
 
     preprocessor = SMILESPreprocessor()
@@ -93,9 +98,9 @@ def simulate(config: Path, output_dir: Path | None, verbose: bool) -> None:
         cost_drc=cfg.oracle.cost_drc,
         ps_threshold=cfg.oracle.ps_threshold,
         upper_bound=cfg.oracle.upper_bound,
-        smiles_column=cfg.data.smiles_column,
-        pec50_column=cfg.data.pec50_column,
-        is_canonical=cfg.data.is_canonical,
+        smiles_column=cfg.data.simulate.smiles_column,
+        pec50_column=cfg.data.simulate.pec50_column,
+        is_canonical=cfg.data.simulate.is_canonical,
         preprocessor=preprocessor,
     )
 
@@ -111,9 +116,9 @@ def simulate(config: Path, output_dir: Path | None, verbose: bool) -> None:
 
     all_smiles = oracle.get_unlabeled_smiles()
     test_set = None
-    if all_smiles and cfg.data.test_set_size > 0:
+    if all_smiles and cfg.data.simulate.test_set_size > 0:
         _, test_idx = scaffold_split(
-            all_smiles, test_size=cfg.data.test_set_size, seed=cfg.seed
+            all_smiles, test_size=cfg.data.simulate.test_set_size, seed=cfg.seed
         )
         if test_idx:
             test_smiles = [all_smiles[i] for i in test_idx]
@@ -193,33 +198,8 @@ def simulate(config: Path, output_dir: Path | None, verbose: bool) -> None:
 
 
 @main.command()
-@click.option(
-    "--training-csv",
-    required=True,
-    type=click.Path(exists=True, dir_okay=False, path_type=Path),
-    help="CSV of labeled training records with columns: smiles, relation, value.",
-)
-@click.option(
-    "--candidate-csv",
-    required=True,
-    type=click.Path(exists=True, dir_okay=False, path_type=Path),
-    help="CSV of unlabeled candidate compounds.",
-)
-@click.option(
-    "--output-csv",
-    default=None,
-    type=click.Path(dir_okay=False, path_type=Path),
-    help="Destination for the ranked acquisition plan CSV.",
-)
 @_common_cli_options(required=True)
-def plan(
-    training_csv: Path,
-    candidate_csv: Path,
-    output_csv: Path | None,
-    config: Path,
-    output_dir: Path | None,
-    verbose: bool,
-) -> None:
+def plan(config: Path, output_dir: Path | None, verbose: bool) -> None:
     """Train on mixed-fidelity records and rank the next acquisition batch."""
     _configure_logging(verbose)
     _print_banner()
@@ -229,11 +209,24 @@ def plan(
     logger.info("Loaded config from %s", config)
 
     out_dir = _prepare_output_dir(cfg, output_dir)
-    plan_path = output_csv or (out_dir / "acquisition_plan.csv")
+    if not cfg.data.plan.training.input_csv:
+        raise click.ClickException(
+            "data.plan.training.input_csv must be set in the config."
+        )
+    if not cfg.data.plan.candidate_pool.input_csv:
+        raise click.ClickException(
+            "data.plan.candidate_pool.input_csv must be set in the config."
+        )
+
+    training_csv = Path(cfg.data.plan.training.input_csv)
+    candidate_csv = Path(cfg.data.plan.candidate_pool.input_csv)
+    plan_path = _resolve_plan_output_path(cfg, out_dir)
     plan_path.parent.mkdir(parents=True, exist_ok=True)
 
-    training_df = _read_csv(training_csv, label="training CSV")
-    candidate_df = _read_csv(candidate_csv, label="candidate CSV")
+    training_df = _read_csv(training_csv, label="data.plan.training.input_csv")
+    candidate_df = _read_csv(
+        candidate_csv, label="data.plan.candidate_pool.input_csv"
+    )
 
     preprocessor = SMILESPreprocessor()
     try:
@@ -243,14 +236,17 @@ def plan(
             cost_drc=cfg.oracle.cost_drc,
             upper_bound=cfg.oracle.upper_bound,
             preprocessor=preprocessor,
-            is_canonical=cfg.data.is_canonical,
+            smiles_column=cfg.data.plan.training.smiles_column,
+            relation_column=cfg.data.plan.training.relation_column,
+            value_column=cfg.data.plan.training.value_column,
+            is_canonical=cfg.data.plan.training.is_canonical,
             expected_ps_threshold=cfg.oracle.ps_threshold,
         )
         candidate_smiles = parse_candidate_smiles(
             candidate_df,
-            smiles_column=cfg.data.smiles_column,
+            smiles_column=cfg.data.plan.candidate_pool.smiles_column,
             preprocessor=preprocessor,
-            is_canonical=cfg.data.is_canonical,
+            is_canonical=cfg.data.plan.candidate_pool.is_canonical,
         )
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
@@ -320,6 +316,13 @@ def _prepare_output_dir(cfg: PipelineConfig, output_dir: Path | None) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     cfg.to_yaml(out_dir / "config_used.yaml")
     return out_dir
+
+
+def _resolve_plan_output_path(cfg: PipelineConfig, out_dir: Path) -> Path:
+    configured = Path(cfg.data.plan.output_csv)
+    if configured.is_absolute():
+        return configured
+    return out_dir / configured
 
 
 def _read_csv(path: Path, *, label: str) -> pd.DataFrame:

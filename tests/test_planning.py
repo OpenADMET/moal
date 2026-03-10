@@ -83,6 +83,32 @@ class TestParseTrainingRecords:
                 expected_ps_threshold=5.0,
             )
 
+    def test_custom_column_names_are_supported(self, preprocessor):
+        df = pd.DataFrame(
+            [
+                {"compound": "CCO", "kind": "<", "potency": 5.0},
+                {"compound": "CCN", "kind": "==", "potency": 7.4},
+            ]
+        )
+
+        records = parse_training_records(
+            df,
+            cost_ps=1.0,
+            cost_drc=10.0,
+            upper_bound=11.0,
+            preprocessor=preprocessor,
+            smiles_column="compound",
+            relation_column="kind",
+            value_column="potency",
+            expected_ps_threshold=5.0,
+        )
+
+        assert [record.canonical_smiles for record in records] == ["CCO", "CCN"]
+        assert [record.censoring_type for record in records] == [
+            CensoringType.LEFT,
+            CensoringType.EXACT,
+        ]
+
     def test_refit_records_drop_upgraded_interval_ps_rows(self, preprocessor):
         df = pd.DataFrame(
             [

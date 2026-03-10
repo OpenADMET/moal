@@ -14,7 +14,6 @@ from moal.types import CensoringType, LabelRecord, QueryType
 
 logger = logging.getLogger(__name__)
 
-_REQUIRED_TRAINING_COLUMNS = {"smiles", "relation", "value"}
 _PECO50_MIN = 0.0
 _PECO50_MAX = 14.0
 _PLAN_MODE_ITERATION = 0
@@ -28,30 +27,34 @@ def parse_training_records(
     cost_drc: float,
     upper_bound: float,
     preprocessor: SMILESPreprocessor,
+    smiles_column: str = "smiles",
+    relation_column: str = "relation",
+    value_column: str = "value",
     is_canonical: bool = False,
     expected_ps_threshold: float | None = None,
 ) -> list[LabelRecord]:
     """Parse a mixed-fidelity training CSV into ``LabelRecord`` objects.
 
-    Expected columns are ``smiles``, ``relation`` (``<``, ``>=``, or ``==``),
-    and ``value``.
+    Expected columns are the configured SMILES, relation (``<``, ``>=``, or
+    ``==``), and value columns.
 
     All produced records are assigned ``iteration=0`` because plan mode trains
     on an externally supplied labeled set rather than on records acquired from
     the active learning loop itself.
     """
-    missing = _REQUIRED_TRAINING_COLUMNS.difference(training_df.columns)
+    required_columns = {smiles_column, relation_column, value_column}
+    missing = required_columns.difference(training_df.columns)
     if missing:
         raise ValueError(
             "training CSV must contain columns "
-            f"{sorted(_REQUIRED_TRAINING_COLUMNS)}, got {sorted(training_df.columns)}"
+            f"{sorted(required_columns)}, got {sorted(training_df.columns)}"
         )
 
     records: list[LabelRecord] = []
     for row_idx, row in training_df.iterrows():
         csv_row = row_idx + 2  # account for zero indexing + header row
-        raw_smiles = str(row["smiles"])
-        relation = str(row["relation"]).strip()
+        raw_smiles = str(row[smiles_column])
+        relation = str(row[relation_column]).strip()
 
         if relation not in {"<", ">=", "=="}:
             raise ValueError(
@@ -60,7 +63,7 @@ def parse_training_records(
             )
 
         try:
-            value = float(row["value"])
+            value = float(row[value_column])
         except (TypeError, ValueError) as exc:
             raise ValueError(
                 f"Row {csv_row}: value must be a finite numeric pEC50 datum."
@@ -68,7 +71,7 @@ def parse_training_records(
 
         if not math.isfinite(value):
             raise ValueError(
-                f"Row {csv_row}: value must be finite, got {row['value']!r}."
+                f"Row {csv_row}: value must be finite, got {row[value_column]!r}."
             )
         if not (_PECO50_MIN <= value <= _PECO50_MAX):
             raise ValueError(
