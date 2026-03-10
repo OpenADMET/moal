@@ -329,19 +329,25 @@ def plan(config: Path, output_dir: Path | None, verbose: bool) -> None:
 
     if warning_message is not None:
         logger.warning(warning_message)
-    logger.info(
-        "Annotated state CSV written to %s "
-        "(%d inference targets: %d unqueried, %d PS upgrades)",
-        plan_path,
-        n_inference,
-        len(state.unqueried_rows),
-        len(state.ps_upgrade_rows),
+
+    n_ps_rec = int((annotated_df["recommendation"] == "ps").sum())
+    n_drc_rec = int((annotated_df["recommendation"] == "drc").sum())
+    n_drc_upgrades = len(state.ps_upgrade_rows)
+    drc_label = (
+        f"[orange1]{n_drc_rec} DRC[/orange1] ([magenta]{n_drc_upgrades} upgrades[/magenta])"
+        if n_drc_upgrades > 0
+        else f"[orange1]{n_drc_rec} DRC[/orange1]"
     )
+
     _console.print(
         f"[bold green]Plan complete.[/bold green]  "
-        f"[bold]Wrote:[/bold] [bold]{plan_path}[/bold]  |  "
-        f"[white]{len(state.unqueried_rows)} unqueried[/white]  |  "
-        f"[magenta]{len(state.ps_upgrade_rows)} PS hits[/magenta]"
+        f"[bold]Recommendation:[/bold] [steel_blue1]{n_ps_rec} PS[/steel_blue1]  |  "
+        f"{drc_label}"
+    )
+
+    logger.info(
+        "Annotated state CSV written to %s ",
+        plan_path,
     )
 
 

@@ -91,8 +91,7 @@ def _plan_config(
         f"    smiles_column: {smiles_column}\n"
         f"    relation_column: {relation_column}\n"
         f"    value_column: {value_column}\n"
-        f"    is_canonical: {'true' if is_canonical else 'false'}\n"
-        + extra
+        f"    is_canonical: {'true' if is_canonical else 'false'}\n" + extra
     )
 
 
@@ -273,11 +272,7 @@ class TestPlanCommand:
         _ProgressRecorder.instances.clear()
         state_csv = tmp_path / "state.csv"
         state_csv.write_text(
-            "smiles,relation,value\n"
-            "CCO,>=,5.0\n"
-            "c1ccccc1,==,8.1\n"
-            "CCN,,\n"
-            "CCCC,,\n"
+            "smiles,relation,value\nCCO,>=,5.0\nc1ccccc1,==,8.1\nCCN,,\nCCCC,,\n"
         )
         output_csv = tmp_path / "state_out.csv"
         cfg = tmp_path / "config.yaml"
@@ -325,11 +320,19 @@ class TestPlanCommand:
             for update in progress.updated_tasks
             if "description" in update
         ]
-        assert "[yellow]Retraining model — 2 records ([orange1]1 DRC[/orange1], [steel_blue1]1 PS[/steel_blue1])[/yellow]" in descriptions
         assert (
-            "[green]Scoring compounds[/green] - [white]2[/white], "
-            "[magenta]1 PS hits eligible for upgrade[/magenta]"
+            "Retraining model — 2 records ([orange1]1 DRC[/orange1], [steel_blue1]1 PS[/steel_blue1])"
+            in descriptions
+        )
+        assert (
+            "[green]Scoring compounds[/green] - [white]2 unqueried[/white], "
+            "[magenta]1 PS hits[/magenta] eligible for upgrade"
         ) in descriptions
+        # Completion summary should follow simulate's palette; "Wrote" belongs in log only
+        cli_out = _cli_output(result)
+        assert "Plan complete." in cli_out
+        assert " PS" in cli_out and " DRC" in cli_out
+        assert "Wrote:" not in cli_out
         written = pd.read_csv(output_csv)
 
         # Original columns must be preserved
@@ -370,8 +373,7 @@ class TestPlanCommand:
         state_csv.write_text("smiles,relation,value\nCCO,==,6.0\nCCN,,\n")
         cfg = tmp_path / "config.yaml"
         cfg.write_text(
-            _plan_config(input_csv=str(state_csv), output_csv="out.csv")
-            + "model:\n"
+            _plan_config(input_csv=str(state_csv), output_csv="out.csv") + "model:\n"
             "  fast: false\n"
             "trainer:\n"
             "  max_epochs: 1\n"
@@ -402,8 +404,7 @@ class TestPlanCommand:
         state_csv.write_text("smiles,relation,value\nCCO,==,6.0\nCCN,,\n")
         cfg = tmp_path / "config.yaml"
         cfg.write_text(
-            _plan_config(input_csv=str(state_csv), output_csv="out.csv")
-            + "model:\n"
+            _plan_config(input_csv=str(state_csv), output_csv="out.csv") + "model:\n"
             "  fast: false\n"
             "trainer:\n"
             "  max_epochs: 1\n"
@@ -538,10 +539,7 @@ class TestPlanCommand:
     def test_plan_accepts_custom_column_names(self, tmp_path, monkeypatch):
         state_csv = tmp_path / "state.csv"
         state_csv.write_text(
-            "compound,kind,potency\n"
-            "CCO,>=,5.0\n"
-            "c1ccccc1,==,8.1\n"
-            "CCN,,\n"
+            "compound,kind,potency\nCCO,>=,5.0\nc1ccccc1,==,8.1\nCCN,,\n"
         )
         cfg = tmp_path / "config.yaml"
         cfg.write_text(
@@ -614,10 +612,15 @@ class TestPlanCommand:
             if "description" in update
         ]
         assert (
-            "[green]Scoring compounds[/green] - [white]0[/white], "
-            "[magenta]0 PS hits eligible for upgrade[/magenta]"
+            "[green]Scoring compounds[/green] - [white]0 unqueried[/white], "
+            "[magenta]0 PS hits[/magenta] eligible for upgrade"
         ) in descriptions
         assert not any("Retraining model -" in desc for desc in descriptions)
+        # Terminal-only path produces zero recommendations; completion line still renders
+        cli_out = _cli_output(result)
+        assert "Plan complete." in cli_out
+        assert "0 PS" in cli_out and "0 DRC" in cli_out
+        assert "Wrote:" not in cli_out
         written = pd.read_csv(output_csv)
         # No inference targets — skip model training and prediction entirely
         model.refit.assert_not_called()
