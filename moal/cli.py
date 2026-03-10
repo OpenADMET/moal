@@ -27,7 +27,7 @@ from rich.progress import (
 )
 
 from moal.config import PipelineConfig
-from moal.logging_config import suppress_noisy_loggers
+from moal.logging_config import suppress_noisy_loggers, temporary_log_level
 from moal.planning import (
     annotate_campaign_state,
     parse_campaign_state,
@@ -231,103 +231,94 @@ def plan(config: Path, output_dir: Path | None, verbose: bool) -> None:
 
     _console.print("[bold]moal[/bold] plan starting")
     parse_description = "[cyan]Parsing campaign state[/cyan]"
+    warning_message: str | None = None
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[bold]{task.description}"),
-        BarColumn(),
-        TextColumn("{task.percentage:>3.0f}%"),
-        TimeElapsedColumn(),
-        console=_console,
-        transient=False,
-    ) as progress:
-        _console.print(parse_description)
-        task = progress.add_task(parse_description, total=3)
+    with temporary_log_level(logging.WARNING, ["moal"]):
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold]{task.description}"),
+            BarColumn(),
+            TextColumn("{task.percentage:>3.0f}%"),
+            TimeElapsedColumn(),
+            console=_console,
+            transient=False,
+        ) as progress:
+            task = progress.add_task(parse_description, total=3)
 
-        try:
-            state = parse_campaign_state(
-                state_df,
-                cost_ps=cfg.oracle.cost_ps,
-                cost_drc=cfg.oracle.cost_drc,
-                upper_bound=cfg.oracle.upper_bound,
-                preprocessor=preprocessor,
-                smiles_column=cfg.data.plan.smiles_column,
-                relation_column=cfg.data.plan.relation_column,
-                value_column=cfg.data.plan.value_column,
-                is_canonical=cfg.data.plan.is_canonical,
-                expected_ps_threshold=cfg.oracle.ps_threshold,
-            )
-        except ValueError as exc:
-            raise click.ClickException(str(exc)) from exc
-        progress.advance(task)
-
-        if not state.training_records:
-            raise click.ClickException("state CSV did not contain any labeled records.")
-
-        fit_records = training_records_for_refit(state.training_records)
-        acquisition = _build_acquisition(cfg)
-        n_inference = len(state.unqueried_rows) + len(state.ps_upgrade_rows)
-
-        if n_inference == 0:
-            scoring_description = (
-                "[green]Scoring compounds - "
-                f"{len(state.unqueried_rows)}, {len(state.ps_upgrade_rows)} "
-                "PS hits eligible for upgrade[/green]"
-            )
-            progress.update(task, total=2)
-            _console.print(scoring_description)
-            progress.update(task, description=scoring_description)
-            logger.warning(
-                "No inference targets found; all compounds are in a terminal or inactive "
-                "state. Writing state CSV with blank score columns."
-            )
-            annotated_df = annotate_campaign_state(
-                state_df, state, np.empty(0, dtype=np.float32), acquisition
-            )
-            annotated_df.to_csv(plan_path, index=False)
+            try:
+                state = parse_campaign_state(
+                    state_df,
+                    cost_ps=cfg.oracle.cost_ps,
+                    cost_drc=cfg.oracle.cost_drc,
+                    upper_bound=cfg.oracle.upper_bound,
+                    preprocessor=preprocessor,
+                    smiles_column=cfg.data.plan.smiles_column,
+                    relation_column=cfg.data.plan.relation_column,
+                    value_column=cfg.data.plan.value_column,
+                    is_canonical=cfg.data.plan.is_canonical,
+                    expected_ps_threshold=cfg.oracle.ps_threshold,
+                )
+            except ValueError as exc:
+                raise click.ClickException(str(exc)) from exc
             progress.advance(task)
-            logger.info("Annotated state CSV written to %s", plan_path)
-            _console.print(
-                f"[bold green]Plan complete.[/bold green]  "
-                f"[bold]Wrote:[/bold] [bold]{plan_path}[/bold]"
+
+            if not state.training_records:
+                raise click.ClickException("state CSV did not contain any labeled records.")
+
+            fit_records = training_records_for_refit(state.training_records)
+            acquisition = _build_acquisition(cfg)
+            n_inference = len(state.unqueried_rows) + len(state.ps_upgrade_rows)
+
+            scoring_description = (
+                "[green]Scoring compounds[/green] - "
+                f"[white]{len(state.unqueried_rows)}[/white], "
+                f"[magenta]{len(state.ps_upgrade_rows)} PS hits eligible for upgrade[/magenta]"
             )
-            return
 
-        retraining_description = (
-            f"[yellow]Retraining model - {len(fit_records)} records[/yellow]"
-        )
-        _console.print(retraining_description)
-        progress.update(task, description=retraining_description)
-        model = _build_plan_model(cfg)
-        model.refit(
-            records=fit_records,
-            trainer_kwargs=cfg.trainer.to_dict(),
-            datamodule_kwargs=cfg.trainer.to_datamodule_kwargs(),
-            reset_weights=cfg.model.reset_weights_on_refit,
-            output_dir=out_dir,
-        )
-        progress.advance(task)
+            if n_inference == 0:
+                warning_message = (
+                    "No inference targets found; all compounds are in a terminal or inactive "
+                    "state. Writing state CSV with blank score columns."
+                )
+                progress.update(task, total=2, description=scoring_description)
+                annotated_df = annotate_campaign_state(
+                    state_df, state, np.empty(0, dtype=np.float32), acquisition
+                )
+                annotated_df.to_csv(plan_path, index=False)
+                progress.advance(task)
+            else:
+                retraining_description = (
+                    f"[yellow]Retraining model - {len(fit_records)} records[/yellow]"
+                )
+                progress.update(task, description=retraining_description)
+                model = _build_plan_model(cfg)
+                model.refit(
+                    records=fit_records,
+                    trainer_kwargs=cfg.trainer.to_dict(),
+                    datamodule_kwargs=cfg.trainer.to_datamodule_kwargs(),
+                    reset_weights=cfg.model.reset_weights_on_refit,
+                    output_dir=out_dir,
+                )
+                progress.advance(task)
 
-        scoring_description = (
-            "[green]Scoring compounds - "
-            f"{len(state.unqueried_rows)}, {len(state.ps_upgrade_rows)} "
-            "PS hits eligible for upgrade[/green]"
-        )
-        _console.print(scoring_description)
-        progress.update(task, description=scoring_description)
-        inference_smiles = [smi for _, smi in state.unqueried_rows] + [
-            smi for _, smi in state.ps_upgrade_rows
-        ]
-        predictions = model.predict_smiles(inference_smiles)
+                progress.update(task, description=scoring_description)
+                inference_smiles = [smi for _, smi in state.unqueried_rows] + [
+                    smi for _, smi in state.ps_upgrade_rows
+                ]
+                predictions = model.predict_smiles(inference_smiles)
 
-        try:
-            annotated_df = annotate_campaign_state(state_df, state, predictions, acquisition)
-        except ValueError as exc:
-            raise click.ClickException(str(exc)) from exc
+                try:
+                    annotated_df = annotate_campaign_state(
+                        state_df, state, predictions, acquisition
+                    )
+                except ValueError as exc:
+                    raise click.ClickException(str(exc)) from exc
 
-        annotated_df.to_csv(plan_path, index=False)
-        progress.advance(task)
+                annotated_df.to_csv(plan_path, index=False)
+                progress.advance(task)
 
+    if warning_message is not None:
+        logger.warning(warning_message)
     logger.info(
         "Annotated state CSV written to %s "
         "(%d inference targets: %d unqueried, %d PS upgrades)",

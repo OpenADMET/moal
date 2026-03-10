@@ -22,6 +22,39 @@ def _cli_output(result) -> str:
     return f"{result.output}\n{stderr}"
 
 
+class _ProgressRecorder:
+    instances: list["_ProgressRecorder"] = []
+
+    def __init__(self, *args, **kwargs):
+        self.added_tasks: list[dict[str, object]] = []
+        self.updated_tasks: list[dict[str, object]] = []
+        self.advanced_tasks: list[object] = []
+
+    def __enter__(self):
+        type(self).instances.append(self)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def add_task(self, description, total):
+        self.added_tasks.append({"description": description, "total": total})
+        return "task-1"
+
+    def update(self, task, **kwargs):
+        payload = {"task": task}
+        payload.update(kwargs)
+        self.updated_tasks.append(payload)
+
+    def advance(self, task):
+        self.advanced_tasks.append(task)
+
+
+def _latest_progress() -> _ProgressRecorder:
+    assert _ProgressRecorder.instances
+    return _ProgressRecorder.instances[-1]
+
+
 def _simulate_config(
     *,
     input_csv: str = "",
@@ -237,6 +270,7 @@ class TestPlanCommand:
         assert "data.plan.input_csv" in _result_text(result)
 
     def test_plan_writes_annotated_state_csv(self, tmp_path, monkeypatch):
+        _ProgressRecorder.instances.clear()
         state_csv = tmp_path / "state.csv"
         state_csv.write_text(
             "smiles,relation,value\n"
@@ -272,6 +306,7 @@ class TestPlanCommand:
         # unqueried: CCN, CCCC (2); ps upgrade: CCO (1) → 3 total predictions
         model.predict_smiles.return_value = np.array([5.0, 8.0, 6.5], dtype=np.float32)
         monkeypatch.setattr("moal.cli._build_plan_model", lambda cfg: model)
+        monkeypatch.setattr("moal.cli.Progress", _ProgressRecorder)
 
         runner = CliRunner()
         result = runner.invoke(
@@ -281,10 +316,20 @@ class TestPlanCommand:
 
         assert result.exit_code == 0, _result_text(result)
         assert output_csv.exists()
-        cli_output = _cli_output(result)
-        assert "Parsing campaign state" in cli_output
-        assert "Retraining model - 2 records" in cli_output
-        assert "Scoring compounds - 2, 1 PS hits eligible for upgrade" in cli_output
+        progress = _latest_progress()
+        assert progress.added_tasks == [
+            {"description": "[cyan]Parsing campaign state[/cyan]", "total": 3}
+        ]
+        descriptions = [
+            update["description"]
+            for update in progress.updated_tasks
+            if "description" in update
+        ]
+        assert "[yellow]Retraining model - 2 records[/yellow]" in descriptions
+        assert (
+            "[green]Scoring compounds[/green] - [white]2[/white], "
+            "[magenta]1 PS hits eligible for upgrade[/magenta]"
+        ) in descriptions
         written = pd.read_csv(output_csv)
 
         # Original columns must be preserved
@@ -349,6 +394,40 @@ class TestPlanCommand:
 
         assert result.exit_code == 0, _result_text(result)
         suppress_mock.assert_called_once_with()
+
+    def test_plan_suppresses_info_logs_while_progress_is_active(
+        self, tmp_path, monkeypatch
+    ):
+        state_csv = tmp_path / "state.csv"
+        state_csv.write_text("smiles,relation,value\nCCO,==,6.0\nCCN,,\n")
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            _plan_config(input_csv=str(state_csv), output_csv="out.csv")
+            + "model:\n"
+            "  fast: false\n"
+            "trainer:\n"
+            "  max_epochs: 1\n"
+            "dashboard:\n"
+            "  enabled: false\n"
+        )
+
+        model = Mock(spec_set=["refit", "predict_smiles"])
+        model.predict_smiles.return_value = np.array([5.0], dtype=np.float32)
+
+        def noisy_refit(**kwargs):
+            cli.logging.getLogger("moal.model").info("Noisy model log")
+
+        model.refit.side_effect = noisy_refit
+        monkeypatch.setattr("moal.cli._build_plan_model", lambda cfg: model)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["plan", "--config", str(cfg), "--output-dir", str(tmp_path / "out")],
+        )
+
+        assert result.exit_code == 0, _result_text(result)
+        assert "Noisy model log" not in _cli_output(result)
 
     def test_plan_rejects_empty_state_csv_with_no_training_data(self, tmp_path):
         state_csv = tmp_path / "state.csv"
@@ -506,6 +585,7 @@ class TestPlanCommand:
     def test_plan_handles_all_terminal_compounds_writes_nan_scores(
         self, tmp_path, monkeypatch
     ):
+        _ProgressRecorder.instances.clear()
         state_csv = tmp_path / "state.csv"
         state_csv.write_text("smiles,relation,value\nCCO,==,7.2\nCCN,<,5.0\n")
         output_csv = tmp_path / "out.csv"
@@ -517,6 +597,7 @@ class TestPlanCommand:
 
         model = Mock(spec_set=["refit", "predict_smiles"])
         monkeypatch.setattr("moal.cli._build_plan_model", lambda cfg: model)
+        monkeypatch.setattr("moal.cli.Progress", _ProgressRecorder)
 
         runner = CliRunner()
         result = runner.invoke(
@@ -526,10 +607,17 @@ class TestPlanCommand:
 
         assert result.exit_code == 0, _result_text(result)
         assert output_csv.exists()
-        cli_output = _cli_output(result)
-        assert "Parsing campaign state" in cli_output
-        assert "Scoring compounds - 0, 0 PS hits eligible for upgrade" in cli_output
-        assert "Retraining model -" not in cli_output
+        progress = _latest_progress()
+        descriptions = [
+            update["description"]
+            for update in progress.updated_tasks
+            if "description" in update
+        ]
+        assert (
+            "[green]Scoring compounds[/green] - [white]0[/white], "
+            "[magenta]0 PS hits eligible for upgrade[/magenta]"
+        ) in descriptions
+        assert not any("Retraining model -" in desc for desc in descriptions)
         written = pd.read_csv(output_csv)
         # No inference targets — skip model training and prediction entirely
         model.refit.assert_not_called()
