@@ -10,7 +10,7 @@ The explicit subcommands are::
 
 from __future__ import annotations
 
-import importlib
+import importlib.metadata
 import logging
 from pathlib import Path
 from typing import Callable
@@ -77,9 +77,7 @@ def simulate(config: Path, output_dir: Path | None, verbose: bool) -> None:
     out_dir = _prepare_output_dir(cfg, output_dir)
 
     if not cfg.data.simulate.input_csv:
-        raise click.ClickException(
-            "data.simulate.input_csv must be set in the config."
-        )
+        raise click.ClickException("data.simulate.input_csv must be set in the config.")
 
     ground_truth_df = _read_csv(
         Path(cfg.data.simulate.input_csv),
@@ -224,9 +222,7 @@ def plan(config: Path, output_dir: Path | None, verbose: bool) -> None:
     plan_path.parent.mkdir(parents=True, exist_ok=True)
 
     training_df = _read_csv(training_csv, label="data.plan.training.input_csv")
-    candidate_df = _read_csv(
-        candidate_csv, label="data.plan.candidate_pool.input_csv"
-    )
+    candidate_df = _read_csv(candidate_csv, label="data.plan.candidate_pool.input_csv")
 
     preprocessor = SMILESPreprocessor()
     try:
@@ -256,7 +252,9 @@ def plan(config: Path, output_dir: Path | None, verbose: bool) -> None:
 
     fit_records = training_records_for_refit(records)
     if not candidate_smiles:
-        raise click.ClickException("candidate CSV did not contain any candidate SMILES.")
+        raise click.ClickException(
+            "candidate CSV did not contain any candidate SMILES."
+        )
 
     labeled_smiles = {record.canonical_smiles for record in records}
     overlapping = [smiles for smiles in candidate_smiles if smiles in labeled_smiles]
@@ -301,7 +299,9 @@ def _print_banner() -> None:
         with open(banner_path) as handle:
             print(handle.read() + "\n")
     except FileNotFoundError:
-        logger.debug("Banner asset not found at %s; skipping terminal banner.", banner_path)
+        logger.debug(
+            "Banner asset not found at %s; skipping terminal banner.", banner_path
+        )
 
 
 def _print_welcome() -> None:
@@ -346,9 +346,7 @@ def _build_acquisition(cfg: PipelineConfig):
     )
 
 
-def _build_simulation_model(
-    cfg: PipelineConfig, ground_truth: dict[str, float]
-):
+def _build_simulation_model(cfg: PipelineConfig, ground_truth: dict[str, float]):
     from moal.model import ChemPropLightningModule, NoisyOracleModel
 
     if cfg.model.fast:
