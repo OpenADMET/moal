@@ -177,3 +177,4 @@ class TestExampleConfig:
         assert cfg.active_learning_loop.n_iterations == 20
         assert cfg.active_learning_loop.k_per_iteration == 10
         assert cfg.model.fast is False
+        assert cfg.model.reset_weights_on_refit is False

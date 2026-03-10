@@ -176,6 +176,7 @@ def main(config: str, output_dir: str | None, verbose: bool) -> None:
         model_metric=model_metric,
         initial_error=cfg.model.initial_error,
         final_error=cfg.model.final_error,
+        reset_weights_on_refit=cfg.model.reset_weights_on_refit,
         output_dir=out_dir,
     )
 
