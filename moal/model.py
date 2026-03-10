@@ -33,9 +33,7 @@ def download_chemeleon():
     Download CheMeleon checkpoint if not already cached locally.
 
     """
-    logger.info(
-        "Please cite DOI: 10.48550/arXiv.2506.15792 when using CheMeleon in published work"
-    )
+
     ckpt_dir = Path().home() / ".chemprop"
     ckpt_dir.mkdir(exist_ok=True)
     model_path = ckpt_dir / "chemeleon_mp.pt"
@@ -49,6 +47,10 @@ def download_chemeleon():
         )
     else:
         logger.info(f"Loading cached CheMeleon from {model_path}")
+
+    logger.info(
+        "Please cite DOI: 10.48550/arXiv.2506.15792 when using CheMeleon in published work"
+    )
 
 
 class ChemPropLightningModule(L.LightningModule):
@@ -181,7 +183,7 @@ class ChemPropLightningModule(L.LightningModule):
         for p in self._encoder_params():
             p.requires_grad_(True)
         self._encoder_frozen = False
-        logger.info("Encoder unfrozen after warm-up.")
+        logger.debug("Encoder unfrozen after warm-up.")
 
     def on_train_epoch_start(self) -> None:
         if self._encoder_frozen and self.current_epoch >= self.freeze_epochs:
