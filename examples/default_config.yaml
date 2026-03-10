@@ -64,6 +64,7 @@ model:
   w_drc: 1.0                   # Loss weight for DRC (exact) labels
   w_ps: 0.3                    # Loss weight for PS (inequality) labels
   learnable_sigma: false       # If true, sigma is a learned parameter
+  reset_weights_on_refit: false  # If true, reload pretrained weights before each AL refit instead of warm-starting
   fast: false                  # When true, bypass CheMeleon and use a noisy oracle predictor
   initial_error: 1.0           # Fast mode: Starting noise magnitude (pEC50 units) for the error ramp in fast mode
   final_error: 0.5             # Fast mode: Ending noise magnitude for the ramp; set equal to initial_error for constant noise

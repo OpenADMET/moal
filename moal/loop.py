@@ -83,6 +83,10 @@ class ActiveLearningLoop:
         schedule from ``initial_error`` to ``final_error`` is applied over all
         iterations. Set equal to ``initial_error`` for constant noise.
         Default is 0.5.
+    reset_weights_on_refit : bool, optional
+        When True, pass ``reset_weights=True`` to ``model.refit()`` at every
+        active learning iteration. Default is False, which continues
+        fine-tuning from the current model weights.
     output_dir : str or Path, optional
         Directory for Lightning default logs (``lightning_logs/``). Forwarded
         as ``output_dir`` to every ``model.refit()`` call. When None (default),
@@ -103,6 +107,7 @@ class ActiveLearningLoop:
         model_metric: ModelMetric = ModelMetric.MAE,
         initial_error: float = 0.7,
         final_error: float = 0.5,
+        reset_weights_on_refit: bool = False,
         output_dir: str | Path | None = None,
     ) -> None:
         self.oracle = oracle
@@ -117,6 +122,7 @@ class ActiveLearningLoop:
         self.model_metric = model_metric
         self.initial_error = initial_error
         self.final_error = final_error
+        self.reset_weights_on_refit = reset_weights_on_refit
         self.output_dir = output_dir
 
     # ------------------------------------------------------------------
@@ -290,6 +296,7 @@ class ActiveLearningLoop:
                         records=self.oracle.training_records,
                         trainer_kwargs=self.trainer_kwargs,
                         datamodule_kwargs=self.datamodule_kwargs,
+                        reset_weights=self.reset_weights_on_refit,
                         output_dir=self.output_dir,
                     )
 

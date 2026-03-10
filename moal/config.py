@@ -58,6 +58,11 @@ class ModelConfig:
     w_ps: float = 0.3
     learnable_sigma: bool = False
 
+    reset_weights_on_refit: bool = False
+    """When True, reload pretrained CheMeleon weights before each refit.
+    Default is False, which warm-starts each iteration from the current model
+    weights."""
+
     fast: bool = False
     """When True, bypass CheMeleon and use NoisyOracleModel instead.
     No checkpoint is required. Intended for rapid experimentation and testing."""

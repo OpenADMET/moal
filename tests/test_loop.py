@@ -183,6 +183,26 @@ class TestLoopExecution:
         loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
         assert mock_model.refit.call_count == N_ITERATIONS
 
+    def test_reset_weights_flag_forwarded_to_refit(
+        self, oracle, mock_model, acquisition, evaluator
+    ):
+        """The configured refit reset policy must be forwarded to model.refit()."""
+        loop = ActiveLearningLoop(
+            oracle=oracle,
+            model=mock_model,
+            acquisition=acquisition,
+            evaluator=evaluator,
+            reset_weights_on_refit=True,
+        )
+
+        loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
+
+        assert mock_model.refit.call_count == N_ITERATIONS
+        assert all(
+            call.kwargs["reset_weights"] is True
+            for call in mock_model.refit.call_args_list
+        )
+
     def test_predict_smiles_pool_never_grows(self, loop, mock_model):
         """The combined unlabeled + ps-labeled pool sent to predict_smiles must
         be non-increasing across iterations.
