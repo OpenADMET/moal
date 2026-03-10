@@ -56,10 +56,7 @@ moal plan \
   --config examples/default_config.yaml
 ```
 
-`plan` is now config-first just like `simulate`: training/candidate/output CSV
-paths, column names, and canonicalization behavior all live under
-`data.plan` in the YAML file. It does **not** run the active learning loop or
-dashboard; it is a one-shot train-and-rank workflow.
+`plan` does **not** run the active learning loop or dashboard; it is a one-shot train-and-rank workflow.
 
 By default, the training CSV uses these columns, all of which are configurable
 via `data.plan.training.*`:
@@ -105,13 +102,13 @@ oracle:
   activity_threshold: 7.0
 
 model:
-  freeze_epochs: 10
-  lr_encoder: 1.0e-5
+  freeze_epochs: 2
+  lr_encoder: 1.0e-4
   lr_head: 1.0e-3
 
 acquisition:
   ps_threshold: 5.0
-  target_threshold: 7.0
+  target_threshold: 6.5
   tau: 0.5
 
 data:
@@ -127,7 +124,7 @@ data:
 
 active_learning_loop:
   n_iterations: 20
-  k_per_iteration: 10
+  k_per_iteration: 100
 ```
 
 ## Live Dashboard
@@ -170,12 +167,21 @@ The campaign emits a rich progress bar with `n_iterations × 3` discrete steps:
 
 ## Output Files
 
+### `simulate`
+
 | File | Description |
 |---|---|
 | `results/iteration_metrics.csv` | Per-iteration scalar metrics |
 | `results/cumulative_actives_curve.csv` | Cumulative actives vs. cost curve |
 | `results/dashboard_final.png` | Final dashboard snapshot |
 | `results/dashboard_animation.gif` | Campaign dashboard animation |
+| `results/config_used.yaml` | Exact config used for reproducibility |
+
+### `plan`
+
+| File | Description |
+|---|---|
+| `results/acquisition_plan.csv` | Compounds ranked for acquisition |
 | `results/config_used.yaml` | Exact config used for reproducibility |
 
 ## Architecture
