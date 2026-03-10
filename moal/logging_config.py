@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import logging
 import warnings
-from contextlib import contextmanager
 from collections.abc import Iterator
+from contextlib import contextmanager
 
 
 def suppress_noisy_loggers() -> None:

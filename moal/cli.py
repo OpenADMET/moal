@@ -263,7 +263,9 @@ def plan(config: Path, output_dir: Path | None, verbose: bool) -> None:
             progress.advance(task)
 
             if not state.training_records:
-                raise click.ClickException("state CSV did not contain any labeled records.")
+                raise click.ClickException(
+                    "state CSV did not contain any labeled records."
+                )
 
             fit_records = training_records_for_refit(state.training_records)
             acquisition = _build_acquisition(cfg)
@@ -272,7 +274,7 @@ def plan(config: Path, output_dir: Path | None, verbose: bool) -> None:
             scoring_description = (
                 "[green]Scoring compounds[/green] - "
                 f"[white]{len(state.unqueried_rows)}[/white], "
-                f"[magenta]{len(state.ps_upgrade_rows)} PS hits eligible for upgrade[/magenta]"
+                f"[magenta]{len(state.ps_upgrade_rows)} PS hits[/magenta] eligible for upgrade"
             )
 
             if n_inference == 0:
@@ -288,7 +290,7 @@ def plan(config: Path, output_dir: Path | None, verbose: bool) -> None:
                 progress.advance(task)
             else:
                 retraining_description = (
-                    f"[yellow]Retraining model - {len(fit_records)} records[/yellow]"
+                    f"Retraining model - {len(fit_records)} records"
                 )
                 progress.update(task, description=retraining_description)
                 model = _build_plan_model(cfg)

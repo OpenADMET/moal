@@ -277,7 +277,9 @@ class ActiveLearningLoop:
                     # Count cumulative upgrades from the evaluator breakdown so the
                     # refit message is consistent with the metrics that get logged.
                     n_cumulative_upgrades = int(
-                        self.evaluator.fidelity_breakdown(all_labeled).get("upgrades", 0)
+                        self.evaluator.fidelity_breakdown(all_labeled).get(
+                            "upgrades", 0
+                        )
                     )
                     upgrade_suffix = (
                         f", [magenta]{n_cumulative_upgrades} upgrades[/magenta]"
