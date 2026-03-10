@@ -20,19 +20,77 @@ pip install -e .
 ## Quick Start
 
 ```bash
-moal --config examples/default_config.yaml
+moal simulate --config examples/default_config.yaml
 ```
 
 Copy and edit the example config to point at your data:
 
 ```bash
 cp examples/default_config.yaml my_campaign.yaml
-# edit my_campaign.yaml: set data.ground_truth_csv
-moal --config my_campaign.yaml --output-dir results/
+# edit my_campaign.yaml: set data.simulate.input_csv
+moal simulate --config my_campaign.yaml --output-dir results/
 ```
 
 CheMeleon pretrained weights are downloaded automatically from Zenodo on first
 run and cached at `~/.chemprop/chemeleon_mp.pt` for subsequent use.
+
+## Commands
+
+### `simulate`
+
+Runs the full cost-aware active learning loop:
+
+```bash
+moal simulate --config examples/default_config.yaml
+moal simulate --config examples/default_config.yaml --output-dir results/
+moal simulate --config examples/default_config.yaml --verbose
+```
+
+### `plan`
+
+Trains the model on a user-provided mixed-fidelity training set and scores an
+unlabeled candidate pool to produce a ranked acquisition plan:
+
+```bash
+moal plan \
+  --config examples/default_config.yaml
+```
+
+`plan` does **not** run the active learning loop or dashboard; it is a one-shot train-and-rank workflow.
+
+By default, the training CSV uses these columns, all of which are configurable
+via `data.plan.training.*`:
+
+| Column | Meaning |
+|---|---|
+| `smiles` | Compound SMILES |
+| `relation` | One of `<`, `>=`, or `==` |
+| `value` | Exact pEC50 for `==`, or the PS threshold for `<` / `>=` |
+
+`relation` is interpreted as:
+
+- `==` → DRC / exact label
+- `<` → PS / left-censored label
+- `>=` → PS / interval-censored label
+
+The candidate CSV must contain the SMILES column configured by
+`data.plan.candidate_pool.smiles_column` (default: `smiles`).
+
+The exported planning CSV contains exactly these columns, ranked by
+`Overall Score` descending:
+
+- `Rank`
+- `Compound (SMILES)`
+- `Query type`
+- `PS Score`
+- `DRC Score`
+- `Overall Score`
+
+`Query type` is `DRC` when the DRC score is greater than or equal to the PS
+score, otherwise `PS`.
+
+`plan` does not support `model.fast = true`, because offline planning has no
+oracle ground truth for unseen candidate compounds.
 
 The full set of options (with defaults and documentation) is in `examples/default_config.yaml`. A minimal config looks like:
 
@@ -44,22 +102,29 @@ oracle:
   activity_threshold: 7.0
 
 model:
-  freeze_epochs: 10
-  lr_encoder: 1.0e-5
+  freeze_epochs: 2
+  lr_encoder: 1.0e-4
   lr_head: 1.0e-3
 
 acquisition:
   ps_threshold: 5.0
-  target_threshold: 7.0
+  target_threshold: 6.5
   tau: 0.5
 
 data:
-  ground_truth_csv: data/compounds.csv   # columns: smiles, pec50
   output_dir: results/
+  simulate:
+    input_csv: data/compounds.csv   # columns: smiles, pec50
+  plan:
+    output_csv: acquisition_plan.csv
+    training:
+      input_csv: data/train.csv
+    candidate_pool:
+      input_csv: data/candidates.csv
 
 active_learning_loop:
   n_iterations: 20
-  k_per_iteration: 10
+  k_per_iteration: 100
 ```
 
 ## Live Dashboard
@@ -102,6 +167,8 @@ The campaign emits a rich progress bar with `n_iterations × 3` discrete steps:
 
 ## Output Files
 
+### `simulate`
+
 | File | Description |
 |---|---|
 | `results/iteration_metrics.csv` | Per-iteration scalar metrics |
@@ -110,11 +177,18 @@ The campaign emits a rich progress bar with `n_iterations × 3` discrete steps:
 | `results/dashboard_animation.gif` | Campaign dashboard animation |
 | `results/config_used.yaml` | Exact config used for reproducibility |
 
+### `plan`
+
+| File | Description |
+|---|---|
+| `results/acquisition_plan.csv` | Compounds ranked for acquisition |
+| `results/config_used.yaml` | Exact config used for reproducibility |
+
 ## Architecture
 
 ```
 moal/
-├── cli.py              moal entry point (Click command; installed as `moal`)
+├── cli.py              moal CLI group (`simulate`, `plan`; installed as `moal`)
 ├── types.py            QueryType, CensoringType, LabelRecord, LoopResults, IterationResults
 ├── preprocessing.py    SMILESPreprocessor (RDKit canonicalization + salt stripping + isomeric SMILES)
 ├── oracle.py           CostAwareOracle (ground truth wrapper, dedup, cost tracking, pEC50 validation)
@@ -122,6 +196,7 @@ moal/
 ├── dataset.py          MixedFidelityDataset, MixedFidelityDataModule (configurable seed + val_fraction)
 ├── model.py            ChemPropLightningModule (CheMeleon weights, freeze schedule, per-fidelity logging)
 ├── acquisition.py      CostAwareGreedyAcquisition
+├── planning.py         Mixed-fidelity CSV parsing + one-shot acquisition ranking helpers
 ├── loop.py             ActiveLearningLoop (rich progress bar, dashboard wiring)
 ├── evaluation.py       PipelineEvaluator (scaffold split, APD, recall@budget, EF, evaluate_model)
 ├── dashboard.py        LiveDashboard (3-panel matplotlib, live-updating or file-only)
