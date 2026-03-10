@@ -131,6 +131,7 @@ class MixedFidelityDataModule(L.LightningDataModule):
             shuffle=True,
             collate_fn=MixedFidelityDataset.collate_fn,
             num_workers=self.num_workers,
+            persistent_workers=self.num_workers > 0,
             drop_last=False,
         )
 
@@ -143,6 +144,7 @@ class MixedFidelityDataModule(L.LightningDataModule):
             shuffle=False,
             collate_fn=MixedFidelityDataset.collate_fn,
             num_workers=self.num_workers,
+            persistent_workers=self.num_workers > 0,
         )
 
 
