@@ -19,6 +19,7 @@ import click
 import pandas as pd
 
 from moal.config import PipelineConfig
+from moal.logging_config import suppress_noisy_loggers
 from moal.planning import (
     annotate_campaign_state,
     parse_campaign_state,
@@ -201,6 +202,7 @@ def plan(config: Path, output_dir: Path | None, verbose: bool) -> None:
     _configure_logging(verbose)
     _print_banner()
     _print_welcome()
+    suppress_noisy_loggers()
 
     cfg = PipelineConfig.from_yaml(config)
     logger.info("Loaded config from %s", config)

@@ -311,6 +311,36 @@ class TestPlanCommand:
         # inference_smiles = [unqueried...] + [ps_upgrade...]
         model.predict_smiles.assert_called_once_with(["CCN", "CCCC", "CCO"])
 
+    def test_plan_suppresses_noisy_third_party_warnings(self, tmp_path, monkeypatch):
+        state_csv = tmp_path / "state.csv"
+        state_csv.write_text("smiles,relation,value\nCCO,==,6.0\nCCN,,\n")
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            _plan_config(input_csv=str(state_csv), output_csv="out.csv")
+            + "model:\n"
+            "  fast: false\n"
+            "trainer:\n"
+            "  max_epochs: 1\n"
+            "dashboard:\n"
+            "  enabled: false\n"
+        )
+
+        model = Mock(spec_set=["refit", "predict_smiles"])
+        model.predict_smiles.return_value = np.array([5.0], dtype=np.float32)
+        suppress_mock = Mock()
+
+        monkeypatch.setattr("moal.cli._build_plan_model", lambda cfg: model)
+        monkeypatch.setattr("moal.cli.suppress_noisy_loggers", suppress_mock)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["plan", "--config", str(cfg), "--output-dir", str(tmp_path / "out")],
+        )
+
+        assert result.exit_code == 0, _result_text(result)
+        suppress_mock.assert_called_once_with()
+
     def test_plan_rejects_empty_state_csv_with_no_training_data(self, tmp_path):
         state_csv = tmp_path / "state.csv"
         state_csv.write_text("smiles,relation,value\nCCO,,\n")
