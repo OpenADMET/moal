@@ -203,59 +203,39 @@ class SimulationDataConfig:
 
 
 @dataclass(frozen=True)
-class PlanTrainingDataConfig:
-    """Training-set settings for offline plan mode."""
+class PlanDataConfig:
+    """Input/output settings for offline train-and-rank planning."""
 
     input_csv: str = ""
-    """Path to CSV containing labeled mixed-fidelity training records."""
+    """Path to the unified campaign state CSV.
+
+    Expected columns: SMILES, relation (``<``, ``>=``, ``==``, or empty), and
+    value (numeric pEC50 or empty).  Rows with populated relation and value are
+    treated as the labeled training set; rows with both fields empty are treated
+    as unqueried inference targets; PS-INTERVAL rows (``>=``) are treated as
+    both training records and DRC-upgrade inference targets.
+    """
+
+    output_csv: str = "campaign_state.csv"
+    """Destination for the annotated state CSV.
+
+    Relative paths are resolved under ``data.output_dir``.  The output
+    preserves the original columns and appends ``ps_score``, ``drc_score``,
+    ``overall_score``, and ``recommendation`` so the file can be re-ingested
+    in the next iteration.
+    """
 
     smiles_column: str = "smiles"
     """Name of the SMILES column in ``input_csv``."""
 
     relation_column: str = "relation"
-    """Name of the relation column in ``input_csv`` (`<`, `>=`, `==`)."""
+    """Name of the relation column in ``input_csv`` (``<``, ``>=``, ``==``, or empty)."""
 
     value_column: str = "value"
     """Name of the pEC50 / threshold value column in ``input_csv``."""
 
     is_canonical: bool = False
-    """When False (default), training-set SMILES are canonicalized via RDKit
-    before validation and scoring."""
-
-
-@dataclass(frozen=True)
-class PlanCandidatePoolDataConfig:
-    """Candidate-pool settings for offline plan mode."""
-
-    input_csv: str = ""
-    """Path to CSV containing unlabeled candidate compounds."""
-
-    smiles_column: str = "smiles"
-    """Name of the SMILES column in ``input_csv``."""
-
-    is_canonical: bool = False
-    """When False (default), candidate-pool SMILES are canonicalized via RDKit
-    before validation and scoring."""
-
-
-@dataclass(frozen=True)
-class PlanDataConfig:
-    """Input/output settings for offline train-and-rank planning."""
-
-    output_csv: str = "acquisition_plan.csv"
-    """Destination for the ranked acquisition plan CSV.
-
-    Relative paths are resolved under ``data.output_dir`` so both subcommands can
-    be redirected together with ``--output-dir``.
-    """
-
-    training: PlanTrainingDataConfig = field(default_factory=PlanTrainingDataConfig)
-    """Training-set settings used by ``moal plan``."""
-
-    candidate_pool: PlanCandidatePoolDataConfig = field(
-        default_factory=PlanCandidatePoolDataConfig
-    )
-    """Candidate-pool settings used by ``moal plan``."""
+    """When False (default), SMILES are canonicalized via RDKit during parsing."""
 
 
 @dataclass(frozen=True)
@@ -325,17 +305,7 @@ class PipelineConfig:
             data=DataConfig(
                 output_dir=data_raw.get("output_dir", "results"),
                 simulate=SimulationDataConfig(**data_raw.get("simulate", {})),
-                plan=PlanDataConfig(
-                    output_csv=data_raw.get("plan", {}).get(
-                        "output_csv", "acquisition_plan.csv"
-                    ),
-                    training=PlanTrainingDataConfig(
-                        **data_raw.get("plan", {}).get("training", {})
-                    ),
-                    candidate_pool=PlanCandidatePoolDataConfig(
-                        **data_raw.get("plan", {}).get("candidate_pool", {})
-                    ),
-                ),
+                plan=PlanDataConfig(**data_raw.get("plan", {})),
             ),
             active_learning_loop=ActiveLearningLoopConfig(
                 **raw.get("active_learning_loop", {})

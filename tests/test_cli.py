@@ -37,31 +37,23 @@ def _simulate_config(
 
 def _plan_config(
     *,
-    training_input_csv: str = "",
-    candidate_pool_input_csv: str = "",
-    output_csv: str = "acquisition_plan.csv",
-    training_smiles_column: str = "smiles",
-    training_relation_column: str = "relation",
-    training_value_column: str = "value",
-    training_is_canonical: bool = False,
-    candidate_pool_smiles_column: str = "smiles",
-    candidate_pool_is_canonical: bool = False,
+    input_csv: str = "",
+    output_csv: str = "campaign_state.csv",
+    smiles_column: str = "smiles",
+    relation_column: str = "relation",
+    value_column: str = "value",
+    is_canonical: bool = False,
     extra: str = "",
 ) -> str:
     return (
         "data:\n"
         "  plan:\n"
+        f"    input_csv: {input_csv}\n"
         f"    output_csv: {output_csv}\n"
-        "    training:\n"
-        f"      input_csv: {training_input_csv}\n"
-        f"      smiles_column: {training_smiles_column}\n"
-        f"      relation_column: {training_relation_column}\n"
-        f"      value_column: {training_value_column}\n"
-        f"      is_canonical: {'true' if training_is_canonical else 'false'}\n"
-        "    candidate_pool:\n"
-        f"      input_csv: {candidate_pool_input_csv}\n"
-        f"      smiles_column: {candidate_pool_smiles_column}\n"
-        f"      is_canonical: {'true' if candidate_pool_is_canonical else 'false'}\n"
+        f"    smiles_column: {smiles_column}\n"
+        f"    relation_column: {relation_column}\n"
+        f"    value_column: {value_column}\n"
+        f"    is_canonical: {'true' if is_canonical else 'false'}\n"
         + extra
     )
 
@@ -226,22 +218,9 @@ class TestSimulateCommand:
 class TestPlanCommand:
     """Tests for the one-shot acquisition planning subcommand."""
 
-    @pytest.mark.parametrize(
-        ("config_text", "message"),
-        [
-            (
-                _plan_config(candidate_pool_input_csv="candidates.csv"),
-                "data.plan.training.input_csv",
-            ),
-            (
-                _plan_config(training_input_csv="train.csv"),
-                "data.plan.candidate_pool.input_csv",
-            ),
-        ],
-    )
-    def test_plan_requires_configured_input_paths(self, tmp_path, config_text, message):
+    def test_plan_requires_configured_input_path(self, tmp_path):
         cfg = tmp_path / "config.yaml"
-        cfg.write_text(config_text + "model:\n  fast: false\n")
+        cfg.write_text(_plan_config() + "model:\n  fast: false\n")
 
         runner = CliRunner()
         result = runner.invoke(
@@ -250,14 +229,18 @@ class TestPlanCommand:
         )
 
         assert result.exit_code == 1
-        assert message in _result_text(result)
+        assert "data.plan.input_csv" in _result_text(result)
 
-    def test_plan_writes_ranked_csv(self, tmp_path, monkeypatch):
-        training_csv = tmp_path / "training.csv"
-        training_csv.write_text("smiles,relation,value\nCCO,>=,5.0\nc1ccccc1,==,8.1\n")
-        candidate_csv = tmp_path / "candidates.csv"
-        candidate_csv.write_text("smiles\nCCN\nCCCC\n")
-        output_csv = tmp_path / "plan.csv"
+    def test_plan_writes_annotated_state_csv(self, tmp_path, monkeypatch):
+        state_csv = tmp_path / "state.csv"
+        state_csv.write_text(
+            "smiles,relation,value\n"
+            "CCO,>=,5.0\n"
+            "c1ccccc1,==,8.1\n"
+            "CCN,,\n"
+            "CCCC,,\n"
+        )
+        output_csv = tmp_path / "state_out.csv"
         cfg = tmp_path / "config.yaml"
         cfg.write_text(
             "oracle:\n"
@@ -269,8 +252,7 @@ class TestPlanCommand:
             "  target_threshold: 7.0\n"
             "  tau: 0.5\n"
             + _plan_config(
-                training_input_csv=str(training_csv),
-                candidate_pool_input_csv=str(candidate_csv),
+                input_csv=str(state_csv),
                 output_csv=str(output_csv),
             )
             + "model:\n"
@@ -282,43 +264,43 @@ class TestPlanCommand:
         )
 
         model = Mock(spec_set=["refit", "predict_smiles"])
-        model.predict_smiles.return_value = np.array([5.0, 8.0], dtype=np.float32)
+        # unqueried: CCN, CCCC (2); ps upgrade: CCO (1) → 3 total predictions
+        model.predict_smiles.return_value = np.array([5.0, 8.0, 6.5], dtype=np.float32)
         monkeypatch.setattr("moal.cli._build_plan_model", lambda cfg: model)
 
         runner = CliRunner()
         result = runner.invoke(
             main,
-            [
-                "plan",
-                "--config",
-                str(cfg),
-                "--output-dir",
-                str(tmp_path / "out"),
-            ],
+            ["plan", "--config", str(cfg), "--output-dir", str(tmp_path / "out")],
         )
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == 0, _result_text(result)
         assert output_csv.exists()
         written = pd.read_csv(output_csv)
-        # With the pinned acquisition settings above, CCN at y_hat=5.0 has
-        # maximal PS entropy (~0.693) and negligible DRC score, while CCCC at
-        # y_hat=8.0 has a DRC score of sigmoid((8-7)/0.5)/10 (~0.088), so CCN
-        # must rank first as a PS query and CCCC second as a DRC query.
-        assert list(written.columns) == [
-            "Rank",
-            "Compound (SMILES)",
-            "Query type",
-            "PS Score",
-            "DRC Score",
-            "Overall Score",
-        ]
-        assert written["Rank"].tolist() == [1, 2]
-        assert written["Compound (SMILES)"].tolist() == ["CCN", "CCCC"]
-        assert written["Query type"].tolist() == ["PS", "DRC"]
-        assert np.allclose(
-            written["Overall Score"].to_numpy(),
-            np.maximum(written["PS Score"].to_numpy(), written["DRC Score"].to_numpy()),
-        )
+
+        # Original columns must be preserved
+        assert "smiles" in written.columns
+        assert "relation" in written.columns
+        assert "value" in written.columns
+
+        # Four new score columns must be appended
+        for col in ("ps_score", "drc_score", "overall_score", "recommendation"):
+            assert col in written.columns
+
+        # Unqueried rows should have scores; DRC terminal row should be NaN
+        unqueried_mask = written["relation"].isna() | (written["relation"] == "")
+        assert not written.loc[unqueried_mask, "drc_score"].isna().any()
+        drc_terminal_mask = written["relation"] == "=="
+        assert written.loc[drc_terminal_mask, "ps_score"].isna().all()
+        assert written.loc[drc_terminal_mask, "drc_score"].isna().all()
+
+        # PS hit row gets DRC upgrade score but no PS score
+        ps_hit_mask = written["relation"] == ">="
+        assert written.loc[ps_hit_mask, "ps_score"].isna().all()
+        assert not written.loc[ps_hit_mask, "drc_score"].isna().any()
+        assert (written.loc[ps_hit_mask, "recommendation"] == "drc").all()
+
+        # model.refit called with deduplicated PS records (PS hit + DRC terminal)
         model.refit.assert_called_once_with(
             records=ANY,
             trainer_kwargs=ANY,
@@ -326,255 +308,100 @@ class TestPlanCommand:
             reset_weights=False,
             output_dir=tmp_path / "out",
         )
-        fit_records = model.refit.call_args.kwargs["records"]
-        assert len(fit_records) == 2
-        model.predict_smiles.assert_called_once_with(["CCN", "CCCC"])
+        # inference_smiles = [unqueried...] + [ps_upgrade...]
+        model.predict_smiles.assert_called_once_with(["CCN", "CCCC", "CCO"])
 
-    def test_plan_rejects_empty_training_csv(self, tmp_path):
-        training_csv = tmp_path / "training.csv"
-        training_csv.write_text("smiles,relation,value\n")
-        candidate_csv = tmp_path / "candidates.csv"
-        candidate_csv.write_text("smiles\nCCN\n")
+    def test_plan_rejects_empty_state_csv_with_no_training_data(self, tmp_path):
+        state_csv = tmp_path / "state.csv"
+        state_csv.write_text("smiles,relation,value\nCCO,,\n")
         cfg = tmp_path / "config.yaml"
         cfg.write_text(
-            _plan_config(
-                training_input_csv=str(training_csv),
-                candidate_pool_input_csv=str(candidate_csv),
-            )
-            + "model:\n  fast: false\n"
+            _plan_config(input_csv=str(state_csv)) + "model:\n  fast: false\n"
         )
 
         runner = CliRunner()
         result = runner.invoke(
             main,
-            [
-                "plan",
-                "--config",
-                str(cfg),
-                "--output-dir",
-                str(tmp_path / "out"),
-            ],
+            ["plan", "--config", str(cfg), "--output-dir", str(tmp_path / "out")],
         )
 
         assert result.exit_code == 1
-        assert "training CSV did not contain any labeled records" in result.output
+        assert "did not contain any labeled records" in result.output
 
     def test_plan_rejects_fast_mode(self, tmp_path):
-        training_csv = tmp_path / "training.csv"
-        training_csv.write_text("smiles,relation,value\nCCO,==,6.0\n")
-        candidate_csv = tmp_path / "candidates.csv"
-        candidate_csv.write_text("smiles\nCCN\n")
+        state_csv = tmp_path / "state.csv"
+        state_csv.write_text("smiles,relation,value\nCCO,==,6.0\nCCN,,\n")
         cfg = tmp_path / "config.yaml"
         cfg.write_text(
-            _plan_config(
-                training_input_csv=str(training_csv),
-                candidate_pool_input_csv=str(candidate_csv),
-            )
-            + "model:\n  fast: true\n"
+            _plan_config(input_csv=str(state_csv)) + "model:\n  fast: true\n"
         )
 
         runner = CliRunner()
         result = runner.invoke(
             main,
-            [
-                "plan",
-                "--config",
-                str(cfg),
-                "--output-dir",
-                str(tmp_path / "out"),
-            ],
+            ["plan", "--config", str(cfg), "--output-dir", str(tmp_path / "out")],
         )
 
         assert result.exit_code == 1
         assert "does not support model.fast=true" in result.output
 
-    def test_plan_invalid_training_schema_exits_one(self, tmp_path):
-        training_csv = tmp_path / "training.csv"
-        training_csv.write_text("smiles,relation,value\nCCO,??,6.0\n")
-        candidate_csv = tmp_path / "candidates.csv"
-        candidate_csv.write_text("smiles\nCCN\n")
+    def test_plan_invalid_relation_schema_exits_one(self, tmp_path):
+        state_csv = tmp_path / "state.csv"
+        state_csv.write_text("smiles,relation,value\nCCO,??,6.0\n")
         cfg = tmp_path / "config.yaml"
         cfg.write_text(
-            _plan_config(
-                training_input_csv=str(training_csv),
-                candidate_pool_input_csv=str(candidate_csv),
-            )
-            + "dashboard:\n  enabled: false\n"
+            _plan_config(input_csv=str(state_csv)) + "dashboard:\n  enabled: false\n"
         )
 
         runner = CliRunner()
         result = runner.invoke(
             main,
-            [
-                "plan",
-                "--config",
-                str(cfg),
-                "--output-dir",
-                str(tmp_path / "out"),
-            ],
+            ["plan", "--config", str(cfg), "--output-dir", str(tmp_path / "out")],
         )
 
         assert result.exit_code == 1
         assert "relation must be one of" in result.output
 
-    def test_plan_rejects_overlap_between_training_and_candidates(self, tmp_path):
-        training_csv = tmp_path / "training.csv"
-        training_csv.write_text("smiles,relation,value\nCCO,==,6.0\n")
-        candidate_csv = tmp_path / "candidates.csv"
-        candidate_csv.write_text("smiles\nCCO\n")
+    def test_plan_rejects_invalid_smiles(self, tmp_path):
+        state_csv = tmp_path / "state.csv"
+        state_csv.write_text("smiles,relation,value\nCCO,==,6.0\nnot-a-smiles,,\n")
         cfg = tmp_path / "config.yaml"
         cfg.write_text(
-            _plan_config(
-                training_input_csv=str(training_csv),
-                candidate_pool_input_csv=str(candidate_csv),
-            )
-            + "model:\n  fast: false\n"
+            _plan_config(input_csv=str(state_csv)) + "model:\n  fast: false\n"
         )
 
         runner = CliRunner()
         result = runner.invoke(
             main,
-            [
-                "plan",
-                "--config",
-                str(cfg),
-                "--output-dir",
-                str(tmp_path / "out"),
-            ],
+            ["plan", "--config", str(cfg), "--output-dir", str(tmp_path / "out")],
         )
 
         assert result.exit_code == 1
-        assert "already appear in the training set" in result.output
+        assert "invalid SMILES" in result.output
 
-    def test_plan_rejects_empty_candidate_pool(self, tmp_path):
-        training_csv = tmp_path / "training.csv"
-        training_csv.write_text("smiles,relation,value\nCCO,==,6.0\n")
-        candidate_csv = tmp_path / "candidates.csv"
-        candidate_csv.write_text("smiles\n")
+    def test_plan_rejects_unsupported_left_ps_plus_drc_mix(self, tmp_path):
+        state_csv = tmp_path / "state.csv"
+        state_csv.write_text("smiles,relation,value\nCCO,<,5.0\nCCO,==,6.0\n")
         cfg = tmp_path / "config.yaml"
         cfg.write_text(
-            _plan_config(
-                training_input_csv=str(training_csv),
-                candidate_pool_input_csv=str(candidate_csv),
-            )
-            + "model:\n  fast: false\n"
+            _plan_config(input_csv=str(state_csv)) + "model:\n  fast: false\n"
         )
 
         runner = CliRunner()
         result = runner.invoke(
             main,
-            [
-                "plan",
-                "--config",
-                str(cfg),
-                "--output-dir",
-                str(tmp_path / "out"),
-            ],
-        )
-
-        assert result.exit_code == 1
-        assert "candidate CSV did not contain any candidate SMILES" in result.output
-
-    def test_plan_rejects_missing_candidate_smiles_column(self, tmp_path):
-        training_csv = tmp_path / "training.csv"
-        training_csv.write_text("smiles,relation,value\nCCO,==,6.0\n")
-        candidate_csv = tmp_path / "candidates.csv"
-        candidate_csv.write_text("compound\nCCN\n")
-        cfg = tmp_path / "config.yaml"
-        cfg.write_text(
-            _plan_config(
-                training_input_csv=str(training_csv),
-                candidate_pool_input_csv=str(candidate_csv),
-                candidate_pool_smiles_column="smiles",
-            )
-            + "model:\n  fast: false\n"
-        )
-
-        runner = CliRunner()
-        result = runner.invoke(
-            main,
-            [
-                "plan",
-                "--config",
-                str(cfg),
-                "--output-dir",
-                str(tmp_path / "out"),
-            ],
-        )
-
-        assert result.exit_code == 1
-        assert "candidate CSV must contain column 'smiles'" in result.output
-
-    def test_plan_rejects_invalid_candidate_smiles(self, tmp_path):
-        training_csv = tmp_path / "training.csv"
-        training_csv.write_text("smiles,relation,value\nCCO,==,6.0\n")
-        candidate_csv = tmp_path / "candidates.csv"
-        candidate_csv.write_text("smiles\nnot-a-smiles\n")
-        cfg = tmp_path / "config.yaml"
-        cfg.write_text(
-            _plan_config(
-                training_input_csv=str(training_csv),
-                candidate_pool_input_csv=str(candidate_csv),
-            )
-            + "model:\n  fast: false\n"
-        )
-
-        runner = CliRunner()
-        result = runner.invoke(
-            main,
-            [
-                "plan",
-                "--config",
-                str(cfg),
-                "--output-dir",
-                str(tmp_path / "out"),
-            ],
-        )
-
-        assert result.exit_code == 1
-        assert "invalid candidate SMILES" in result.output
-
-    def test_plan_rejects_unsupported_left_ps_plus_drc_training_mix(self, tmp_path):
-        training_csv = tmp_path / "training.csv"
-        training_csv.write_text("smiles,relation,value\nCCO,<,5.0\nCCO,==,6.0\n")
-        candidate_csv = tmp_path / "candidates.csv"
-        candidate_csv.write_text("smiles\nCCN\n")
-        cfg = tmp_path / "config.yaml"
-        cfg.write_text(
-            _plan_config(
-                training_input_csv=str(training_csv),
-                candidate_pool_input_csv=str(candidate_csv),
-            )
-            + "model:\n  fast: false\n"
-        )
-
-        runner = CliRunner()
-        result = runner.invoke(
-            main,
-            [
-                "plan",
-                "--config",
-                str(cfg),
-                "--output-dir",
-                str(tmp_path / "out"),
-            ],
+            ["plan", "--config", str(cfg), "--output-dir", str(tmp_path / "out")],
         )
 
         assert result.exit_code == 1
         assert "mixed-fidelity combination is unsupported in plan mode" in result.output
 
     def test_plan_surfaces_non_finite_prediction_failure(self, tmp_path, monkeypatch):
-        training_csv = tmp_path / "training.csv"
-        training_csv.write_text("smiles,relation,value\nCCO,==,6.0\n")
-        candidate_csv = tmp_path / "candidates.csv"
-        candidate_csv.write_text("smiles\nCCN\n")
+        state_csv = tmp_path / "state.csv"
+        state_csv.write_text("smiles,relation,value\nCCO,==,6.0\nCCN,,\n")
         cfg = tmp_path / "config.yaml"
         cfg.write_text(
-            _plan_config(
-                training_input_csv=str(training_csv),
-                candidate_pool_input_csv=str(candidate_csv),
-            )
-            + "model:\n  fast: false\n"
+            _plan_config(input_csv=str(state_csv)) + "model:\n  fast: false\n"
         )
 
         model = Mock(spec_set=["refit", "predict_smiles"])
@@ -584,37 +411,23 @@ class TestPlanCommand:
         runner = CliRunner()
         result = runner.invoke(
             main,
-            [
-                "plan",
-                "--config",
-                str(cfg),
-                "--output-dir",
-                str(tmp_path / "out"),
-            ],
+            ["plan", "--config", str(cfg), "--output-dir", str(tmp_path / "out")],
         )
 
         assert result.exit_code == 1
         assert "predictions must contain only finite values" in _result_text(result)
 
-    def test_plan_accepts_custom_training_and_candidate_columns(
-        self, tmp_path, monkeypatch
-    ):
-        training_csv = tmp_path / "training.csv"
-        training_csv.write_text("compound,kind,potency\nCCO,>=,5.0\nc1ccccc1,==,8.1\n")
-        candidate_csv = tmp_path / "candidates.csv"
-        candidate_csv.write_text("compound_id\nCCN\nCCCC\n")
+    def test_plan_accepts_custom_column_names(self, tmp_path, monkeypatch):
+        state_csv = tmp_path / "state.csv"
+        state_csv.write_text(
+            "compound,kind,potency\n"
+            "CCO,>=,5.0\n"
+            "c1ccccc1,==,8.1\n"
+            "CCN,,\n"
+        )
         cfg = tmp_path / "config.yaml"
         cfg.write_text(
-            _plan_config(
-                training_input_csv=str(training_csv),
-                candidate_pool_input_csv=str(candidate_csv),
-                output_csv="plan.csv",
-                training_smiles_column="compound",
-                training_relation_column="kind",
-                training_value_column="potency",
-                candidate_pool_smiles_column="compound_id",
-            )
-            + "oracle:\n"
+            "oracle:\n"
             "  cost_ps: 1.0\n"
             "  cost_drc: 10.0\n"
             "  ps_threshold: 5.0\n"
@@ -622,7 +435,14 @@ class TestPlanCommand:
             "  ps_threshold: 5.0\n"
             "  target_threshold: 7.0\n"
             "  tau: 0.5\n"
-            "model:\n"
+            + _plan_config(
+                input_csv=str(state_csv),
+                output_csv="out.csv",
+                smiles_column="compound",
+                relation_column="kind",
+                value_column="potency",
+            )
+            + "model:\n"
             "  fast: false\n"
             "trainer:\n"
             "  max_epochs: 1\n"
@@ -631,7 +451,7 @@ class TestPlanCommand:
         )
 
         model = Mock(spec_set=["refit", "predict_smiles"])
-        model.predict_smiles.return_value = np.array([5.0, 8.0], dtype=np.float32)
+        model.predict_smiles.return_value = np.array([5.0, 6.5], dtype=np.float32)
         monkeypatch.setattr("moal.cli._build_plan_model", lambda cfg: model)
 
         runner = CliRunner()
@@ -640,9 +460,39 @@ class TestPlanCommand:
             ["plan", "--config", str(cfg), "--output-dir", str(tmp_path / "out")],
         )
 
-        assert result.exit_code == 0, result.output
-        assert (tmp_path / "out" / "plan.csv").exists()
-        model.predict_smiles.assert_called_once_with(["CCN", "CCCC"])
+        assert result.exit_code == 0, _result_text(result)
+        # inference_smiles = [CCN (unqueried)] + [CCO (ps upgrade)]
+        model.predict_smiles.assert_called_once_with(["CCN", "CCO"])
+
+    def test_plan_handles_all_terminal_compounds_writes_nan_scores(
+        self, tmp_path, monkeypatch
+    ):
+        state_csv = tmp_path / "state.csv"
+        state_csv.write_text("smiles,relation,value\nCCO,==,7.2\nCCN,<,5.0\n")
+        output_csv = tmp_path / "out.csv"
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            _plan_config(input_csv=str(state_csv), output_csv=str(output_csv))
+            + "model:\n  fast: false\n"
+        )
+
+        model = Mock(spec_set=["refit", "predict_smiles"])
+        monkeypatch.setattr("moal.cli._build_plan_model", lambda cfg: model)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["plan", "--config", str(cfg), "--output-dir", str(tmp_path / "out")],
+        )
+
+        assert result.exit_code == 0, _result_text(result)
+        assert output_csv.exists()
+        written = pd.read_csv(output_csv)
+        # No inference targets — skip model training and prediction entirely
+        model.refit.assert_not_called()
+        model.predict_smiles.assert_not_called()
+        assert written["ps_score"].isna().all()
+        assert written["drc_score"].isna().all()
 
 
 class TestExampleConfig:
@@ -687,6 +537,5 @@ class TestExampleConfig:
         assert cfg.model.fast is True
         assert cfg.model.reset_weights_on_refit is False
         assert cfg.data.simulate.input_csv == ""
-        assert cfg.data.plan.output_csv == "acquisition_plan.csv"
-        assert cfg.data.plan.training.input_csv == ""
-        assert cfg.data.plan.candidate_pool.input_csv == ""
+        assert cfg.data.plan.output_csv == "campaign_state.csv"
+        assert cfg.data.plan.input_csv == ""

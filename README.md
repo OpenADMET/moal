@@ -48,51 +48,49 @@ moal simulate --config examples/default_config.yaml --verbose
 
 ### `plan`
 
-Trains the model on a user-provided mixed-fidelity training set and scores an
-unlabeled candidate pool to produce a ranked acquisition plan:
+Trains the model on labeled records from a unified campaign state CSV and scores
+all inference targets to produce a ranked acquisition recommendation:
 
 ```bash
 moal plan \
   --config examples/default_config.yaml
 ```
 
-`plan` does **not** run the active learning loop or dashboard; it is a one-shot train-and-rank workflow.
+`plan` does **not** run the active learning loop or dashboard; it is a one-shot
+train-and-score workflow designed for iterative real-world campaigns.
 
-By default, the training CSV uses these columns, all of which are configurable
-via `data.plan.training.*`:
+#### Unified state CSV format
 
-| Column | Meaning |
+A single CSV drives both the training set and the inference target list. The
+expected base columns are `smiles`, `relation`, and `value` (all configurable
+via `data.plan.*`):
+
+| `relation` | `value` | Row state | Action |
+|---|---|---|---|
+| empty | empty | Unqueried | Model scores for PS **or** DRC; `recommendation` = `"ps"` or `"drc"` |
+| `<` | numeric | PS miss (inactive) | Training only; score columns are NaN |
+| `>=` | numeric | PS hit | Training **and** DRC-upgrade inference target; `recommendation` = `"drc"` |
+| `==` | numeric | DRC result (terminal) | Training only; score columns are NaN |
+
+#### Output format
+
+`moal plan` **annotates and re-exports the same CSV**, appending four columns:
+
+| Column | Description |
 |---|---|
-| `smiles` | Compound SMILES |
-| `relation` | One of `<`, `>=`, or `==` |
-| `value` | Exact pEC50 for `==`, or the PS threshold for `<` / `>=` |
+| `ps_score` | PS exploration score (`H_binary(p_cross) / cost_PS`); NaN for non-unqueried rows |
+| `drc_score` | DRC exploitation score (`p_active / cost_DRC`); NaN for training-only rows |
+| `overall_score` | `max(ps_score, drc_score)` for unqueried rows; `drc_score` for PS upgrades; NaN otherwise |
+| `recommendation` | `"ps"` or `"drc"` for inference targets; NaN for training-only rows |
 
-`relation` is interpreted as:
-
-- `==` → DRC / exact label
-- `<` → PS / left-censored label
-- `>=` → PS / interval-censored label
-
-The candidate CSV must contain the SMILES column configured by
-`data.plan.candidate_pool.smiles_column` (default: `smiles`).
-
-The exported planning CSV contains exactly these columns, ranked by
-`Overall Score` descending:
-
-- `Rank`
-- `Compound (SMILES)`
-- `Query type`
-- `PS Score`
-- `DRC Score`
-- `Overall Score`
-
-`Query type` is `DRC` when the DRC score is greater than or equal to the PS
-score, otherwise `PS`.
+The annotated file preserves all original columns so it can be **re-ingested
+unmodified** in the next iteration after new experimental results are filled in.
 
 `plan` does not support `model.fast = true`, because offline planning has no
-oracle ground truth for unseen candidate compounds.
+oracle ground truth for unseen compounds.
 
-The full set of options (with defaults and documentation) is in `examples/default_config.yaml`. A minimal config looks like:
+The full set of options (with defaults and documentation) is in
+`examples/default_config.yaml`. A minimal config looks like:
 
 ```yaml
 oracle:
@@ -116,11 +114,8 @@ data:
   simulate:
     input_csv: data/compounds.csv   # columns: smiles, pec50
   plan:
-    output_csv: acquisition_plan.csv
-    training:
-      input_csv: data/train.csv
-    candidate_pool:
-      input_csv: data/candidates.csv
+    input_csv: data/campaign_state.csv   # columns: smiles, relation, value
+    output_csv: campaign_state.csv
 
 active_learning_loop:
   n_iterations: 20
@@ -181,7 +176,7 @@ The campaign emits a rich progress bar with `n_iterations × 3` discrete steps:
 
 | File | Description |
 |---|---|
-| `results/acquisition_plan.csv` | Compounds ranked for acquisition |
+| `results/campaign_state.csv` | Original state CSV annotated with `ps_score`, `drc_score`, `overall_score`, `recommendation` |
 | `results/config_used.yaml` | Exact config used for reproducibility |
 
 ## Architecture

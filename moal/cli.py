@@ -20,9 +20,8 @@ import pandas as pd
 
 from moal.config import PipelineConfig
 from moal.planning import (
-    build_acquisition_plan_dataframe,
-    parse_candidate_smiles,
-    parse_training_records,
+    annotate_campaign_state,
+    parse_campaign_state,
     training_records_for_refit,
 )
 from moal.preprocessing import SMILESPreprocessor
@@ -198,7 +197,7 @@ def simulate(config: Path, output_dir: Path | None, verbose: bool) -> None:
 @main.command()
 @_common_cli_options(required=True)
 def plan(config: Path, output_dir: Path | None, verbose: bool) -> None:
-    """Train on mixed-fidelity records and rank the next acquisition batch."""
+    """Train on mixed-fidelity records and score the next acquisition batch."""
     _configure_logging(verbose)
     _print_banner()
     _print_welcome()
@@ -207,63 +206,53 @@ def plan(config: Path, output_dir: Path | None, verbose: bool) -> None:
     logger.info("Loaded config from %s", config)
 
     out_dir = _prepare_output_dir(cfg, output_dir)
-    if not cfg.data.plan.training.input_csv:
-        raise click.ClickException(
-            "data.plan.training.input_csv must be set in the config."
-        )
-    if not cfg.data.plan.candidate_pool.input_csv:
-        raise click.ClickException(
-            "data.plan.candidate_pool.input_csv must be set in the config."
-        )
+    if not cfg.data.plan.input_csv:
+        raise click.ClickException("data.plan.input_csv must be set in the config.")
 
-    training_csv = Path(cfg.data.plan.training.input_csv)
-    candidate_csv = Path(cfg.data.plan.candidate_pool.input_csv)
+    state_csv = Path(cfg.data.plan.input_csv)
     plan_path = _resolve_plan_output_path(cfg, out_dir)
     plan_path.parent.mkdir(parents=True, exist_ok=True)
 
-    training_df = _read_csv(training_csv, label="data.plan.training.input_csv")
-    candidate_df = _read_csv(candidate_csv, label="data.plan.candidate_pool.input_csv")
+    state_df = _read_csv(state_csv, label="data.plan.input_csv")
 
     preprocessor = SMILESPreprocessor()
     try:
-        records = parse_training_records(
-            training_df,
+        state = parse_campaign_state(
+            state_df,
             cost_ps=cfg.oracle.cost_ps,
             cost_drc=cfg.oracle.cost_drc,
             upper_bound=cfg.oracle.upper_bound,
             preprocessor=preprocessor,
-            smiles_column=cfg.data.plan.training.smiles_column,
-            relation_column=cfg.data.plan.training.relation_column,
-            value_column=cfg.data.plan.training.value_column,
-            is_canonical=cfg.data.plan.training.is_canonical,
+            smiles_column=cfg.data.plan.smiles_column,
+            relation_column=cfg.data.plan.relation_column,
+            value_column=cfg.data.plan.value_column,
+            is_canonical=cfg.data.plan.is_canonical,
             expected_ps_threshold=cfg.oracle.ps_threshold,
-        )
-        candidate_smiles = parse_candidate_smiles(
-            candidate_df,
-            smiles_column=cfg.data.plan.candidate_pool.smiles_column,
-            preprocessor=preprocessor,
-            is_canonical=cfg.data.plan.candidate_pool.is_canonical,
         )
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
 
-    if not records:
-        raise click.ClickException("training CSV did not contain any labeled records.")
+    if not state.training_records:
+        raise click.ClickException("state CSV did not contain any labeled records.")
 
-    fit_records = training_records_for_refit(records)
-    if not candidate_smiles:
-        raise click.ClickException(
-            "candidate CSV did not contain any candidate SMILES."
-        )
+    fit_records = training_records_for_refit(state.training_records)
 
-    labeled_smiles = {record.canonical_smiles for record in records}
-    overlapping = [smiles for smiles in candidate_smiles if smiles in labeled_smiles]
-    if overlapping:
-        example = ", ".join(overlapping[:3])
-        raise click.ClickException(
-            "candidate CSV contains compounds that already appear in the training set; "
-            f"first few overlaps: {example}"
+    import numpy as np
+
+    acquisition = _build_acquisition(cfg)
+    n_inference = len(state.unqueried_rows) + len(state.ps_upgrade_rows)
+
+    if n_inference == 0:
+        logger.warning(
+            "No inference targets found; all compounds are in a terminal or inactive "
+            "state. Writing state CSV with blank score columns."
         )
+        annotated_df = annotate_campaign_state(
+            state_df, state, np.empty(0, dtype=np.float32), acquisition
+        )
+        annotated_df.to_csv(plan_path, index=False)
+        logger.info("Annotated state CSV written to %s", plan_path)
+        return
 
     model = _build_plan_model(cfg)
     model.refit(
@@ -273,16 +262,26 @@ def plan(config: Path, output_dir: Path | None, verbose: bool) -> None:
         reset_weights=cfg.model.reset_weights_on_refit,
         output_dir=out_dir,
     )
-    predictions = model.predict_smiles(candidate_smiles)
 
-    acquisition = _build_acquisition(cfg)
-    plan_df = build_acquisition_plan_dataframe(
-        candidate_smiles=candidate_smiles,
-        predictions=predictions,
-        acquisition=acquisition,
+    inference_smiles = [smi for _, smi in state.unqueried_rows] + [
+        smi for _, smi in state.ps_upgrade_rows
+    ]
+    predictions = model.predict_smiles(inference_smiles)
+
+    try:
+        annotated_df = annotate_campaign_state(state_df, state, predictions, acquisition)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    annotated_df.to_csv(plan_path, index=False)
+    logger.info(
+        "Annotated state CSV written to %s "
+        "(%d inference targets: %d unqueried, %d PS upgrades)",
+        plan_path,
+        n_inference,
+        len(state.unqueried_rows),
+        len(state.ps_upgrade_rows),
     )
-    plan_df.to_csv(plan_path, index=False)
-    logger.info("Acquisition plan written to %s", plan_path)
 
 
 def _configure_logging(verbose: bool) -> None:
