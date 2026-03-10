@@ -17,6 +17,11 @@ def _result_text(result) -> str:
     return f"{result.output}\n{result.exception or ''}"
 
 
+def _cli_output(result) -> str:
+    stderr = getattr(result, "stderr", "")
+    return f"{result.output}\n{stderr}"
+
+
 def _simulate_config(
     *,
     input_csv: str = "",
@@ -276,6 +281,10 @@ class TestPlanCommand:
 
         assert result.exit_code == 0, _result_text(result)
         assert output_csv.exists()
+        cli_output = _cli_output(result)
+        assert "Parsing campaign state" in cli_output
+        assert "Retraining model - 2 records" in cli_output
+        assert "Scoring compounds - 2, 1 PS hits eligible for upgrade" in cli_output
         written = pd.read_csv(output_csv)
 
         # Original columns must be preserved
@@ -517,6 +526,10 @@ class TestPlanCommand:
 
         assert result.exit_code == 0, _result_text(result)
         assert output_csv.exists()
+        cli_output = _cli_output(result)
+        assert "Parsing campaign state" in cli_output
+        assert "Scoring compounds - 0, 0 PS hits eligible for upgrade" in cli_output
+        assert "Retraining model -" not in cli_output
         written = pd.read_csv(output_csv)
         # No inference targets — skip model training and prediction entirely
         model.refit.assert_not_called()
