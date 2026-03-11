@@ -24,6 +24,7 @@ from pathlib import Path
 
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
+from matplotlib.ticker import MaxNLocator
 import plotly.graph_objects as go
 from dash import Dash, Input, Output, dcc, html
 from plotly.subplots import make_subplots
@@ -406,6 +407,7 @@ class LiveDashboard:
         ax1.set_xlabel("Cumulative Cost ($)", fontsize=8)
         ax1.set_ylabel("Actives Found", fontsize=8)
         ax1.set_ylim(bottom=0)
+        ax1.xaxis.set_major_locator(MaxNLocator(integer=True))
 
         # Panel 2: Per-Iteration Cost Breakdown — stacked bars + cumulative cost line
         if iter_nums:
@@ -414,9 +416,13 @@ class LiveDashboard:
             ps_bottoms = [d + u for d, u in zip(iter_drc_new, iter_upgrades)]
             ax2.bar(iter_nums, iter_ps, bottom=ps_bottoms, color=_COLOUR_PS, label="PS")
             ax2_r = ax2.twinx()
-            ax2_r.plot(iter_nums, cum_total_costs, color="#555555", linewidth=1.5, linestyle="--")
-            ax2_r.set_ylabel("")
+            # Scale to thousands so tick values stay compact whole-number integers
+            cum_total_costs_k = [c / 1000 for c in cum_total_costs]
+            ax2_r.plot(iter_nums, cum_total_costs_k, color="#555555", linewidth=1.5, linestyle="--")
+            ax2_r.set_ylabel("Cumulative Cost ($k)", fontsize=8)
             ax2_r.tick_params(axis="y", labelsize=7)
+            ax2_r.yaxis.set_major_locator(MaxNLocator(integer=True))
+            ax2.xaxis.set_major_locator(MaxNLocator(integer=True))
         ax2.set_title("Per-Iteration Cost Breakdown", fontsize=9)
         ax2.set_xlabel("Iteration", fontsize=8)
         ax2.set_ylabel("Iteration Cost ($)", fontsize=8)
@@ -430,6 +436,9 @@ class LiveDashboard:
         ax3.set_title(f"Model Performance ({self._metric_label})", fontsize=9)
         ax3.set_xlabel("Iteration", fontsize=8)
         ax3.set_ylabel(self._metric_label, fontsize=8)
+        # Prefer steps of 1, 2, or 5 × 10^n to avoid close labels collapsing to the same value
+        ax3.yaxis.set_major_locator(MaxNLocator(steps=[1, 2, 5, 10]))
+        ax3.xaxis.set_major_locator(MaxNLocator(integer=True))
 
         # Panel 4: Compound Status — current pool state only (last snapshot)
         categories = ["Unqueried", "PS", "DRC"]
@@ -474,11 +483,13 @@ class LiveDashboard:
         ]
         iter_upgrades = [it["iter_upgrade_cost"] for it in iterations]
         iter_ps = [it["iter_ps_cost"] for it in iterations]
-        cum_total_costs = list(
-            itertools.accumulate(
+        # Scale to thousands so secondary y-axis ticks stay compact whole-number integers
+        cum_total_costs = [
+            c / 1000
+            for c in itertools.accumulate(
                 it["iter_drc_cost"] + it["iter_ps_cost"] for it in iterations
             )
-        )
+        ]
 
         metric_iters = [
             i + 1
@@ -551,14 +562,14 @@ class LiveDashboard:
             col=2,
         )
 
-        # Cumulative cost line on secondary y-axis for panel 2 (trace kept, label suppressed)
+        # Cumulative cost line on secondary y-axis for panel 2 (scaled to $k)
         line_color = "#FFFFFF" if self._theme == "plotly_dark" else "#000000"
         fig.add_trace(
             go.Scatter(
                 x=iter_nums,
                 y=cum_total_costs,
                 mode="lines",
-                name="Cumulative Cost ($)",
+                name="Cumulative Cost ($k)",
                 line=dict(color=line_color, width=2, dash="dot"),
                 showlegend=False,
             ),
@@ -650,18 +661,35 @@ class LiveDashboard:
         fig.update_yaxes(
             title_text="Iteration Cost ($)", secondary_y=False, row=1, col=2
         )
-        fig.update_yaxes(title_text="", secondary_y=True, row=1, col=2, showgrid=False)
-        fig.update_yaxes(title_text=self._metric_label, row=2, col=1)
+        fig.update_yaxes(
+            title_text="Cumulative Cost ($k)",
+            secondary_y=True,
+            row=1,
+            col=2,
+            showgrid=False,
+            # Integer ticks only — avoids fractional $k labels on small campaigns;
+            # nticks is a hint to Plotly's auto-tick algorithm, not a forced count
+            tickformat="d",
+            nticks=6,
+        )
+        fig.update_yaxes(
+            title_text=self._metric_label,
+            row=2,
+            col=1,
+            # Trim trailing zeros without forcing a fixed decimal width, preventing
+            # adjacent ticks from collapsing to the same label (e.g. 0.55 and 0.60 → "0.6")
+            tickformat=".3~g",
+        )
         fig.update_yaxes(
             title_text="Compounds",
             range=[0, 1.05 * max(self.n_compounds, 1)],
             row=2,
             col=2,
         )
-        # X-axis labels
-        fig.update_xaxes(title_text="Cumulative Cost ($)", row=1, col=1)
-        fig.update_xaxes(title_text="Iteration", row=1, col=2)
-        fig.update_xaxes(title_text="Iteration", row=2, col=1)
+        # X-axis labels — integer ticks on all numerical axes to avoid fractional iteration labels
+        fig.update_xaxes(title_text="Cumulative Cost ($)", row=1, col=1, tickformat=",.0f")
+        fig.update_xaxes(title_text="Iteration", row=1, col=2, tickformat="d")
+        fig.update_xaxes(title_text="Iteration", row=2, col=1, tickformat="d")
         fig.update_xaxes(
             title_text="Category",
             categoryorder="array",
