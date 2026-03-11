@@ -532,7 +532,7 @@ class TestSaveHtml:
 
         content = html_path.read_text()
         assert "plotly" in content.lower()
-        # Plotly embeds animation frames via addFrames + animate calls
+        # Play/pause toggle is injected via post_script; Plotly.animate must appear there
         assert "Plotly.animate" in content
 
     def test_html_created_with_no_updates(self, tmp_path):
@@ -582,15 +582,15 @@ class TestBuildFigure:
         db.close()
 
     def test_figure_has_correct_trace_count(self):
-        """A figure built from non-empty iterations must have exactly 8 traces."""
+        """A figure built from non-empty iterations must have exactly 10 traces."""
         db = LiveDashboard(n_iterations=3, n_compounds=20)
         records = _make_records(4)
         db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
         with db._lock:
             iters = list(db._iterations)
         fig = db._build_figure(iters)
-        # 1 actives + 3 cost bars + 1 cum-cost line + 1 metric + 2 status bars = 8
-        assert len(fig.data) == 8
+        # 1 actives + 3 cost bars + 1 cum-cost line + 1 metric + 3 status bars + 1 PS→DRC overlay = 10
+        assert len(fig.data) == 10
         db.close()
 
     def test_no_metric_adds_annotation(self):

@@ -109,3 +109,4 @@ dashboard:
   port: 8050                          # Local port for the Dash server (http://127.0.0.1:8050)
   export_width: 1400                  # Pixel width for kaleido PNG frame export (GIF and static PNG)
   export_height: 800                  # Pixel height for kaleido PNG frame export
+  theme: plotly_dark                  # Plotly template: plotly_dark | plotly | plotly_white | ggplot2 | seaborn | simple_white

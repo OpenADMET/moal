@@ -43,6 +43,48 @@ _COLOUR_MET = "#D62728"       # red
 _COLOUR_UPGRADE = "#9B59B6"   # purple-magenta (PS→DRC upgrades)
 _COLOUR_UNQUERIED = "#888888" # mid-grey
 
+# Best-effort HTML background colours keyed by Plotly template name
+_THEME_BG: dict[str, str] = {
+    "plotly_dark": "#111111",
+    "plotly": "#ffffff",
+    "plotly_white": "#ffffff",
+    "ggplot2": "#e5e5e5",
+    "seaborn": "#eaeaf2",
+    "simple_white": "#ffffff",
+}
+
+# JS injected after Plotly initialisation in the HTML export to provide a single
+# play/pause toggle button; uses querySelector so it avoids {plot_id} substitution issues
+_PLAY_PAUSE_SCRIPT = r"""
+(function() {
+  var gd = document.querySelector('.js-plotly-plot');
+  if (!gd) return;
+  var playing = false;
+  var toolbar = document.createElement('div');
+  toolbar.style.cssText = 'margin:4px 0;padding-left:4px;';
+  var btn = document.createElement('button');
+  btn.innerHTML = '\u25B6 Play';
+  btn.style.cssText = 'padding:5px 14px;font-size:13px;cursor:pointer;background:#555;color:#fff;border:1px solid #888;border-radius:4px;';
+  toolbar.appendChild(btn);
+  gd.insertAdjacentElement('beforebegin', toolbar);
+  gd.on('plotly_animated', function() {
+    playing = false;
+    btn.innerHTML = '\u25B6 Play';
+  });
+  btn.addEventListener('click', function() {
+    if (!playing) {
+      Plotly.animate(gd, null, {frame:{duration:500,redraw:true},fromcurrent:true,transition:{duration:200}});
+      btn.innerHTML = '\u23F8 Pause';
+      playing = true;
+    } else {
+      Plotly.animate(gd, [null], {frame:{duration:0,redraw:false},mode:'immediate',transition:{duration:0}});
+      btn.innerHTML = '\u25B6 Play';
+      playing = false;
+    }
+  });
+})();
+"""
+
 # Axis index constants for the 2×2 subplot with secondary_y on (1,2)
 # Row 1 col 1 → x, y1 | Row 1 col 2 → x2, y2 (primary), y3 (secondary)
 # Row 2 col 1 → x3, y4 | Row 2 col 2 → x4, y5
@@ -72,6 +114,7 @@ class LiveDashboard:
         port: int = 8050,
         export_width: int = 1400,
         export_height: int = 800,
+        theme: str = "plotly_dark",
     ) -> None:
         self.n_iterations = n_iterations
         self.n_compounds = n_compounds
@@ -79,6 +122,7 @@ class LiveDashboard:
         self._port = port
         self._export_width = export_width
         self._export_height = export_height
+        self._theme = theme
         self._lock = threading.Lock()
         # One dict per update() call; consumed by the Dash callback and save_html()
         self._iterations: list[dict] = []
@@ -90,22 +134,26 @@ class LiveDashboard:
         # Silence the Flask/Dash internal logger; warnings surface via moal's logger
         self._app.logger.setLevel(logging.ERROR)
 
+        bg = _THEME_BG.get(theme.lower(), "#ffffff")
+        fg = "#ffffff" if "dark" in theme.lower() else "#000000"
+
         self._app.layout = html.Div(
             [
                 html.H3(
                     "Active Learning Campaign Dashboard",
                     style={
                         "textAlign": "center",
-                        "color": "white",
-                        "backgroundColor": "#111111",
+                        "color": fg,
+                        "backgroundColor": bg,
                         "padding": "12px",
                         "margin": "0",
                     },
                 ),
-                dcc.Graph(id="live-graph", style={"height": "80vh"}),
+                # No fixed height/width — the figure layout dimensions from config control size
+                dcc.Graph(id="live-graph"),
                 dcc.Interval(id="interval-component", interval=1000, n_intervals=0),
             ],
-            style={"backgroundColor": "#111111"},
+            style={"backgroundColor": bg},
         )
 
         @self._app.callback(
@@ -307,7 +355,7 @@ class LiveDashboard:
         """
         animated_fig = self._build_animated_figure()
         animated_fig.update_layout(width=self._export_width, height=self._export_height)
-        animated_fig.write_html(str(path), include_plotlyjs=True)
+        animated_fig.write_html(str(path), include_plotlyjs=True, post_script=_PLAY_PAUSE_SCRIPT)
         logger.info("Animated HTML dashboard saved to %s", path)
 
     def close(self) -> None:
@@ -433,24 +481,23 @@ class LiveDashboard:
             col=1,
         )
 
-        # Panel 4: Compound status — base layer and upgrade overlay
-        categories = ["PS", "DRC", "Unqueried"]
+        # Panel 4: Compound status — one trace per category for individual legend entries
+        for cat_name, y_val, color in [
+            ("PS", last["n_ps_only"], _COLOUR_PS),
+            ("DRC", last["n_drc_new"], _COLOUR_DRC),
+            ("Unqueried", last["n_unqueried"], _COLOUR_UNQUERIED),
+        ]:
+            fig.add_trace(
+                go.Bar(x=[cat_name], y=[y_val], name=cat_name, marker_color=color, legend="legend2"),
+                row=2,
+                col=2,
+            )
+        # PS→DRC upgrade overlay stacked on top of PS and DRC bars
         fig.add_trace(
             go.Bar(
-                x=categories,
-                y=[last["n_ps_only"], last["n_drc_new"], last["n_unqueried"]],
-                name="Compounds",
-                marker_color=[_COLOUR_PS, _COLOUR_DRC, _COLOUR_UNQUERIED],
-                showlegend=False,
-            ),
-            row=2,
-            col=2,
-        )
-        fig.add_trace(
-            go.Bar(
-                x=categories,
+                x=["PS", "DRC", "Unqueried"],
                 y=[last["n_upgrades"], last["n_upgrades"], 0],
-                name="PS→DRC upgrades",
+                name="PS→DRC",
                 marker_color=_COLOUR_UPGRADE,
                 legend="legend2",
             ),
@@ -475,8 +522,9 @@ class LiveDashboard:
         fig.update_layout(
             title_text="Active Learning Campaign Dashboard",
             barmode="stack",
-            template="plotly_dark",
-            height=700,
+            template=self._theme,
+            width=self._export_width,
+            height=self._export_height,
             legend=dict(
                 x=0.57,
                 y=0.98,
@@ -485,6 +533,8 @@ class LiveDashboard:
                 bgcolor="rgba(50,50,50,0.8)",
                 bordercolor="#555555",
                 font=dict(size=10),
+                itemclick=False,
+                itemdoubleclick=False,
             ),
             legend2=dict(
                 x=0.57,
@@ -494,16 +544,27 @@ class LiveDashboard:
                 bgcolor="rgba(50,50,50,0.8)",
                 bordercolor="#555555",
                 font=dict(size=10),
+                itemclick=False,
+                itemdoubleclick=False,
             ),
         )
-        # Y-axes
-        fig.update_yaxes(rangemode="tozero", row=1, col=1)
-        fig.update_yaxes(title_text="Cumulative Cost ($)", secondary_y=True, row=1, col=2)
+        # Y-axes: primary labels and floor; disable secondary gridlines to prevent clashing
+        fig.update_yaxes(rangemode="tozero", title_text="Actives Found", row=1, col=1)
+        fig.update_yaxes(title_text="Iteration Cost ($)", secondary_y=False, row=1, col=2)
+        fig.update_yaxes(title_text="Cumulative Cost ($)", secondary_y=True, row=1, col=2, showgrid=False)
+        fig.update_yaxes(title_text=self._metric_label, row=2, col=1)
+        fig.update_yaxes(title_text="Compounds", row=2, col=2)
         # X-axis labels
         fig.update_xaxes(title_text="Cumulative Cost ($)", row=1, col=1)
         fig.update_xaxes(title_text="Iteration", row=1, col=2)
         fig.update_xaxes(title_text="Iteration", row=2, col=1)
-        fig.update_xaxes(title_text="Category", row=2, col=2)
+        fig.update_xaxes(
+            title_text="Category",
+            categoryorder="array",
+            categoryarray=["PS", "DRC", "Unqueried"],
+            row=2,
+            col=2,
+        )
 
         return fig
 
@@ -558,8 +619,9 @@ class LiveDashboard:
                         "xanchor": "right",
                     },
                     "pad": {"b": 10, "t": 50},
-                    "len": 0.9,
-                    "x": 0.1,
+                    # Full-width slider; play/pause is provided via injected DOM button
+                    "len": 1.0,
+                    "x": 0.0,
                     "y": 0,
                     "steps": steps,
                     # Hide per-step tick labels; the currentvalue readout is sufficient
@@ -567,43 +629,8 @@ class LiveDashboard:
                     "font": {"color": "rgba(0,0,0,0)", "size": 1},
                 }
             ],
-            updatemenus=[
-                {
-                    "type": "buttons",
-                    "showactive": False,
-                    "y": 0,
-                    "x": 0.1,
-                    "xanchor": "right",
-                    "yanchor": "top",
-                    "pad": {"t": 87, "r": 10},
-                    "buttons": [
-                        {
-                            "label": "▶ Play",
-                            "method": "animate",
-                            "args": [
-                                None,
-                                {
-                                    "frame": {"duration": 500, "redraw": True},
-                                    "fromcurrent": True,
-                                    "transition": {"duration": 200},
-                                },
-                            ],
-                        },
-                        {
-                            "label": "⏸ Pause",
-                            "method": "animate",
-                            "args": [
-                                [None],
-                                {
-                                    "frame": {"duration": 0, "redraw": False},
-                                    "mode": "immediate",
-                                    "transition": {"duration": 0},
-                                },
-                            ],
-                        },
-                    ],
-                }
-            ],
+            # No Plotly updatemenus — play/pause toggle is injected via post_script in save_html
+            updatemenus=[],
         )
 
         return animated_fig

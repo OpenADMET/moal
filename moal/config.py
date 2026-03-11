@@ -180,6 +180,11 @@ class DashboardConfig:
     export_height: int = 800
     """Pixel height used when exporting static PNG frames (requires kaleido)."""
 
+    theme: str = "plotly_dark"
+    """Plotly template applied to all figure renders (live browser, HTML, and GIF).
+    Any valid Plotly template name is accepted, e.g. ``plotly``, ``plotly_white``,
+    ``ggplot2``, ``seaborn``, ``simple_white``."""
+
 
 @dataclass(frozen=True)
 class SimulationDataConfig:

@@ -152,6 +152,7 @@ def simulate(config: Path, output_dir: Path | None, verbose: bool) -> None:
             port=cfg.dashboard.port,
             export_width=cfg.dashboard.export_width,
             export_height=cfg.dashboard.export_height,
+            theme=cfg.dashboard.theme,
         )
 
     from moal.evaluation import ModelMetric
