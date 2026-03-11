@@ -558,8 +558,8 @@ class TestSaveHtml:
         db.close()
 
         content = html_path.read_text()
-        # The slider steps are embedded in the Plotly JSON; look for "Iter 4" label
-        assert f'"Iter {n}"' in content
+        # Slider steps use plain numeric labels; verify the final iteration label is present
+        assert f'"{n}"' in content
 
 
 # ---------------------------------------------------------------------------

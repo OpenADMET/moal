@@ -19,6 +19,7 @@ import io
 import itertools
 import logging
 import threading
+import webbrowser
 from pathlib import Path
 
 import plotly.graph_objects as go
@@ -125,7 +126,9 @@ class LiveDashboard:
             )
             self._thread.start()
             self._server_active = True
-            logger.info("Live dashboard available at http://127.0.0.1:%d", port)
+            url = f"http://127.0.0.1:{port}"
+            logger.info("Live dashboard available at %s", url)
+            webbrowser.open(url)
         except OSError as exc:
             logger.warning(
                 "Could not start dashboard server on port %d (%s); "
@@ -303,6 +306,7 @@ class LiveDashboard:
             Destination file path (should end in ``.html``).
         """
         animated_fig = self._build_animated_figure()
+        animated_fig.update_layout(width=self._export_width, height=self._export_height)
         animated_fig.write_html(str(path), include_plotlyjs=True)
         logger.info("Animated HTML dashboard saved to %s", path)
 
@@ -376,6 +380,7 @@ class LiveDashboard:
                 name="Actives",
                 line=dict(color=_COLOUR_ACT, width=2),
                 marker=dict(size=6),
+                showlegend=False,
             ),
             row=1,
             col=1,
@@ -383,17 +388,17 @@ class LiveDashboard:
 
         # Panel 2: Stacked cost bars
         fig.add_trace(
-            go.Bar(x=iter_nums, y=iter_drc_new, name="DRC (new)", marker_color=_COLOUR_DRC),
+            go.Bar(x=iter_nums, y=iter_drc_new, name="DRC (new)", marker_color=_COLOUR_DRC, legend="legend"),
             row=1,
             col=2,
         )
         fig.add_trace(
-            go.Bar(x=iter_nums, y=iter_upgrades, name="PS→DRC", marker_color=_COLOUR_UPGRADE),
+            go.Bar(x=iter_nums, y=iter_upgrades, name="PS→DRC", marker_color=_COLOUR_UPGRADE, legend="legend"),
             row=1,
             col=2,
         )
         fig.add_trace(
-            go.Bar(x=iter_nums, y=iter_ps, name="PS", marker_color=_COLOUR_PS),
+            go.Bar(x=iter_nums, y=iter_ps, name="PS", marker_color=_COLOUR_PS, legend="legend"),
             row=1,
             col=2,
         )
@@ -406,6 +411,7 @@ class LiveDashboard:
                 mode="lines",
                 name="Cumulative Cost ($)",
                 line=dict(color="#FFFFFF", width=1.5, dash="dot"),
+                legend="legend",
             ),
             row=1,
             col=2,
@@ -421,6 +427,7 @@ class LiveDashboard:
                 name=self._metric_label,
                 line=dict(color=_COLOUR_MET, width=2),
                 marker=dict(size=6),
+                showlegend=False,
             ),
             row=2,
             col=1,
@@ -445,7 +452,7 @@ class LiveDashboard:
                 y=[last["n_upgrades"], last["n_upgrades"], 0],
                 name="PS→DRC upgrades",
                 marker_color=_COLOUR_UPGRADE,
-                showlegend=True,
+                legend="legend2",
             ),
             row=2,
             col=2,
@@ -470,9 +477,33 @@ class LiveDashboard:
             barmode="stack",
             template="plotly_dark",
             height=700,
-            legend=dict(orientation="h", yanchor="bottom", y=-0.28, x=0.0),
+            legend=dict(
+                x=0.57,
+                y=0.98,
+                xanchor="left",
+                yanchor="top",
+                bgcolor="rgba(50,50,50,0.8)",
+                bordercolor="#555555",
+                font=dict(size=10),
+            ),
+            legend2=dict(
+                x=0.57,
+                y=0.40,
+                xanchor="left",
+                yanchor="top",
+                bgcolor="rgba(50,50,50,0.8)",
+                bordercolor="#555555",
+                font=dict(size=10),
+            ),
         )
+        # Y-axes
+        fig.update_yaxes(rangemode="tozero", row=1, col=1)
         fig.update_yaxes(title_text="Cumulative Cost ($)", secondary_y=True, row=1, col=2)
+        # X-axis labels
+        fig.update_xaxes(title_text="Cumulative Cost ($)", row=1, col=1)
+        fig.update_xaxes(title_text="Iteration", row=1, col=2)
+        fig.update_xaxes(title_text="Iteration", row=2, col=1)
+        fig.update_xaxes(title_text="Category", row=2, col=2)
 
         return fig
 
@@ -509,7 +540,7 @@ class LiveDashboard:
                         "transition": {"duration": 0},
                     },
                 ],
-                "label": f"Iter {i + 1}",
+                "label": str(i + 1),
                 "method": "animate",
             }
             for i in range(len(iterations))
@@ -531,17 +562,20 @@ class LiveDashboard:
                     "x": 0.1,
                     "y": 0,
                     "steps": steps,
+                    # Hide per-step tick labels; the currentvalue readout is sufficient
+                    "tickcolor": "rgba(0,0,0,0)",
+                    "font": {"color": "rgba(0,0,0,0)", "size": 1},
                 }
             ],
             updatemenus=[
                 {
                     "type": "buttons",
                     "showactive": False,
-                    "y": 1.05,
-                    "x": 0.0,
-                    "xanchor": "left",
+                    "y": 0,
+                    "x": 0.1,
+                    "xanchor": "right",
                     "yanchor": "top",
-                    "pad": {"t": 45, "r": 10},
+                    "pad": {"t": 87, "r": 10},
                     "buttons": [
                         {
                             "label": "▶ Play",
