@@ -17,6 +17,7 @@ from typing import Callable
 
 import click
 import lightning as L
+import numpy as np
 import pandas as pd
 from rich.console import Console
 from rich.progress import (
@@ -27,8 +28,14 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 
+from moal.acquisition import CostAwareGreedyAcquisition
 from moal.config import PipelineConfig
+from moal.dashboard import LiveDashboard
+from moal.evaluation import ModelMetric, PipelineEvaluator, scaffold_split
 from moal.logging_config import suppress_noisy_loggers, temporary_log_level
+from moal.loop import ActiveLearningLoop
+from moal.model import ChemPropLightningModule, NoisyOracleModel
+from moal.oracle import CostAwareOracle
 from moal.planning import (
     annotate_campaign_state,
     parse_campaign_state,
@@ -78,10 +85,6 @@ def simulate(config: Path, output_dir: Path | None, verbose: bool) -> None:
     _print_banner()
     _print_welcome()
 
-    from moal.evaluation import ModelMetric, PipelineEvaluator, scaffold_split
-    from moal.loop import ActiveLearningLoop
-    from moal.oracle import CostAwareOracle
-
     cfg = PipelineConfig.from_yaml(config)
     logger.info("Loaded config from %s", config)
 
@@ -127,8 +130,6 @@ def simulate(config: Path, output_dir: Path | None, verbose: bool) -> None:
         upper_bound=cfg.oracle.upper_bound,
     )
 
-    import numpy as np
-
     all_smiles = oracle.get_unlabeled_smiles()
     test_set = None
     if all_smiles and cfg.data.simulate.test_set_size > 0:
@@ -142,9 +143,6 @@ def simulate(config: Path, output_dir: Path | None, verbose: bool) -> None:
 
     dashboard = None
     if cfg.dashboard.enabled:
-        from moal.dashboard import LiveDashboard
-        from moal.evaluation import ModelMetric
-
         dashboard = LiveDashboard(
             n_iterations=cfg.active_learning_loop.n_iterations,
             n_compounds=len(oracle),
@@ -154,8 +152,6 @@ def simulate(config: Path, output_dir: Path | None, verbose: bool) -> None:
             export_height=cfg.dashboard.export_height,
             theme=cfg.dashboard.theme,
         )
-
-    from moal.evaluation import ModelMetric
 
     loop = ActiveLearningLoop(
         oracle=oracle,
@@ -223,7 +219,6 @@ def plan(config: Path, output_dir: Path | None, verbose: bool) -> None:
     state_df = _read_csv(state_csv, label="data.plan.input_csv")
 
     preprocessor = SMILESPreprocessor()
-    import numpy as np
 
     _console.print("[bold]moal[/bold] plan starting")
     parse_description = "[cyan]Parsing campaign state[/cyan]"
@@ -430,8 +425,6 @@ def _read_csv(path: Path, *, label: str) -> pd.DataFrame:
 
 
 def _build_acquisition(cfg: PipelineConfig):
-    from moal.acquisition import CostAwareGreedyAcquisition
-
     return CostAwareGreedyAcquisition(
         cost_ps=cfg.oracle.cost_ps,
         cost_drc=cfg.oracle.cost_drc,
@@ -442,8 +435,6 @@ def _build_acquisition(cfg: PipelineConfig):
 
 
 def _build_simulation_model(cfg: PipelineConfig, ground_truth: dict[str, float]):
-    from moal.model import ChemPropLightningModule, NoisyOracleModel
-
     if cfg.model.fast:
         logger.info(
             "Fast mode enabled — using NoisyOracleModel with error ramp %.3f → %.3f over %d iterations",
@@ -467,8 +458,6 @@ def _build_simulation_model(cfg: PipelineConfig, ground_truth: dict[str, float])
 
 
 def _build_plan_model(cfg: PipelineConfig):
-    from moal.model import ChemPropLightningModule
-
     if cfg.model.fast:
         raise click.ClickException(
             "moal plan does not support model.fast=true because offline planning "

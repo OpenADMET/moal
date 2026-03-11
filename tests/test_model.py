@@ -14,6 +14,8 @@ import warnings
 import numpy as np
 import pytest
 import torch.nn as nn
+from chemprop.models import MPNN
+from chemprop.nn import BondMessagePassing, MeanAggregation, RegressionFFN
 
 from moal.loss import CensoredRegressionLoss
 from moal.model import ChemPropLightningModule, NoisyOracleModel
@@ -34,9 +36,6 @@ def _patch_chemeleon_download(monkeypatch):
     """
 
     def _fake_build_model(self, ffn_hidden_size, ffn_num_layers):
-        from chemprop.models import MPNN
-        from chemprop.nn import BondMessagePassing, MeanAggregation, RegressionFFN
-
         mp = BondMessagePassing()
         agg = MeanAggregation()
         ffn = RegressionFFN(
@@ -283,9 +282,9 @@ class TestRefit:
             )
 
         assert returned is model
-        assert not any(
-            "transfer_batch_to_device" in str(w.message) for w in caught
-        ), caught
+        assert not any("transfer_batch_to_device" in str(w.message) for w in caught), (
+            caught
+        )
 
 
 # ---------------------------------------------------------------------------

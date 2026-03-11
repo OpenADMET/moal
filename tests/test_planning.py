@@ -10,7 +10,6 @@ import pytest
 
 from moal.acquisition import CostAwareGreedyAcquisition
 from moal.planning import (
-    CampaignState,
     annotate_campaign_state,
     parse_campaign_state,
     training_records_for_refit,
@@ -161,7 +160,11 @@ class TestParseCampaignState:
 
         with pytest.raises(ValueError, match="both be populated or both be empty"):
             parse_campaign_state(
-                df, cost_ps=1.0, cost_drc=10.0, upper_bound=11.0, preprocessor=preprocessor
+                df,
+                cost_ps=1.0,
+                cost_drc=10.0,
+                upper_bound=11.0,
+                preprocessor=preprocessor,
             )
 
     def test_missing_smiles_column_raises(self, preprocessor):
@@ -169,13 +172,19 @@ class TestParseCampaignState:
 
         with pytest.raises(ValueError, match="state CSV must contain column 'smiles'"):
             parse_campaign_state(
-                df, cost_ps=1.0, cost_drc=10.0, upper_bound=11.0, preprocessor=preprocessor
+                df,
+                cost_ps=1.0,
+                cost_drc=10.0,
+                upper_bound=11.0,
+                preprocessor=preprocessor,
             )
 
     def test_threshold_mismatch_raises(self, preprocessor):
         df = _state_df({"smiles": "CCO", "relation": ">=", "value": 4.5})
 
-        with pytest.raises(ValueError, match="does not match config oracle.ps_threshold"):
+        with pytest.raises(
+            ValueError, match="does not match config oracle.ps_threshold"
+        ):
             parse_campaign_state(
                 df,
                 cost_ps=1.0,
@@ -190,7 +199,11 @@ class TestParseCampaignState:
 
         with pytest.raises(ValueError, match="relation must be one of"):
             parse_campaign_state(
-                df, cost_ps=1.0, cost_drc=10.0, upper_bound=11.0, preprocessor=preprocessor
+                df,
+                cost_ps=1.0,
+                cost_drc=10.0,
+                upper_bound=11.0,
+                preprocessor=preprocessor,
             )
 
     def test_invalid_smiles_raises(self, preprocessor):
@@ -198,7 +211,11 @@ class TestParseCampaignState:
 
         with pytest.raises(ValueError, match="invalid SMILES"):
             parse_campaign_state(
-                df, cost_ps=1.0, cost_drc=10.0, upper_bound=11.0, preprocessor=preprocessor
+                df,
+                cost_ps=1.0,
+                cost_drc=10.0,
+                upper_bound=11.0,
+                preprocessor=preprocessor,
             )
 
     def test_left_ps_plus_drc_combination_raises(self, preprocessor):
@@ -207,7 +224,9 @@ class TestParseCampaignState:
             {"smiles": "CCO", "relation": "==", "value": 6.8},
         )
 
-        with pytest.raises(ValueError, match="mixed-fidelity combination is unsupported"):
+        with pytest.raises(
+            ValueError, match="mixed-fidelity combination is unsupported"
+        ):
             parse_campaign_state(
                 df,
                 cost_ps=1.0,
@@ -225,7 +244,11 @@ class TestParseCampaignState:
 
         with pytest.raises(ValueError, match="multiple DRC rows"):
             parse_campaign_state(
-                df, cost_ps=1.0, cost_drc=10.0, upper_bound=11.0, preprocessor=preprocessor
+                df,
+                cost_ps=1.0,
+                cost_drc=10.0,
+                upper_bound=11.0,
+                preprocessor=preprocessor,
             )
 
     def test_multiple_ps_rows_for_same_compound_raises(self, preprocessor):
@@ -252,14 +275,22 @@ class TestParseCampaignState:
 
         with pytest.raises(ValueError, match="appear as both labeled and unqueried"):
             parse_campaign_state(
-                df, cost_ps=1.0, cost_drc=10.0, upper_bound=11.0, preprocessor=preprocessor
+                df,
+                cost_ps=1.0,
+                cost_drc=10.0,
+                upper_bound=11.0,
+                preprocessor=preprocessor,
             )
 
     def test_duplicate_unqueried_rows_are_skipped_with_warning(
         self, preprocessor, caplog
     ):
         df = _state_df(
-            {"smiles": "C(C)O", "relation": "", "value": ""},  # same as CCO after canonicalization
+            {
+                "smiles": "C(C)O",
+                "relation": "",
+                "value": "",
+            },  # same as CCO after canonicalization
             {"smiles": "CCO", "relation": "", "value": ""},
         )
 
@@ -391,7 +422,9 @@ class TestAnnotateCampaignState:
             assert pd.isna(result.at[0, col])
             assert pd.isna(result.at[1, col])
 
-    def test_recommendation_is_ps_when_ps_score_dominates(self, preprocessor, acquisition):
+    def test_recommendation_is_ps_when_ps_score_dominates(
+        self, preprocessor, acquisition
+    ):
         df = _state_df({"smiles": "CCO", "relation": "", "value": ""})
         state = parse_campaign_state(
             df, cost_ps=1.0, cost_drc=10.0, upper_bound=11.0, preprocessor=preprocessor
@@ -447,7 +480,9 @@ class TestAnnotateCampaignState:
             df, cost_ps=1.0, cost_drc=10.0, upper_bound=11.0, preprocessor=preprocessor
         )
 
-        with pytest.raises(ValueError, match="must match the number of inference targets"):
+        with pytest.raises(
+            ValueError, match="must match the number of inference targets"
+        ):
             annotate_campaign_state(
                 df, state, np.array([5.0], dtype=np.float32), acquisition
             )
@@ -475,7 +510,10 @@ class TestAnnotateCampaignState:
             df, state, np.empty(0, dtype=np.float32), acquisition
         )
 
-        assert all(c in result.columns for c in ("ps_score", "drc_score", "overall_score", "recommendation"))
+        assert all(
+            c in result.columns
+            for c in ("ps_score", "drc_score", "overall_score", "recommendation")
+        )
         assert pd.isna(result.at[0, "ps_score"])
 
     def test_original_dataframe_is_not_mutated(self, preprocessor, acquisition):
@@ -484,7 +522,9 @@ class TestAnnotateCampaignState:
             df, cost_ps=1.0, cost_drc=10.0, upper_bound=11.0, preprocessor=preprocessor
         )
 
-        annotate_campaign_state(df, state, np.array([5.0], dtype=np.float32), acquisition)
+        annotate_campaign_state(
+            df, state, np.array([5.0], dtype=np.float32), acquisition
+        )
 
         assert "ps_score" not in df.columns
 
@@ -510,4 +550,3 @@ class TestAnnotateCampaignState:
         assert result.at[0, "drc_score"] == pytest.approx(0.3)
         assert result.at[0, "overall_score"] == pytest.approx(0.7)
         assert result.at[0, "recommendation"] == "ps"
-

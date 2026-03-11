@@ -7,13 +7,12 @@ from typing import Any
 
 import lightning as L
 import torch
+from chemprop.data import BatchMolGraph, MoleculeDatapoint, MoleculeDataset
 from torch.utils.data import DataLoader, Dataset, random_split
 
 from moal.types import LabelRecord
 
 logger = logging.getLogger(__name__)
-
-from chemprop.data import MoleculeDatapoint, MoleculeDataset
 
 
 class MixedFidelityDataset(Dataset):
@@ -54,8 +53,6 @@ class MixedFidelityDataset(Dataset):
         tuple[BatchMolGraph, list[LabelRecord]]
             Batched molecular graph and corresponding label records.
         """
-        from chemprop.data import BatchMolGraph
-
         # Unzip the batch into separate tuples.
         datapoints, records = zip(*batch)
 

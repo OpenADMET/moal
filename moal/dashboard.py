@@ -23,11 +23,13 @@ import threading
 import webbrowser
 from pathlib import Path
 
+import numpy as np
 import plotly.graph_objects as go
 from dash import Dash, Input, Output, dcc, html
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 from matplotlib.ticker import Locator, MaxNLocator
+from PIL import Image
 from plotly.subplots import make_subplots
 from werkzeug.serving import make_server
 
@@ -182,8 +184,6 @@ class _OneDPLocator(Locator):
         return self.tick_values(vmin, vmax)
 
     def tick_values(self, vmin: float, vmax: float) -> list[float]:
-        import numpy as np
-
         span = vmax - vmin
         if span < 1e-12:
             return [round((vmin + vmax) / 2, 10)]
@@ -403,8 +403,6 @@ class LiveDashboard:
             return
 
         try:
-            from PIL import Image
-
             pil_frames = [Image.open(io.BytesIO(b)).convert("RGB") for b in frames]
             palette_frames = [
                 f.convert("P", dither=Image.Dither.NONE) for f in pil_frames

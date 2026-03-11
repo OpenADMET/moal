@@ -19,9 +19,14 @@ import lightning as L
 import numpy as np
 import torch
 import torch.nn as nn
+from chemprop.data import MoleculeDatapoint, MoleculeDataset
+from chemprop.data.dataloader import build_dataloader
+from chemprop.models import MPNN
+from chemprop.nn import BondMessagePassing, MeanAggregation, RegressionFFN
 from torch import Tensor
 from torch.optim import Adam
 
+from moal.dataset import MixedFidelityDataModule
 from moal.loss import CensoredRegressionLoss
 from moal.types import LabelRecord
 
@@ -123,14 +128,6 @@ class ChemPropLightningModule(L.LightningModule):
         ffn_hidden_size: int,
         ffn_num_layers: int,
     ) -> nn.Module:
-        try:
-            from chemprop.models import MPNN
-            from chemprop.nn import BondMessagePassing, MeanAggregation, RegressionFFN
-        except ImportError as exc:  # pragma: no cover
-            raise ImportError(
-                "chemprop>=2.0 is required. Install with: pip install chemprop"
-            ) from exc
-
         # Load message passing from CheMeleon
         chemeleon_weights = self._get_chemeleon_mp()
 
@@ -260,9 +257,6 @@ class ChemPropLightningModule(L.LightningModule):
             Array of shape ``(N,)`` with pEC50 point estimates, aligned with
             ``smiles_list``.
         """
-        from chemprop.data import MoleculeDatapoint, MoleculeDataset
-        from chemprop.data.dataloader import build_dataloader
-
         # Create the full dataset once rather than chunking manually.
         # Note that if using ChemProp v2 you may also need to pass a featurizer to this class.
         dataset = MoleculeDataset([MoleculeDatapoint.from_smi(s) for s in smiles_list])
@@ -337,8 +331,6 @@ class ChemPropLightningModule(L.LightningModule):
         ChemPropLightningModule
             self (for chaining).
         """
-        from moal.dataset import MixedFidelityDataModule
-
         if reset_weights:
             self._build_model()
             self._freeze_encoder()

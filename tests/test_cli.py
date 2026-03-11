@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import ANY, Mock
 
 import numpy as np
 import pandas as pd
 import pytest
+import yaml
 from click.testing import CliRunner
 
 import moal.cli as cli
 from moal.cli import main
+from moal.config import PipelineConfig
 
 
 def _result_text(result) -> str:
@@ -632,10 +635,6 @@ class TestExampleConfig:
     """Tests that the bundled examples/default_config.yaml remains valid."""
 
     def test_example_config_is_valid_yaml_with_required_sections(self):
-        from pathlib import Path
-
-        import yaml
-
         config_path = Path(__file__).parent.parent / "examples" / "default_config.yaml"
         assert config_path.exists(), (
             f"examples/default_config.yaml not found at {config_path}"
@@ -657,10 +656,6 @@ class TestExampleConfig:
             )
 
     def test_example_config_loads_as_pipeline_config(self):
-        from pathlib import Path
-
-        from moal.config import PipelineConfig
-
         config_path = Path(__file__).parent.parent / "examples" / "default_config.yaml"
         cfg = PipelineConfig.from_yaml(config_path)
         assert cfg.oracle.cost_ps == 1.0

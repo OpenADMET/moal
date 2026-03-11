@@ -6,6 +6,7 @@ frozen dataclasses, making configs serializable, inspectable, and hashable.
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -328,7 +329,6 @@ class PipelineConfig:
         path : str or Path
             Destination file path for the serialized YAML.
         """
-        import dataclasses
 
         def _to_dict(obj: Any) -> Any:
             if dataclasses.is_dataclass(obj):

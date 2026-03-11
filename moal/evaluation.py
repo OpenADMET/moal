@@ -9,6 +9,8 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from rdkit import Chem
+from rdkit.Chem.Scaffolds.MurckoScaffold import MurckoScaffoldSmiles
 from scipy import stats
 
 from moal.model import NoisyOracleModel
@@ -36,12 +38,9 @@ def _murcko_scaffold(smiles: str) -> str:
     """Return the Bemis-Murcko scaffold SMILES for a compound, or the original
     SMILES if the scaffold is empty (e.g., acyclic compounds)."""
     try:
-        from rdkit import Chem
-        from rdkit.Chem.Scaffolds.MurckoScaffold import MurckoScaffoldSmiles
-
         scaffold = MurckoScaffoldSmiles(mol=Chem.MolFromSmiles(smiles))
         return scaffold if scaffold else smiles
-    except (ImportError, ValueError, AttributeError) as exc:
+    except (ValueError, AttributeError) as exc:
         logger.warning("Could not compute Murcko scaffold for %r: %s", smiles, exc)
         return smiles
 
