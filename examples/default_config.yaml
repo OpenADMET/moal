@@ -12,7 +12,7 @@
 # --------------------------------------------------------------------------
 data:
   output_dir: results                 # Directory for iteration_metrics.csv, cumulative_actives_curve.csv,
-                                      # dashboard_final.png, dashboard_animation.gif, config_used.yaml,
+                                      # dashboard_animation.gif, dashboard_animation.html, config_used.yaml,
                                       # and relative plan outputs such as acquisition_plan.csv
   simulate:
     input_csv: ""                     # REQUIRED for `moal simulate`: path to CSV containing SMILES and pEC50 values
@@ -104,7 +104,8 @@ trainer:
 # Dashboard
 # --------------------------------------------------------------------------
 dashboard:
-  enabled: true                       # Generate the dashboard
+  enabled: true                       # Run the live Dash server and generate output artifacts
   model_metric: mae                   # Metric displayed in panel 3: mae | rmse | kendall_tau | spearman_r | r2
-  figsize: [12, 8]                    # Figure size in inches [width, height]
-  show: true                          # Set to false for headless/server environments
+  port: 8050                          # Local port for the Dash server (http://127.0.0.1:8050)
+  export_width: 1400                  # Pixel width for kaleido PNG frame export (GIF and static PNG)
+  export_height: 800                  # Pixel height for kaleido PNG frame export

@@ -149,8 +149,9 @@ def simulate(config: Path, output_dir: Path | None, verbose: bool) -> None:
             n_iterations=cfg.active_learning_loop.n_iterations,
             n_compounds=len(oracle),
             model_metric=ModelMetric(cfg.dashboard.model_metric),
-            figsize=cfg.dashboard.figsize,
-            show=cfg.dashboard.show,
+            port=cfg.dashboard.port,
+            export_width=cfg.dashboard.export_width,
+            export_height=cfg.dashboard.export_height,
         )
 
     from moal.evaluation import ModelMetric
@@ -178,12 +179,13 @@ def simulate(config: Path, output_dir: Path | None, verbose: bool) -> None:
     )
 
     if dashboard is not None:
-        final_path = out_dir / "dashboard_final.png"
-        dashboard.save(final_path)
-        logger.info("Final dashboard saved to %s", final_path)
-
         gif_path = out_dir / "dashboard_animation.gif"
         dashboard.save_gif(gif_path)
+
+        html_path = out_dir / "dashboard_animation.html"
+        dashboard.save_html(html_path)
+        logger.info("Animated HTML dashboard saved to %s", html_path)
+
         dashboard.close()
 
     metrics_df = pd.DataFrame([r.metrics for r in results.iterations])
