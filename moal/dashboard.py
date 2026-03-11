@@ -36,12 +36,12 @@ logger = logging.getLogger(__name__)
 logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
 # Colour palette (kept consistent with previous terminal palette)
-_COLOUR_DRC = "#E07B39"       # orange
-_COLOUR_PS = "#4C9BE8"        # blue
-_COLOUR_ACT = "#2CA02C"       # green
-_COLOUR_MET = "#D62728"       # red
-_COLOUR_UPGRADE = "#9B59B6"   # purple-magenta (PS→DRC upgrades)
-_COLOUR_UNQUERIED = "#888888" # mid-grey
+_COLOUR_DRC = "#E07B39"  # orange
+_COLOUR_PS = "#4C9BE8"  # blue
+_COLOUR_ACT = "#2CA02C"  # green
+_COLOUR_MET = "#D62728"  # red
+_COLOUR_UPGRADE = "#9B59B6"  # purple-magenta (PS→DRC upgrades)
+_COLOUR_UNQUERIED = "#888888"  # mid-grey
 
 # Best-effort HTML background colours keyed by Plotly template name
 _THEME_BG: dict[str, str] = {
@@ -271,7 +271,13 @@ class LiveDashboard:
             with self._lock:
                 iterations = list(self._iterations)
             fig = self._build_figure(iterations)
-            pio.write_image(fig, str(path), format="png", width=self._export_width, height=self._export_height)
+            pio.write_image(
+                fig,
+                str(path),
+                format="png",
+                width=self._export_width,
+                height=self._export_height,
+            )
             logger.info("Static dashboard PNG saved to %s", path)
         except Exception as exc:
             logger.warning("Could not save static dashboard PNG: %s", exc)
@@ -311,7 +317,10 @@ class LiveDashboard:
             for i, _ in enumerate(iterations):
                 fig = self._build_figure(iterations[: i + 1])
                 png = pio.to_image(
-                    fig, format="png", width=self._export_width, height=self._export_height
+                    fig,
+                    format="png",
+                    width=self._export_width,
+                    height=self._export_height,
                 )
                 frame_bytes.append(png)
 
@@ -355,7 +364,9 @@ class LiveDashboard:
         """
         animated_fig = self._build_animated_figure()
         animated_fig.update_layout(width=self._export_width, height=self._export_height)
-        animated_fig.write_html(str(path), include_plotlyjs=True, post_script=_PLAY_PAUSE_SCRIPT)
+        animated_fig.write_html(
+            str(path), include_plotlyjs=True, post_script=_PLAY_PAUSE_SCRIPT
+        )
         logger.info("Animated HTML dashboard saved to %s", path)
 
     def close(self) -> None:
@@ -391,7 +402,9 @@ class LiveDashboard:
         cum_costs = [it["cum_cost"] for it in iterations]
         cum_actives = [it["cum_actives"] for it in iterations]
         iter_nums = list(range(1, len(iterations) + 1))
-        iter_drc_new = [it["iter_drc_cost"] - it["iter_upgrade_cost"] for it in iterations]
+        iter_drc_new = [
+            it["iter_drc_cost"] - it["iter_upgrade_cost"] for it in iterations
+        ]
         iter_upgrades = [it["iter_upgrade_cost"] for it in iterations]
         iter_ps = [it["iter_ps_cost"] for it in iterations]
         cum_total_costs = list(
@@ -401,7 +414,9 @@ class LiveDashboard:
         )
 
         metric_iters = [
-            i + 1 for i, it in enumerate(iterations) if it["model_metric_value"] is not None
+            i + 1
+            for i, it in enumerate(iterations)
+            if it["model_metric_value"] is not None
         ]
         metric_vals = [
             it["model_metric_value"]
@@ -434,24 +449,42 @@ class LiveDashboard:
             col=1,
         )
 
-        # Panel 2: Stacked cost bars
+        # Panel 2: Stacked cost bars — legend entries suppressed; panel 4 owns all legend items
         fig.add_trace(
-            go.Bar(x=iter_nums, y=iter_drc_new, name="DRC (new)", marker_color=_COLOUR_DRC, legend="legend"),
+            go.Bar(
+                x=iter_nums,
+                y=iter_drc_new,
+                name="DRC",
+                marker_color=_COLOUR_DRC,
+                showlegend=False,
+            ),
             row=1,
             col=2,
         )
         fig.add_trace(
-            go.Bar(x=iter_nums, y=iter_upgrades, name="PS→DRC", marker_color=_COLOUR_UPGRADE, legend="legend"),
+            go.Bar(
+                x=iter_nums,
+                y=iter_upgrades,
+                name="PS→DRC",
+                marker_color=_COLOUR_UPGRADE,
+                showlegend=False,
+            ),
             row=1,
             col=2,
         )
         fig.add_trace(
-            go.Bar(x=iter_nums, y=iter_ps, name="PS", marker_color=_COLOUR_PS, legend="legend"),
+            go.Bar(
+                x=iter_nums,
+                y=iter_ps,
+                name="PS",
+                marker_color=_COLOUR_PS,
+                showlegend=False,
+            ),
             row=1,
             col=2,
         )
 
-        # Cumulative cost line on secondary y-axis for panel 2
+        # Cumulative cost line on secondary y-axis for panel 2 (trace kept, label suppressed)
         fig.add_trace(
             go.Scatter(
                 x=iter_nums,
@@ -459,7 +492,7 @@ class LiveDashboard:
                 mode="lines",
                 name="Cumulative Cost ($)",
                 line=dict(color="#FFFFFF", width=1.5, dash="dot"),
-                legend="legend",
+                showlegend=False,
             ),
             row=1,
             col=2,
@@ -481,14 +514,20 @@ class LiveDashboard:
             col=1,
         )
 
-        # Panel 4: Compound status — one trace per category for individual legend entries
-        for cat_name, y_val, color in [
-            ("PS", last["n_ps_only"], _COLOUR_PS),
-            ("DRC", last["n_drc_new"], _COLOUR_DRC),
-            ("Unqueried", last["n_unqueried"], _COLOUR_UNQUERIED),
+        # Panel 4: Compound status — source of truth for the unified legend (canonical order via legendrank)
+        for cat_name, y_val, color, rank in [
+            ("Unqueried", last["n_unqueried"], _COLOUR_UNQUERIED, 4),
+            ("PS", last["n_ps_only"], _COLOUR_PS, 3),
+            ("DRC", last["n_drc_new"], _COLOUR_DRC, 1),
         ]:
             fig.add_trace(
-                go.Bar(x=[cat_name], y=[y_val], name=cat_name, marker_color=color, legend="legend2"),
+                go.Bar(
+                    x=[cat_name],
+                    y=[y_val],
+                    name=cat_name,
+                    marker_color=color,
+                    legendrank=rank,
+                ),
                 row=2,
                 col=2,
             )
@@ -499,7 +538,7 @@ class LiveDashboard:
                 y=[last["n_upgrades"], last["n_upgrades"], 0],
                 name="PS→DRC",
                 marker_color=_COLOUR_UPGRADE,
-                legend="legend2",
+                legendrank=2,
             ),
             row=2,
             col=2,
@@ -526,23 +565,13 @@ class LiveDashboard:
             width=self._export_width,
             height=self._export_height,
             legend=dict(
-                x=0.57,
-                y=0.98,
-                xanchor="left",
-                yanchor="top",
-                bgcolor="rgba(50,50,50,0.8)",
-                bordercolor="#555555",
-                font=dict(size=10),
-                itemclick=False,
-                itemdoubleclick=False,
-            ),
-            legend2=dict(
-                x=0.57,
-                y=0.40,
-                xanchor="left",
-                yanchor="top",
-                bgcolor="rgba(50,50,50,0.8)",
-                bordercolor="#555555",
+                orientation="h",
+                x=0.98,
+                y=1.05,
+                xanchor="right",
+                yanchor="bottom",
+                bgcolor="rgba(0,0,0,0)",
+                bordercolor="rgba(0,0,0,0)",
                 font=dict(size=10),
                 itemclick=False,
                 itemdoubleclick=False,
@@ -550,10 +579,17 @@ class LiveDashboard:
         )
         # Y-axes: primary labels and floor; disable secondary gridlines to prevent clashing
         fig.update_yaxes(rangemode="tozero", title_text="Actives Found", row=1, col=1)
-        fig.update_yaxes(title_text="Iteration Cost ($)", secondary_y=False, row=1, col=2)
-        fig.update_yaxes(title_text="Cumulative Cost ($)", secondary_y=True, row=1, col=2, showgrid=False)
+        fig.update_yaxes(
+            title_text="Iteration Cost ($)", secondary_y=False, row=1, col=2
+        )
+        fig.update_yaxes(title_text="", secondary_y=True, row=1, col=2, showgrid=False)
         fig.update_yaxes(title_text=self._metric_label, row=2, col=1)
-        fig.update_yaxes(title_text="Compounds", row=2, col=2)
+        fig.update_yaxes(
+            title_text="Compounds",
+            range=[0, 1.05 * max(self.n_compounds, 1)],
+            row=2,
+            col=2,
+        )
         # X-axis labels
         fig.update_xaxes(title_text="Cumulative Cost ($)", row=1, col=1)
         fig.update_xaxes(title_text="Iteration", row=1, col=2)
@@ -561,7 +597,7 @@ class LiveDashboard:
         fig.update_xaxes(
             title_text="Category",
             categoryorder="array",
-            categoryarray=["PS", "DRC", "Unqueried"],
+            categoryarray=["Unqueried", "PS", "DRC"],
             row=2,
             col=2,
         )

@@ -137,7 +137,9 @@ class TestDashboardInit:
 
         monkeypatch.setattr(
             "moal.dashboard.make_server",
-            lambda *a, **kw: (_ for _ in ()).throw(OSError(48, "Address already in use")),
+            lambda *a, **kw: (_ for _ in ()).throw(
+                OSError(48, "Address already in use")
+            ),
         )
         with caplog.at_level(logging.WARNING, logger="moal.dashboard"):
             db = LiveDashboard(n_iterations=3, n_compounds=20, port=8050)
@@ -209,8 +211,20 @@ class TestDashboardUpdate:
         """model_metric_value must be stored as supplied, including None."""
         db = LiveDashboard(n_iterations=3, n_compounds=20)
         records = _make_records(4)
-        db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0, model_metric_value=None)
-        db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0, model_metric_value=0.75)
+        db.update(
+            records,
+            activity_threshold=7.0,
+            iter_drc_cost=5.0,
+            iter_ps_cost=1.0,
+            model_metric_value=None,
+        )
+        db.update(
+            records,
+            activity_threshold=7.0,
+            iter_drc_cost=5.0,
+            iter_ps_cost=1.0,
+            model_metric_value=0.75,
+        )
         assert db._iterations[0]["model_metric_value"] is None
         assert db._iterations[1]["model_metric_value"] == pytest.approx(0.75)
         db.close()
@@ -317,9 +331,13 @@ class TestCompoundStatusPanel:
 
         snap = db._iterations[-1]
         assert snap["n_ps_only"] == 1, f"Expected n_ps_only=1, got {snap['n_ps_only']}"
-        assert snap["n_upgrades"] == 1, f"Expected n_upgrades=1, got {snap['n_upgrades']}"
+        assert snap["n_upgrades"] == 1, (
+            f"Expected n_upgrades=1, got {snap['n_upgrades']}"
+        )
         assert snap["n_drc_new"] == 1, f"Expected n_drc_new=1, got {snap['n_drc_new']}"
-        assert snap["n_unqueried"] == 7, f"Expected n_unqueried=7, got {snap['n_unqueried']}"
+        assert snap["n_unqueried"] == 7, (
+            f"Expected n_unqueried=7, got {snap['n_unqueried']}"
+        )
         db.close()
 
     def test_empty_records_does_not_raise(self):
@@ -352,9 +370,12 @@ class TestFrameCapture:
 
         def _counting_png(*_a, **_kw):
             from PIL import Image
+
             shade = (call_count[0] * 60 + 20) % 256
             buf = io.BytesIO()
-            Image.new("RGB", (4, 4), color=(shade, shade, shade)).save(buf, format="PNG")
+            Image.new("RGB", (4, 4), color=(shade, shade, shade)).save(
+                buf, format="PNG"
+            )
             call_count[0] += 1
             return buf.getvalue()
 
@@ -362,7 +383,9 @@ class TestFrameCapture:
         db = LiveDashboard(n_iterations=3, n_compounds=20)
         records = _make_records(4)
         for _ in range(3):
-            db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
+            db.update(
+                records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0
+            )
         db.save_gif(tmp_path / "out.gif")
         db.close()
 
@@ -375,6 +398,7 @@ class TestFrameCapture:
         def _tracking_mock(*a, **kw):
             call_count[0] += 1
             from PIL import Image
+
             buf = io.BytesIO()
             Image.new("RGB", (4, 4)).save(buf, format="PNG")
             return buf.getvalue()
@@ -383,7 +407,9 @@ class TestFrameCapture:
         db = LiveDashboard(n_iterations=3, n_compounds=20)
         records = _make_records(4)
         for _ in range(3):
-            db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
+            db.update(
+                records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0
+            )
         db.close()
         assert call_count[0] == 0
 
@@ -392,7 +418,8 @@ class TestFrameCapture:
         import logging
 
         monkeypatch.setattr(
-            "plotly.io.to_image", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("no kaleido"))
+            "plotly.io.to_image",
+            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("no kaleido")),
         )
         db = LiveDashboard(n_iterations=2, n_compounds=20)
         records = _make_records(4)
@@ -426,7 +453,9 @@ class TestSaveGif:
         db = LiveDashboard(n_iterations=3, n_compounds=20)
         records = _make_records(4)
         for _ in range(3):
-            db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
+            db.update(
+                records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0
+            )
 
         gif_path = tmp_path / "animation.gif"
         db.save_gif(gif_path)
@@ -459,7 +488,9 @@ class TestSaveGif:
         db = LiveDashboard(n_iterations=3, n_compounds=20)
         records = _make_records(4)
         for _ in range(3):
-            db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
+            db.update(
+                records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0
+            )
 
         gif_path = tmp_path / "animation.gif"
         db.save_gif(gif_path, frame_duration_ms=500, last_frame_duration_ms=5000)
@@ -524,7 +555,9 @@ class TestSaveHtml:
         db = LiveDashboard(n_iterations=2, n_compounds=20)
         records = _make_records(4)
         for _ in range(2):
-            db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
+            db.update(
+                records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0
+            )
 
         html_path = tmp_path / "dashboard.html"
         db.save_html(html_path)
@@ -547,13 +580,14 @@ class TestSaveHtml:
 
     def test_html_slider_steps_match_iteration_count(self, tmp_path):
         """The slider step count embedded in the HTML must match the update count."""
-        import json, re
 
         n = 4
         db = LiveDashboard(n_iterations=n, n_compounds=20)
         records = _make_records(4)
         for i in range(n):
-            db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
+            db.update(
+                records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0
+            )
 
         html_path = tmp_path / "dashboard.html"
         db.save_html(html_path)
@@ -598,7 +632,11 @@ class TestBuildFigure:
         db = LiveDashboard(n_iterations=3, n_compounds=20)
         records = _make_records(4)
         db.update(
-            records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0, model_metric_value=None
+            records,
+            activity_threshold=7.0,
+            iter_drc_cost=5.0,
+            iter_ps_cost=1.0,
+            model_metric_value=None,
         )
         with db._lock:
             iters = list(db._iterations)
@@ -614,14 +652,19 @@ class TestBuildFigure:
         def _mock_to_image(*_a, **kw):
             captured_kwargs.append(kw)
             from PIL import Image
+
             buf = io.BytesIO()
             shade = len(captured_kwargs) * 60 % 256
-            Image.new("RGB", (4, 4), color=(shade, shade, shade)).save(buf, format="PNG")
+            Image.new("RGB", (4, 4), color=(shade, shade, shade)).save(
+                buf, format="PNG"
+            )
             return buf.getvalue()
 
         monkeypatch.setattr("plotly.io.to_image", _mock_to_image)
 
-        db = LiveDashboard(n_iterations=2, n_compounds=10, export_width=640, export_height=480)
+        db = LiveDashboard(
+            n_iterations=2, n_compounds=10, export_width=640, export_height=480
+        )
         records = _make_records(2)
         db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
         db.save_gif(tmp_path / "out.gif")
@@ -630,4 +673,3 @@ class TestBuildFigure:
         assert len(captured_kwargs) == 1
         assert captured_kwargs[0]["width"] == 640
         assert captured_kwargs[0]["height"] == 480
-
