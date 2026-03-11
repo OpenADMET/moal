@@ -67,6 +67,7 @@ _PLAY_PAUSE_SCRIPT = r"""
   var gd = document.querySelector('.js-plotly-plot');
   if (!gd) return;
   var playing = false;
+  var playToken = 0;
   var toolbar = document.createElement('div');
   toolbar.style.cssText = 'margin:4px 0;padding-left:4px;';
   var btn = document.createElement('button');
@@ -74,21 +75,81 @@ _PLAY_PAUSE_SCRIPT = r"""
   btn.style.cssText = 'padding:5px 14px;font-size:13px;cursor:pointer;background:#555;color:#fff;border:1px solid #888;border-radius:4px;';
   toolbar.appendChild(btn);
   gd.insertAdjacentElement('beforebegin', toolbar);
-  gd.on('plotly_animated', function() {
-    playing = false;
-    btn.innerHTML = '\u25B6 Play';
-  });
+
+  function setPlaying(isPlaying) {
+    playing = isPlaying;
+    btn.innerHTML = isPlaying ? '\u23F8 Pause' : '\u25B6 Play';
+  }
+
+  function getFrameNames() {
+    var frames = (gd._transitionData && gd._transitionData._frames) || [];
+    return frames.map(function(frame) { return frame.name; }).filter(Boolean);
+  }
+
+  function getStartIndex(frameNames) {
+    var sliders = gd._fullLayout && gd._fullLayout.sliders;
+    var active = sliders && sliders.length ? sliders[0].active : 0;
+    if (typeof active !== 'number' || !isFinite(active) || active < 0) {
+      return 0;
+    }
+    if (active >= frameNames.length - 1) {
+      return 0;
+    }
+    return active;
+  }
+
+  function stopAnimation() {
+    playToken += 1;
+    setPlaying(false);
+    return Plotly.animate(gd, [null], {
+      mode: 'immediate',
+      frame: {duration: 0, redraw: false},
+      transition: {duration: 0, ordering: 'layout first'}
+    });
+  }
+
+  function playAnimation() {
+    var frameNames = getFrameNames();
+    if (!frameNames.length) return Promise.resolve();
+
+    var startIndex = getStartIndex(frameNames);
+    var token = playToken + 1;
+    playToken = token;
+    setPlaying(true);
+
+    return Plotly.animate(gd, [frameNames[startIndex]], {
+      mode: 'immediate',
+      frame: {duration: 0, redraw: true},
+      transition: {duration: 0, ordering: 'layout first'}
+    }).then(function() {
+      if (token !== playToken) return;
+
+      var remainingFrames = frameNames.slice(startIndex + 1);
+      if (!remainingFrames.length) return;
+
+      return Plotly.animate(gd, remainingFrames, {
+        mode: 'afterall',
+        frame: {duration: 500, redraw: true},
+        transition: {duration: 0, ordering: 'layout first'}
+      });
+    }).catch(function() {
+      return;
+    }).then(function() {
+      if (token === playToken) {
+        setPlaying(false);
+      }
+    });
+  }
+
   btn.addEventListener('click', function() {
     if (!playing) {
-      Plotly.animate(gd, null, {frame:{duration:500,redraw:true},fromcurrent:true,transition:{duration:200}});
-      btn.innerHTML = '\u23F8 Pause';
-      playing = true;
+      playAnimation();
     } else {
-      Plotly.animate(gd, [null], {frame:{duration:0,redraw:false},mode:'immediate',transition:{duration:0}});
-      btn.innerHTML = '\u25B6 Play';
-      playing = false;
+      stopAnimation();
     }
   });
+
+  playAnimation();
 })();
 """
 
@@ -376,7 +437,10 @@ class LiveDashboard:
         animated_fig = self._build_animated_figure()
         animated_fig.update_layout(width=self._export_width, height=self._export_height)
         animated_fig.write_html(
-            str(path), include_plotlyjs=True, post_script=_PLAY_PAUSE_SCRIPT
+            str(path),
+            include_plotlyjs=True,
+            post_script=_PLAY_PAUSE_SCRIPT,
+            auto_play=False,
         )
         logger.info("Animated HTML dashboard saved to %s", path)
 
@@ -418,8 +482,8 @@ class LiveDashboard:
 
         ax1, ax2, ax3, ax4 = fig.subplots(2, 2).flatten()
 
-        cum_costs = [it["cum_cost"] for it in iterations]
-        cum_actives = [it["cum_actives"] for it in iterations]
+        cum_costs = [0.0, *[it["cum_cost"] for it in iterations]]
+        cum_actives = [0, *[it["cum_actives"] for it in iterations]]
         iter_nums = list(range(1, len(iterations) + 1))
         iter_drc_new = [
             it["iter_drc_cost"] - it["iter_upgrade_cost"] for it in iterations
@@ -675,8 +739,8 @@ class LiveDashboard:
             horizontal_spacing=0.12,
         )
 
-        cum_costs = [it["cum_cost"] for it in iterations]
-        cum_actives = [it["cum_actives"] for it in iterations]
+        cum_costs = [0.0, *[it["cum_cost"] for it in iterations]]
+        cum_actives = [0, *[it["cum_actives"] for it in iterations]]
         iter_nums = list(range(1, len(iterations) + 1))
         iter_drc_new = [
             it["iter_drc_cost"] - it["iter_upgrade_cost"] for it in iterations
@@ -910,10 +974,26 @@ class LiveDashboard:
         )
         # X-axis labels — integer ticks on all numerical axes to avoid fractional iteration labels
         fig.update_xaxes(
-            title_text="Cumulative Cost ($)", row=1, col=1, tickformat=",.0f"
+            title_text="Cumulative Cost ($)",
+            row=1,
+            col=1,
+            tickformat=",.0f",
+            range=self._cumulative_cost_x_range(cum_costs),
         )
-        fig.update_xaxes(title_text="Iteration", row=1, col=2, tickformat="d")
-        fig.update_xaxes(title_text="Iteration", row=2, col=1, tickformat="d")
+        fig.update_xaxes(
+            title_text="Iteration",
+            row=1,
+            col=2,
+            tickformat="d",
+            range=self._iteration_x_range(len(iterations)),
+        )
+        fig.update_xaxes(
+            title_text="Iteration",
+            row=2,
+            col=1,
+            tickformat="d",
+            range=self._iteration_x_range(len(iterations)),
+        )
         fig.update_xaxes(
             title_text="Category",
             categoryorder="array",
@@ -932,19 +1012,16 @@ class LiveDashboard:
         if not iterations:
             return self._build_figure([])
 
-        final_fig = self._build_figure(iterations)
+        initial_fig = self._build_figure(iterations[:1])
 
         # Build one frame per iteration so the slider steps through cumulative history
         frames = [
-            go.Frame(
-                data=list(self._build_figure(iterations[: i + 1]).data),
-                name=str(i + 1),
-            )
+            self._build_animation_frame(iterations[: i + 1], i + 1)
             for i in range(len(iterations))
         ]
 
         animated_fig = go.Figure(
-            data=final_fig.data, layout=final_fig.layout, frames=frames
+            data=initial_fig.data, layout=initial_fig.layout, frames=frames
         )
 
         steps = [
@@ -954,7 +1031,7 @@ class LiveDashboard:
                     {
                         "frame": {"duration": 0, "redraw": True},
                         "mode": "immediate",
-                        "transition": {"duration": 0},
+                        "transition": {"duration": 0, "ordering": "layout first"},
                     },
                 ],
                 "label": str(i + 1),
@@ -966,7 +1043,7 @@ class LiveDashboard:
         animated_fig.update_layout(
             sliders=[
                 {
-                    "active": len(iterations) - 1,
+                    "active": 0,
                     "yanchor": "top",
                     "xanchor": "left",
                     "currentvalue": {
@@ -994,6 +1071,56 @@ class LiveDashboard:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _build_animation_frame(
+        self, iterations: list[dict], iteration_index: int
+    ) -> go.Frame:
+        """Build a Plotly animation frame with both data and per-frame axis layout."""
+        frame_fig = self._build_figure(iterations)
+        return go.Frame(
+            data=list(frame_fig.data),
+            layout=self._build_animation_frame_layout(frame_fig, iterations),
+            name=str(iteration_index),
+            traces=list(range(len(frame_fig.data))),
+        )
+
+    def _build_animation_frame_layout(
+        self, frame_fig: go.Figure, iterations: list[dict]
+    ) -> go.Layout:
+        """Return layout updates needed for exported HTML animation frame scrubbing."""
+        n_iterations = len(iterations)
+        cum_costs = [it["cum_cost"] for it in iterations]
+
+        return go.Layout(
+            xaxis={
+                **frame_fig.layout.xaxis.to_plotly_json(),
+                "range": self._cumulative_cost_x_range(cum_costs),
+            },
+            xaxis2={
+                **frame_fig.layout.xaxis2.to_plotly_json(),
+                "range": self._iteration_x_range(n_iterations),
+            },
+            xaxis3={
+                **frame_fig.layout.xaxis3.to_plotly_json(),
+                "range": self._iteration_x_range(n_iterations),
+            },
+            yaxis=frame_fig.layout.yaxis.to_plotly_json(),
+            yaxis3=frame_fig.layout.yaxis3.to_plotly_json(),
+            yaxis4=frame_fig.layout.yaxis4.to_plotly_json(),
+        )
+
+    @staticmethod
+    def _cumulative_cost_x_range(cum_costs: list[float]) -> list[float]:
+        """Return an explicit x-range for the cumulative-cost subplot."""
+        max_cost = max(cum_costs, default=0.0)
+        return [0.0, max(1.0, max_cost * 1.05)]
+
+    @staticmethod
+    def _iteration_x_range(n_iterations: int) -> list[float]:
+        """Return an explicit x-range for iteration-indexed subplots."""
+        upper = max(float(n_iterations), 1.0)
+        padding = 0.25
+        return [1.0 - padding, upper + padding]
 
     @staticmethod
     def _record_is_active(rec: LabelRecord, threshold: float) -> bool:

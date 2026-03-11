@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import re
 from unittest.mock import MagicMock
 
 import pytest
@@ -561,6 +562,166 @@ class TestSaveHtml:
         # Slider steps use plain numeric labels; verify the final iteration label is present
         assert f'"{n}"' in content
 
+    def test_html_disables_plotly_builtin_autoplay(self, tmp_path):
+        """save_html() must rely on the injected playback script, not Plotly's auto_play."""
+        db = LiveDashboard(n_iterations=2, n_compounds=20)
+        records = _make_records(4)
+        for _ in range(2):
+            db.update(
+                records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0
+            )
+
+        html_path = tmp_path / "dashboard.html"
+        db.save_html(html_path)
+        db.close()
+
+        content = html_path.read_text()
+        assert re.search(r"Plotly\.animate\(gd,\s*\[frameNames\[startIndex\]\]", content)
+        assert re.search(r"Plotly\.animate\('[^']+', null\);", content) is None
+
+    def test_animated_frames_include_per_iteration_axis_layout(self):
+        """Animated HTML frames must carry per-iteration axis updates, not just trace data."""
+        db = LiveDashboard(n_iterations=3, n_compounds=20)
+
+        labeled_records = []
+        for iteration, (drc_cost, ps_cost, metric) in enumerate(
+            [(10.0, 1.0, 1.4), (20.0, 2.0, 0.9), (30.0, 3.0, 0.4)],
+            start=1,
+        ):
+            labeled_records.extend(
+                [
+                    _make_record(
+                        iteration,
+                        7.0 + iteration,
+                        CensoringType.EXACT,
+                        QueryType.DOSE_RESPONSE,
+                        cost=drc_cost,
+                        smiles=f"drc-{iteration}",
+                    ),
+                    _make_record(
+                        iteration,
+                        5.0 + iteration,
+                        CensoringType.INTERVAL,
+                        QueryType.PRIMARY_SCREEN,
+                        cost=ps_cost,
+                        smiles=f"ps-{iteration}",
+                    ),
+                ]
+            )
+            db.update(
+                labeled_records.copy(),
+                activity_threshold=7.0,
+                iter_drc_cost=drc_cost,
+                iter_ps_cost=ps_cost,
+                model_metric_value=metric,
+            )
+
+        with db._lock:
+            iterations = list(db._iterations)
+
+        animated_fig = db._build_animated_figure()
+        assert len(animated_fig.frames) == 3
+
+        for i, frame in enumerate(animated_fig.frames, start=1):
+            frame_iterations = iterations[:i]
+            frame_fig = db._build_figure(frame_iterations)
+
+            assert list(frame.layout.yaxis.range) == pytest.approx(
+                list(frame_fig.layout.yaxis.range)
+            )
+            assert frame.layout.yaxis.dtick == pytest.approx(frame_fig.layout.yaxis.dtick)
+
+            assert list(frame.layout.yaxis3.range) == pytest.approx(
+                list(frame_fig.layout.yaxis3.range)
+            )
+            assert frame.layout.yaxis3.dtick == pytest.approx(
+                frame_fig.layout.yaxis3.dtick
+            )
+
+            assert list(frame.layout.yaxis4.range) == pytest.approx(
+                list(frame_fig.layout.yaxis4.range)
+            )
+            assert frame.layout.yaxis4.tick0 == pytest.approx(frame_fig.layout.yaxis4.tick0)
+            assert frame.layout.yaxis4.dtick == pytest.approx(
+                frame_fig.layout.yaxis4.dtick
+            )
+
+            x_upper = float(i) + 0.25
+            assert list(frame.layout.xaxis2.range) == pytest.approx([0.75, x_upper])
+            assert list(frame.layout.xaxis3.range) == pytest.approx([0.75, x_upper])
+            assert list(frame.traces) == list(range(len(frame_fig.data)))
+
+            expected_cum_cost_upper = max(
+                1.0, max(it["cum_cost"] for it in frame_iterations) * 1.05
+            )
+            assert list(frame.layout.xaxis.range) == pytest.approx(
+                [0.0, expected_cum_cost_upper]
+            )
+
+        db.close()
+
+    def test_animated_figure_starts_from_first_iteration(self):
+        """The exported animation should initialize on frame 1 before autoplay begins."""
+        db = LiveDashboard(n_iterations=3, n_compounds=20)
+
+        labeled_records = []
+        for iteration, (drc_cost, ps_cost, metric) in enumerate(
+            [(10.0, 1.0, 1.4), (20.0, 2.0, 0.9), (30.0, 3.0, 0.4)],
+            start=1,
+        ):
+            labeled_records.extend(
+                [
+                    _make_record(
+                        iteration,
+                        7.0 + iteration,
+                        CensoringType.EXACT,
+                        QueryType.DOSE_RESPONSE,
+                        cost=drc_cost,
+                        smiles=f"drc-{iteration}",
+                    ),
+                    _make_record(
+                        iteration,
+                        5.0 + iteration,
+                        CensoringType.INTERVAL,
+                        QueryType.PRIMARY_SCREEN,
+                        cost=ps_cost,
+                        smiles=f"ps-{iteration}",
+                    ),
+                ]
+            )
+            db.update(
+                labeled_records.copy(),
+                activity_threshold=7.0,
+                iter_drc_cost=drc_cost,
+                iter_ps_cost=ps_cost,
+                model_metric_value=metric,
+            )
+
+        animated_fig = db._build_animated_figure()
+        first_fig = db._build_figure(list(db._iterations)[:1])
+
+        assert animated_fig.layout.sliders[0].active == 0
+        assert len(animated_fig.data) == len(first_fig.data)
+        for actual, expected in zip(animated_fig.data, first_fig.data, strict=True):
+            assert actual.type == expected.type
+            assert list(actual.x) == list(expected.x)
+            assert list(actual.y) == list(expected.y)
+
+        assert list(animated_fig.layout.xaxis2.range) == pytest.approx([0.75, 1.25])
+        assert list(animated_fig.layout.xaxis3.range) == pytest.approx([0.75, 1.25])
+
+        assert list(animated_fig.layout.yaxis.range) == pytest.approx(
+            list(first_fig.layout.yaxis.range)
+        )
+        assert list(animated_fig.layout.yaxis3.range) == pytest.approx(
+            list(first_fig.layout.yaxis3.range)
+        )
+        assert list(animated_fig.layout.yaxis4.range) == pytest.approx(
+            list(first_fig.layout.yaxis4.range)
+        )
+
+        db.close()
+
 
 # ---------------------------------------------------------------------------
 # Figure building (unit-level)
@@ -589,6 +750,21 @@ class TestBuildFigure:
         fig = db._build_figure(iters)
         # 1 actives + 3 cost bars + 1 cum-cost line + 1 metric + 3 status bars + 1 PS→DRC overlay = 10
         assert len(fig.data) == 10
+        db.close()
+
+    def test_cumulative_actives_trace_starts_at_campaign_origin(self):
+        """The cumulative actives plot must include an explicit (0, 0) initialization point."""
+        db = LiveDashboard(n_iterations=3, n_compounds=20)
+        records = _make_records(4)
+        db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
+
+        with db._lock:
+            iters = list(db._iterations)
+        fig = db._build_figure(iters)
+
+        actives_trace = fig.data[0]
+        assert list(actives_trace.x[:2]) == [0.0, iters[0]["cum_cost"]]
+        assert list(actives_trace.y[:2]) == [0, iters[0]["cum_actives"]]
         db.close()
 
     def test_no_metric_adds_annotation(self):
