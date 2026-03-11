@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import logging
+import threading
 from pathlib import Path
 from typing import Callable
 
@@ -179,16 +180,8 @@ def simulate(config: Path, output_dir: Path | None, verbose: bool) -> None:
         k_per_iteration=cfg.active_learning_loop.k_per_iteration,
     )
 
-    if dashboard is not None:
-        gif_path = out_dir / "dashboard_animation.gif"
-        dashboard.save_gif(gif_path)
-
-        html_path = out_dir / "dashboard_animation.html"
-        dashboard.save_html(html_path)
-        logger.info("Animated HTML dashboard saved to %s", html_path)
-
-        dashboard.close()
-
+    # Write output CSVs immediately so results are available as soon as
+    # computation finishes, independent of any dashboard export latency.
     metrics_df = pd.DataFrame([r.metrics for r in results.iterations])
     metrics_path = out_dir / "iteration_metrics.csv"
     metrics_df.to_csv(metrics_path, index=False)
@@ -198,6 +191,27 @@ def simulate(config: Path, output_dir: Path | None, verbose: bool) -> None:
     curve_path = out_dir / "cumulative_actives_curve.csv"
     curve_df.to_csv(curve_path, index=False)
     logger.info("Cumulative actives curve written to %s", curve_path)
+
+    if dashboard is not None:
+        html_path = out_dir / "dashboard_animation.html"
+        dashboard.save_html(html_path)
+        logger.info("Animated HTML dashboard saved to %s", html_path)
+
+        # GIF export is O(N) kaleido renders — run in a background thread so
+        # the Werkzeug server can be shut down without blocking on it.  The
+        # thread is non-daemon so the process waits for it to finish cleanly.
+        gif_path = out_dir / "dashboard_animation.gif"
+        gif_thread = threading.Thread(
+            target=dashboard.save_gif, args=(gif_path,), daemon=False
+        )
+        gif_thread.start()
+        logger.info(
+            "GIF animation rendering started in background; will be saved to %s",
+            gif_path,
+        )
+
+        dashboard.close()
+        gif_thread.join()
 
 
 @main.command()
