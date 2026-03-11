@@ -25,16 +25,6 @@ def mock_werkzeug_server(monkeypatch):
 
 
 @pytest.fixture
-def minimal_png():
-    """Return a minimal valid PNG byte string (used for direct _frame_bytes checks)."""
-    from PIL import Image
-
-    buf = io.BytesIO()
-    Image.new("RGB", (4, 4), color=(128, 64, 32)).save(buf, format="PNG")
-    return buf.getvalue()
-
-
-@pytest.fixture
 def mock_kaleido(monkeypatch):
     """Patch plotly.io.to_image to return distinct minimal PNGs per call.
 
@@ -117,9 +107,9 @@ class TestDashboardInit:
         db.close()
 
     def test_frame_bytes_empty_on_construction(self):
-        """No frames should be captured before the first update() call."""
+        """_frame_bytes was removed; verify the attribute no longer exists."""
         db = LiveDashboard(n_iterations=5, n_compounds=20)
-        assert db._frame_bytes == []
+        assert not hasattr(db, "_frame_bytes")
         db.close()
 
     def test_close_shuts_down_server(self, mock_werkzeug_server):
@@ -352,36 +342,70 @@ class TestCompoundStatusPanel:
 
 
 class TestFrameCapture:
-    """Tests for PNG frame accumulation (kaleido path)."""
+    """Tests for deferred PNG frame rendering (kaleido path)."""
 
-    def test_frames_captured_with_mocked_kaleido(self, mock_kaleido):
-        """Each update() call must append one entry to _frame_bytes when kaleido is present."""
+    def test_kaleido_called_once_per_iteration_in_save_gif(self, monkeypatch, tmp_path):
+        """save_gif() must invoke pio.to_image exactly once per stored iteration snapshot."""
+        call_count = [0]
+
+        def _counting_png(*_a, **_kw):
+            from PIL import Image
+            shade = (call_count[0] * 60 + 20) % 256
+            buf = io.BytesIO()
+            Image.new("RGB", (4, 4), color=(shade, shade, shade)).save(buf, format="PNG")
+            call_count[0] += 1
+            return buf.getvalue()
+
+        monkeypatch.setattr("plotly.io.to_image", _counting_png)
+        db = LiveDashboard(n_iterations=3, n_compounds=20)
+        records = _make_records(4)
+        for _ in range(3):
+            db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
+        db.save_gif(tmp_path / "out.gif")
+        db.close()
+
+        assert call_count[0] == 3
+
+    def test_no_kaleido_calls_before_save_gif(self, monkeypatch):
+        """update() must not invoke pio.to_image — rendering is deferred to save_gif()."""
+        call_count = [0]
+
+        def _tracking_mock(*a, **kw):
+            call_count[0] += 1
+            from PIL import Image
+            buf = io.BytesIO()
+            Image.new("RGB", (4, 4)).save(buf, format="PNG")
+            return buf.getvalue()
+
+        monkeypatch.setattr("plotly.io.to_image", _tracking_mock)
         db = LiveDashboard(n_iterations=3, n_compounds=20)
         records = _make_records(4)
         for _ in range(3):
             db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
         db.close()
-        assert len(db._frame_bytes) == 3
+        assert call_count[0] == 0
 
-    def test_no_frames_when_no_updates(self):
-        """A dashboard that was never updated must have an empty _frame_bytes list."""
-        db = LiveDashboard(n_iterations=3, n_compounds=20)
-        db.close()
-        assert db._frame_bytes == []
+    def test_gif_skipped_when_kaleido_fails(self, monkeypatch, tmp_path, caplog):
+        """A kaleido failure must warn once and produce no GIF file."""
+        import logging
 
-    def test_kaleido_failure_warns_once_and_continues(self, monkeypatch):
-        """A kaleido failure must warn exactly once, not on every update."""
         monkeypatch.setattr(
             "plotly.io.to_image", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("no kaleido"))
         )
-        db = LiveDashboard(n_iterations=3, n_compounds=20)
+        db = LiveDashboard(n_iterations=2, n_compounds=20)
         records = _make_records(4)
-        # Must not raise even though kaleido fails on every call
-        for _ in range(3):
-            db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
-        # Warned only once: _kaleido_warned flips to True after the first failure
-        assert db._kaleido_warned is True
-        assert db._frame_bytes == []
+        db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
+
+        gif_path = tmp_path / "fail.gif"
+        with caplog.at_level(logging.WARNING, logger="moal.dashboard"):
+            db.save_gif(gif_path)
+
+        assert not gif_path.exists()
+        assert "GIF export failed" in caplog.text
+        db.close()
+
+        assert not gif_path.exists()
+        assert "GIF export failed" in caplog.text
         db.close()
 
 
@@ -581,15 +605,16 @@ class TestBuildFigure:
         assert any("No test set" in t for t in annotation_texts)
         db.close()
 
-    def test_export_dimensions_passed_to_kaleido(self, monkeypatch):
-        """_capture_frame must use export_width and export_height from the constructor."""
+    def test_export_dimensions_passed_to_kaleido(self, monkeypatch, tmp_path):
+        """save_gif() must forward export_width and export_height to pio.to_image."""
         captured_kwargs: list[dict] = []
 
         def _mock_to_image(*_a, **kw):
             captured_kwargs.append(kw)
             from PIL import Image
             buf = io.BytesIO()
-            Image.new("RGB", (4, 4)).save(buf, format="PNG")
+            shade = len(captured_kwargs) * 60 % 256
+            Image.new("RGB", (4, 4), color=(shade, shade, shade)).save(buf, format="PNG")
             return buf.getvalue()
 
         monkeypatch.setattr("plotly.io.to_image", _mock_to_image)
@@ -597,6 +622,7 @@ class TestBuildFigure:
         db = LiveDashboard(n_iterations=2, n_compounds=10, export_width=640, export_height=480)
         records = _make_records(2)
         db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
+        db.save_gif(tmp_path / "out.gif")
         db.close()
 
         assert len(captured_kwargs) == 1

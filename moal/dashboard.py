@@ -81,9 +81,7 @@ class LiveDashboard:
         self._lock = threading.Lock()
         # One dict per update() call; consumed by the Dash callback and save_html()
         self._iterations: list[dict] = []
-        # PNG bytes captured after each update() for GIF assembly
-        self._frame_bytes: list[bytes] = []
-        # Warn only once when kaleido is absent
+        # Warn only once when kaleido is absent or fails
         self._kaleido_warned = False
         self._metric_label = model_metric.value.upper().replace("_", " ")
 
@@ -149,7 +147,7 @@ class LiveDashboard:
         iter_upgrade_cost: float = 0.0,
         model_metric_value: float | None = None,
     ) -> None:
-        """Append iteration data and capture a PNG frame for GIF export.
+        """Append iteration data for live display and deferred GIF/HTML export.
 
         Parameters
         ----------
@@ -204,8 +202,6 @@ class LiveDashboard:
         with self._lock:
             self._iterations.append(snapshot)
 
-        self._capture_frame()
-
     # ------------------------------------------------------------------
     # Persistence and export
     # ------------------------------------------------------------------
@@ -235,7 +231,10 @@ class LiveDashboard:
         frame_duration_ms: int = 500,
         last_frame_duration_ms: int = 5000,
     ) -> None:
-        """Assemble captured PNG frames into an animated GIF using Pillow.
+        """Render all iteration snapshots to PNG via kaleido and assemble an animated GIF.
+
+        Frames are rendered in a single batch at export time so kaleido opens and
+        closes Chromium only once regardless of how many iterations were run.
 
         Parameters
         ----------
@@ -246,14 +245,26 @@ class LiveDashboard:
         last_frame_duration_ms : int, optional
             Display duration of the final frame in milliseconds. Default is 5000.
         """
-        if not self._frame_bytes:
-            logger.warning("No frames captured; skipping GIF export")
+        with self._lock:
+            iterations = list(self._iterations)
+
+        if not iterations:
+            logger.warning("No iterations recorded; skipping GIF export")
             return
 
         try:
+            import plotly.io as pio
             from PIL import Image
 
-            frames = [Image.open(io.BytesIO(b)).convert("RGB") for b in self._frame_bytes]
+            frame_bytes: list[bytes] = []
+            for i, _ in enumerate(iterations):
+                fig = self._build_figure(iterations[: i + 1])
+                png = pio.to_image(
+                    fig, format="png", width=self._export_width, height=self._export_height
+                )
+                frame_bytes.append(png)
+
+            frames = [Image.open(io.BytesIO(b)).convert("RGB") for b in frame_bytes]
             palette_frames = [f.convert("P", dither=Image.Dither.NONE) for f in frames]
             durations = [frame_duration_ms] * len(palette_frames)
             durations[-1] = last_frame_duration_ms
@@ -268,11 +279,16 @@ class LiveDashboard:
             )
             logger.info(
                 "Dashboard animation (%d frames) saved to %s",
-                len(self._frame_bytes),
+                len(frame_bytes),
                 path,
             )
         except Exception as exc:
-            logger.warning("Could not save dashboard GIF: %s", exc)
+            if not self._kaleido_warned:
+                logger.warning(
+                    "GIF export failed (kaleido may not be installed or Chrome unavailable): %s",
+                    exc,
+                )
+                self._kaleido_warned = True
 
     def save_html(self, path: str | Path) -> None:
         """Export the animated figure as a standalone HTML file.
@@ -561,24 +577,6 @@ class LiveDashboard:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
-
-    def _capture_frame(self) -> None:
-        """Render the current figure to PNG bytes via kaleido for GIF assembly."""
-        try:
-            import plotly.io as pio
-
-            with self._lock:
-                iterations = list(self._iterations)
-            fig = self._build_figure(iterations)
-            png_bytes = pio.to_image(fig, format="png", width=self._export_width, height=self._export_height)
-            self._frame_bytes.append(png_bytes)
-        except Exception as exc:
-            # kaleido not installed or render failure; warn once and skip silently
-            if not self._kaleido_warned:
-                logger.warning(
-                    "PNG frame capture failed (kaleido may not be installed): %s", exc
-                )
-                self._kaleido_warned = True
 
     @staticmethod
     def _record_is_active(rec: LabelRecord, threshold: float) -> bool:
