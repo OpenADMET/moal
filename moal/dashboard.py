@@ -471,11 +471,11 @@ class LiveDashboard:
         ax1.set_xlabel("Cumulative Cost ($)", fontsize=8)
         ax1.set_ylabel("Actives Found", fontsize=8)
         # Explicit range ensures 0 and 1 are always labelled even before any actives are found
-        ax1.set_ylim(0, actives_y_max)
+        ax1.set_ylim(-0.05, actives_y_max)
         ax1.xaxis.set_major_locator(MaxNLocator(integer=True, nbins=5, min_n_ticks=1))
         # Integer y-ticks only — actives are whole numbers; min_n_ticks=1 prevents
         # fallback to float ticks when fewer than two integers are within the view
-        ax1.yaxis.set_major_locator(MaxNLocator(integer=True, min_n_ticks=1))
+        ax1.yaxis.set_major_locator(MaxNLocator(integer=True, nbins=5, min_n_ticks=1))
 
         # Panel 2: Per-Iteration Cost Breakdown — stacked bars + cumulative cost line
         # ax2_r is always created so it can hold its label and default range even with no data
