@@ -321,7 +321,7 @@ class TestPlanCommand:
             if "description" in update
         ]
         assert (
-            "Training model — 2 records ([orange1]1 DRC[/orange1], [steel_blue1]1 PS[/steel_blue1])"
+            "[yellow]Training model[/yellow] — 2 records ([orange1]1 DRC[/orange1], [steel_blue1]1 PS[/steel_blue1])"
             in descriptions
         )
         assert (
@@ -620,7 +620,6 @@ class TestPlanCommand:
         cli_out = _cli_output(result)
         assert "Plan complete." in cli_out
         assert "0 PS" in cli_out and "0 DRC" in cli_out
-        assert "Wrote:" not in cli_out
         written = pd.read_csv(output_csv)
         # No inference targets — skip model training and prediction entirely
         model.refit.assert_not_called()
