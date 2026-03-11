@@ -481,7 +481,7 @@ class LiveDashboard:
                 y=cum_total_costs,
                 mode="lines",
                 name="Cumulative Cost ($)",
-                line=dict(color=line_color, width=1.5, dash="dot"),
+                line=dict(color=line_color, width=2, dash="dot"),
                 showlegend=False,
             ),
             row=1,
