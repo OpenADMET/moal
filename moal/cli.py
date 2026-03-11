@@ -195,7 +195,6 @@ def simulate(config: Path, output_dir: Path | None, verbose: bool) -> None:
     if dashboard is not None:
         html_path = out_dir / "dashboard_animation.html"
         dashboard.save_html(html_path)
-        logger.info("Animated HTML dashboard saved to %s", html_path)
 
         # GIF export is O(N) kaleido renders — run in a background thread so
         # the Werkzeug server can be shut down without blocking on it.  The
@@ -207,7 +206,6 @@ def simulate(config: Path, output_dir: Path | None, verbose: bool) -> None:
         gif_thread.start()
         logger.info(
             "GIF animation rendering started in background",
-            gif_path,
         )
 
         dashboard.close()

@@ -267,6 +267,7 @@ class LiveDashboard:
                 width=self._export_width,
                 height=self._export_height,
             )
+            logger.info("Static dashboard PNG saved to %s", path)
         except Exception as exc:
             logger.warning("Could not save static dashboard PNG: %s", exc)
 
@@ -326,7 +327,7 @@ class LiveDashboard:
                 optimize=False,
             )
             logger.info(
-                "Dashboard animation (%d frames) saved to %s",
+                "GIF animation (%d frames) saved to %s",
                 len(frame_bytes),
                 path,
             )
