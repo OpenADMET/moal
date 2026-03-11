@@ -22,11 +22,11 @@ import threading
 import webbrowser
 from pathlib import Path
 
+import plotly.graph_objects as go
+from dash import Dash, Input, Output, dcc, html
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 from matplotlib.ticker import MaxNLocator
-import plotly.graph_objects as go
-from dash import Dash, Input, Output, dcc, html
 from plotly.subplots import make_subplots
 from werkzeug.serving import make_server
 
@@ -305,7 +305,9 @@ class LiveDashboard:
             from PIL import Image
 
             pil_frames = [Image.open(io.BytesIO(b)).convert("RGB") for b in frames]
-            palette_frames = [f.convert("P", dither=Image.Dither.NONE) for f in pil_frames]
+            palette_frames = [
+                f.convert("P", dither=Image.Dither.NONE) for f in pil_frames
+            ]
             durations = [frame_duration_ms] * len(palette_frames)
             durations[-1] = last_frame_duration_ms
             palette_frames[0].save(
@@ -376,14 +378,18 @@ class LiveDashboard:
         w = self._export_width / _GIF_RENDER_DPI
         h = self._export_height / _GIF_RENDER_DPI
         fig = Figure(figsize=(w, h), dpi=_GIF_RENDER_DPI)
-        FigureCanvasAgg(fig)  # attaches the Agg backend so fig.savefig() works headlessly
+        FigureCanvasAgg(
+            fig
+        )  # attaches the Agg backend so fig.savefig() works headlessly
 
         ax1, ax2, ax3, ax4 = fig.subplots(2, 2).flatten()
 
         cum_costs = [it["cum_cost"] for it in iterations]
         cum_actives = [it["cum_actives"] for it in iterations]
         iter_nums = list(range(1, len(iterations) + 1))
-        iter_drc_new = [it["iter_drc_cost"] - it["iter_upgrade_cost"] for it in iterations]
+        iter_drc_new = [
+            it["iter_drc_cost"] - it["iter_upgrade_cost"] for it in iterations
+        ]
         iter_upgrades = [it["iter_upgrade_cost"] for it in iterations]
         iter_ps = [it["iter_ps_cost"] for it in iterations]
         cum_total_costs = list(
@@ -392,36 +398,69 @@ class LiveDashboard:
             )
         )
         metric_iters = [
-            i + 1 for i, it in enumerate(iterations) if it["model_metric_value"] is not None
+            i + 1
+            for i, it in enumerate(iterations)
+            if it["model_metric_value"] is not None
         ]
         metric_vals = [
-            it["model_metric_value"] for it in iterations if it["model_metric_value"] is not None
+            it["model_metric_value"]
+            for it in iterations
+            if it["model_metric_value"] is not None
         ]
-        last = iterations[-1] if iterations else {
-            "n_ps_only": 0, "n_drc_new": 0, "n_upgrades": 0, "n_unqueried": self.n_compounds,
-        }
+        last = (
+            iterations[-1]
+            if iterations
+            else {
+                "n_ps_only": 0,
+                "n_drc_new": 0,
+                "n_upgrades": 0,
+                "n_unqueried": self.n_compounds,
+            }
+        )
 
         # Panel 1: Cumulative Actives
-        ax1.plot(cum_costs, cum_actives, color=_COLOUR_ACT, linewidth=2, marker="o", markersize=4)
+        ax1.plot(
+            cum_costs,
+            cum_actives,
+            color=_COLOUR_ACT,
+            linewidth=2,
+            marker="o",
+            markersize=4,
+        )
         ax1.set_title("Cumulative Actives", fontsize=9)
         ax1.set_xlabel("Cumulative Cost ($)", fontsize=8)
         ax1.set_ylabel("Actives Found", fontsize=8)
         ax1.set_ylim(bottom=0)
         ax1.xaxis.set_major_locator(MaxNLocator(integer=True))
+        # Integer y-ticks only — actives are whole numbers
+        ax1.yaxis.set_major_locator(MaxNLocator(integer=True))
 
         # Panel 2: Per-Iteration Cost Breakdown — stacked bars + cumulative cost line
         if iter_nums:
             ax2.bar(iter_nums, iter_drc_new, color=_COLOUR_DRC, label="DRC")
-            ax2.bar(iter_nums, iter_upgrades, bottom=iter_drc_new, color=_COLOUR_UPGRADE, label="PS→DRC")
+            ax2.bar(
+                iter_nums,
+                iter_upgrades,
+                bottom=iter_drc_new,
+                color=_COLOUR_UPGRADE,
+                label="PS→DRC",
+            )
             ps_bottoms = [d + u for d, u in zip(iter_drc_new, iter_upgrades)]
             ax2.bar(iter_nums, iter_ps, bottom=ps_bottoms, color=_COLOUR_PS, label="PS")
             ax2_r = ax2.twinx()
             # Scale to thousands so tick values stay compact whole-number integers
             cum_total_costs_k = [c / 1000 for c in cum_total_costs]
-            ax2_r.plot(iter_nums, cum_total_costs_k, color="#555555", linewidth=1.5, linestyle="--")
+            ax2_r.plot(
+                iter_nums,
+                cum_total_costs_k,
+                color="#555555",
+                linewidth=2,
+                linestyle="--",
+            )
             ax2_r.set_ylabel("Cumulative Cost ($k)", fontsize=8)
             ax2_r.tick_params(axis="y", labelsize=7)
-            ax2_r.yaxis.set_major_locator(MaxNLocator(integer=True))
+            # nbins=5 caps tick density; integer=True prevents fractional $k labels
+            ax2_r.yaxis.set_major_locator(MaxNLocator(integer=True, nbins=5))
             ax2.xaxis.set_major_locator(MaxNLocator(integer=True))
         ax2.set_title("Per-Iteration Cost Breakdown", fontsize=9)
         ax2.set_xlabel("Iteration", fontsize=8)
@@ -429,15 +468,31 @@ class LiveDashboard:
 
         # Panel 3: Model Performance
         if metric_iters:
-            ax3.plot(metric_iters, metric_vals, color=_COLOUR_MET, linewidth=2, marker="o", markersize=4)
+            ax3.plot(
+                metric_iters,
+                metric_vals,
+                color=_COLOUR_MET,
+                linewidth=2,
+                marker="o",
+                markersize=4,
+            )
         else:
-            ax3.text(0.5, 0.5, "No test set provided", transform=ax3.transAxes,
-                     ha="center", va="center", color="grey", fontsize=9)
+            ax3.text(
+                0.5,
+                0.5,
+                "No test set provided",
+                transform=ax3.transAxes,
+                ha="center",
+                va="center",
+                color="grey",
+                fontsize=9,
+            )
         ax3.set_title(f"Model Performance ({self._metric_label})", fontsize=9)
         ax3.set_xlabel("Iteration", fontsize=8)
         ax3.set_ylabel(self._metric_label, fontsize=8)
-        # Prefer steps of 1, 2, or 5 × 10^n to avoid close labels collapsing to the same value
-        ax3.yaxis.set_major_locator(MaxNLocator(steps=[1, 2, 5, 10]))
+        # Prefer steps of 1, 2, or 5 × 10^n to avoid close labels collapsing to the same value;
+        # nbins=5 caps at 6 ticks so no frame becomes over-crowded
+        ax3.yaxis.set_major_locator(MaxNLocator(steps=[1, 2, 5, 10], nbins=5))
         ax3.xaxis.set_major_locator(MaxNLocator(integer=True))
 
         # Panel 4: Compound Status — current pool state only (last snapshot)
@@ -452,12 +507,30 @@ class LiveDashboard:
         ax4.set_ylabel("Compounds", fontsize=8)
         ax4.set_ylim(0, 1.05 * max(self.n_compounds, 1))
 
-        fig.suptitle("Active Learning Campaign Dashboard", fontsize=11, fontweight="bold")
+        fig.suptitle(
+            "Active Learning Campaign Dashboard", fontsize=11, fontweight="bold"
+        )
         fig.tight_layout(pad=2.0)
 
         buf = io.BytesIO()
         fig.savefig(buf, format="png", dpi=_GIF_RENDER_DPI)
         return buf.getvalue()
+
+    @staticmethod
+    def _nice_dtick(max_val: float, max_ticks: int = 5) -> int:
+        """Return the smallest integer step from a standard sequence that keeps tick count ≤ max_ticks.
+
+        Guarantees non-repeating integer labels on any axis range without requiring
+        the math module — the candidate list covers values from 1 to 10 000 (sufficient
+        for actives counts and $k-scaled cumulative costs on typical campaigns).
+        """
+        if max_val <= 0:
+            return 1
+        raw_step = max_val / max_ticks
+        for candidate in [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000]:
+            if candidate >= raw_step:
+                return candidate
+        return max(1, int(max_val))
 
     def _build_figure(self, iterations: list[dict]) -> go.Figure:
         """Build the 2×2 Plotly subplot figure from a list of iteration snapshots."""
@@ -563,7 +636,7 @@ class LiveDashboard:
         )
 
         # Cumulative cost line on secondary y-axis for panel 2 (scaled to $k)
-        line_color = "#FFFFFF" if self._theme == "plotly_dark" else "#000000"
+        line_color = "#FFFFFF" if self._theme == "plotly_dark" else "#555555"
         fig.add_trace(
             go.Scatter(
                 x=iter_nums,
@@ -637,6 +710,10 @@ class LiveDashboard:
                 col=1,
             )
 
+        # Pre-compute data maxima for dynamic integer dtick on actives and $k axes
+        max_actives = max(cum_actives, default=0)
+        max_cost_k = max(cum_total_costs, default=0)
+
         fig.update_layout(
             title_text="Active Learning Campaign Dashboard",
             barmode="stack",
@@ -657,7 +734,16 @@ class LiveDashboard:
             ),
         )
         # Y-axes: primary labels and floor; disable secondary gridlines to prevent clashing
-        fig.update_yaxes(rangemode="tozero", title_text="Actives Found", row=1, col=1)
+        fig.update_yaxes(
+            rangemode="tozero",
+            title_text="Actives Found",
+            row=1,
+            col=1,
+            # Integer-only ticks; dtick computed from data so labels never repeat
+            tickmode="linear",
+            tick0=0,
+            dtick=self._nice_dtick(max_actives),
+        )
         fig.update_yaxes(
             title_text="Iteration Cost ($)", secondary_y=False, row=1, col=2
         )
@@ -667,18 +753,18 @@ class LiveDashboard:
             row=1,
             col=2,
             showgrid=False,
-            # Integer ticks only — avoids fractional $k labels on small campaigns;
-            # nticks is a hint to Plotly's auto-tick algorithm, not a forced count
-            tickformat="d",
-            nticks=6,
+            # Integer ticks computed from data so labels never repeat across frames
+            tickmode="linear",
+            tick0=0,
+            dtick=self._nice_dtick(max_cost_k),
         )
         fig.update_yaxes(
             title_text=self._metric_label,
             row=2,
             col=1,
-            # Trim trailing zeros without forcing a fixed decimal width, preventing
-            # adjacent ticks from collapsing to the same label (e.g. 0.55 and 0.60 → "0.6")
+            # Trim trailing zeros without forcing a fixed decimal width; nticks caps density
             tickformat=".3~g",
+            nticks=6,
         )
         fig.update_yaxes(
             title_text="Compounds",
@@ -687,7 +773,9 @@ class LiveDashboard:
             col=2,
         )
         # X-axis labels — integer ticks on all numerical axes to avoid fractional iteration labels
-        fig.update_xaxes(title_text="Cumulative Cost ($)", row=1, col=1, tickformat=",.0f")
+        fig.update_xaxes(
+            title_text="Cumulative Cost ($)", row=1, col=1, tickformat=",.0f"
+        )
         fig.update_xaxes(title_text="Iteration", row=1, col=2, tickformat="d")
         fig.update_xaxes(title_text="Iteration", row=2, col=1, tickformat="d")
         fig.update_xaxes(
