@@ -474,13 +474,14 @@ class LiveDashboard:
         )
 
         # Cumulative cost line on secondary y-axis for panel 2 (trace kept, label suppressed)
+        line_color = "#FFFFFF" if self._theme == "plotly_dark" else "#000000"
         fig.add_trace(
             go.Scatter(
                 x=iter_nums,
                 y=cum_total_costs,
                 mode="lines",
                 name="Cumulative Cost ($)",
-                line=dict(color="#FFFFFF", width=1.5, dash="dot"),
+                line=dict(color=line_color, width=1.5, dash="dot"),
                 showlegend=False,
             ),
             row=1,
