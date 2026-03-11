@@ -47,7 +47,7 @@ _COLOUR_UPGRADE = "#9B59B6"  # purple-magenta (PS→DRC upgrades)
 _COLOUR_UNQUERIED = "#888888"  # mid-grey
 
 # DPI used for matplotlib GIF/PNG frame rendering — controls output pixel density
-_GIF_RENDER_DPI: int = 100
+_GIF_RENDER_DPI: int = 150
 
 # Best-effort HTML background colours keyed by Plotly template name
 _THEME_BG: dict[str, str] = {
@@ -420,7 +420,9 @@ class LiveDashboard:
         )
         # Floor at 1.05 guarantees 0 and 1 are labelled even before any data arrives
         actives_y_max = max(1.05, max(cum_actives) * 1.05) if cum_actives else 1.05
-        cost_k_y_max = max(1.05, max(cum_total_costs_k) * 1.05) if cum_total_costs_k else 1.05
+        cost_k_y_max = (
+            max(1.05, max(cum_total_costs_k) * 1.05) if cum_total_costs_k else 1.05
+        )
 
         # Panel 1: Cumulative Actives
         ax1.plot(
@@ -436,9 +438,10 @@ class LiveDashboard:
         ax1.set_ylabel("Actives Found", fontsize=8)
         # Explicit range ensures 0 and 1 are always labelled even before any actives are found
         ax1.set_ylim(0, actives_y_max)
-        ax1.xaxis.set_major_locator(MaxNLocator(integer=True))
-        # Integer y-ticks only — actives are whole numbers
-        ax1.yaxis.set_major_locator(MaxNLocator(integer=True))
+        ax1.xaxis.set_major_locator(MaxNLocator(integer=True, nbins=5, min_n_ticks=1))
+        # Integer y-ticks only — actives are whole numbers; min_n_ticks=1 prevents
+        # fallback to float ticks when fewer than two integers are within the view
+        ax1.yaxis.set_major_locator(MaxNLocator(integer=True, min_n_ticks=1))
 
         # Panel 2: Per-Iteration Cost Breakdown — stacked bars + cumulative cost line
         # ax2_r is always created so it can hold its label and default range even with no data
@@ -447,8 +450,9 @@ class LiveDashboard:
         ax2_r.tick_params(axis="y", labelsize=7)
         # Explicit range ensures 0 and 1 are always labelled even on the first frame
         ax2_r.set_ylim(0, cost_k_y_max)
-        # nbins=5 caps tick density; integer=True prevents fractional $k labels
-        ax2_r.yaxis.set_major_locator(MaxNLocator(integer=True, nbins=5))
+        # nbins=5 caps tick density; integer=True + min_n_ticks=1 prevents fractional
+        # $k labels when fewer than two integers are within the view
+        ax2_r.yaxis.set_major_locator(MaxNLocator(integer=True, nbins=5, min_n_ticks=1))
         if iter_nums:
             ax2.bar(iter_nums, iter_drc_new, color=_COLOUR_DRC, label="DRC")
             ax2.bar(
@@ -468,10 +472,12 @@ class LiveDashboard:
                 linewidth=2,
                 linestyle="--",
             )
-            ax2.xaxis.set_major_locator(MaxNLocator(integer=True))
+
         ax2.set_title("Per-Iteration Cost Breakdown", fontsize=9)
         ax2.set_xlabel("Iteration", fontsize=8)
         ax2.set_ylabel("Iteration Cost ($)", fontsize=8)
+        ax2.set_xlim(0.5, max(1, len(iterations)) + 0.5)
+        ax2.xaxis.set_major_locator(MaxNLocator(integer=True, nbins=5, min_n_ticks=1))
 
         # Panel 3: Model Performance
         if metric_iters:
@@ -500,19 +506,28 @@ class LiveDashboard:
         # Prefer steps of 1, 2, or 5 × 10^n to avoid close labels collapsing to the same value;
         # nbins=5 caps at 6 ticks so no frame becomes over-crowded
         ax3.yaxis.set_major_locator(MaxNLocator(steps=[1, 2, 5, 10], nbins=5))
-        ax3.xaxis.set_major_locator(MaxNLocator(integer=True))
+        ax3.set_xlim(0.5, max(1, len(iterations)) + 0.5)
+        ax3.xaxis.set_major_locator(MaxNLocator(integer=True, nbins=5, min_n_ticks=1))
 
         # Panel 4: Compound Status — current pool state only (last snapshot)
         categories = ["Unqueried", "PS", "DRC"]
         base_vals = [last["n_unqueried"], last["n_ps_only"], last["n_drc_new"]]
         base_colors = [_COLOUR_UNQUERIED, _COLOUR_PS, _COLOUR_DRC]
         upgrade_vals = [0, last["n_upgrades"], last["n_upgrades"]]
-        ax4.bar(categories, base_vals, color=base_colors)
-        ax4.bar(categories, upgrade_vals, bottom=base_vals, color=_COLOUR_UPGRADE)
+        ax4.bar(categories, base_vals, color=base_colors, label=categories)
+        ax4.bar(
+            categories,
+            upgrade_vals,
+            bottom=base_vals,
+            color=_COLOUR_UPGRADE,
+            label="PS→DRC",
+        )
         ax4.set_title("Compound Status", fontsize=9)
         ax4.set_xlabel("Category", fontsize=8)
         ax4.set_ylabel("Compounds", fontsize=8)
         ax4.set_ylim(0, 1.05 * max(self.n_compounds, 1))
+
+        ax4.legend(loc="upper right", fontsize=7)
 
         fig.suptitle(
             "Active Learning Campaign Dashboard", fontsize=11, fontweight="bold"
