@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import logging
 import warnings
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 
 def suppress_noisy_loggers() -> None:
@@ -87,3 +89,21 @@ def _set_level(level: int, names: list[str]) -> None:
     """
     for name in names:
         logging.getLogger(name).setLevel(level)
+
+
+@contextmanager
+def temporary_log_level(level: int, names: list[str]) -> Iterator[None]:
+    """Temporarily raise logger thresholds while a progress display is active
+
+    This keeps informational logs from redrawing into Rich live output while
+    still allowing warnings and errors to surface
+    """
+    loggers = [logging.getLogger(name) for name in names]
+    previous_levels = [logger.level for logger in loggers]
+    try:
+        for logger in loggers:
+            logger.setLevel(level)
+        yield
+    finally:
+        for logger, previous_level in zip(loggers, previous_levels):
+            logger.setLevel(previous_level)

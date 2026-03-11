@@ -92,8 +92,7 @@ def parse_campaign_state(
     """
     if smiles_column not in df.columns:
         raise ValueError(
-            f"state CSV must contain column {smiles_column!r}, "
-            f"got {sorted(df.columns)}"
+            f"state CSV must contain column {smiles_column!r}, got {sorted(df.columns)}"
         )
 
     training_records: list[LabelRecord] = []
@@ -118,7 +117,9 @@ def parse_campaign_state(
                 "both be empty."
             )
 
-        canonical = raw_smiles if is_canonical else preprocessor.canonicalize(raw_smiles)
+        canonical = (
+            raw_smiles if is_canonical else preprocessor.canonicalize(raw_smiles)
+        )
         if canonical is None:
             raise ValueError(f"Row {csv_row}: invalid SMILES {raw_smiles!r}.")
 
@@ -147,9 +148,7 @@ def parse_campaign_state(
             ) from exc
 
         if not math.isfinite(value):
-            raise ValueError(
-                f"Row {csv_row}: value must be finite, got {value_raw!r}."
-            )
+            raise ValueError(f"Row {csv_row}: value must be finite, got {value_raw!r}.")
         if not (_PECO50_MIN <= value <= _PECO50_MAX):
             raise ValueError(
                 f"Row {csv_row}: value must be within [{_PECO50_MIN:.1f}, {_PECO50_MAX:.1f}], "
@@ -354,4 +353,3 @@ def _validate_training_records(records: list[LabelRecord]) -> None:
                 f"Compound {canonical_smiles!r} has both a PS '<' row and a DRC row. "
                 "This mixed-fidelity combination is unsupported in plan mode."
             )
-
