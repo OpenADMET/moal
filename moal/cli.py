@@ -324,7 +324,15 @@ def plan(config: Path, output_dir: Path | None, verbose: bool) -> None:
                 except ValueError as exc:
                     raise click.ClickException(str(exc)) from exc
 
+                # Sort by score
+                annotated_df = annotated_df.sort_values(
+                    by="overall_score", ascending=False
+                ).reset_index(drop=True)
+
+                # Save to CSV
                 annotated_df.to_csv(plan_path, index=False)
+
+                # Advance progress bar (to completion)
                 progress.advance(task)
 
     if warning_message is not None:
