@@ -267,7 +267,6 @@ class LiveDashboard:
                 width=self._export_width,
                 height=self._export_height,
             )
-            logger.info("Static dashboard PNG saved to %s", path)
         except Exception as exc:
             logger.warning("Could not save static dashboard PNG: %s", exc)
 
