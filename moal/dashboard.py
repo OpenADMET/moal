@@ -135,20 +135,9 @@ class LiveDashboard:
         self._app.logger.setLevel(logging.ERROR)
 
         bg = _THEME_BG.get(theme.lower(), "#ffffff")
-        fg = "#ffffff" if "dark" in theme.lower() else "#000000"
 
         self._app.layout = html.Div(
             [
-                html.H3(
-                    "Active Learning Campaign Dashboard",
-                    style={
-                        "textAlign": "center",
-                        "color": fg,
-                        "backgroundColor": bg,
-                        "padding": "12px",
-                        "margin": "0",
-                    },
-                ),
                 # No fixed height/width — the figure layout dimensions from config control size
                 dcc.Graph(id="live-graph"),
                 dcc.Interval(id="interval-component", interval=1000, n_intervals=0),
