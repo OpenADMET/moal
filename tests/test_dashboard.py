@@ -18,9 +18,11 @@ from moal.types import CensoringType, LabelRecord, QueryType
 
 @pytest.fixture(autouse=True)
 def mock_werkzeug_server(monkeypatch):
-    """Prevent real Werkzeug server from binding a port in every test."""
+    """Prevent real Werkzeug server from binding a port in every test,
+    and suppress browser auto-open calls."""
     server = MagicMock()
     monkeypatch.setattr("moal.dashboard.make_server", lambda *a, **kw: server)
+    monkeypatch.setattr("moal.dashboard.webbrowser.open", lambda *a, **kw: None)
     return server
 
 
