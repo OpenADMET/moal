@@ -397,6 +397,7 @@ class LiveDashboard:
                 it["iter_drc_cost"] + it["iter_ps_cost"] for it in iterations
             )
         )
+        cum_total_costs_k = [c / 1000 for c in cum_total_costs]
         metric_iters = [
             i + 1
             for i, it in enumerate(iterations)
@@ -417,6 +418,9 @@ class LiveDashboard:
                 "n_unqueried": self.n_compounds,
             }
         )
+        # Floor at 1.05 guarantees 0 and 1 are labelled even before any data arrives
+        actives_y_max = max(1.05, max(cum_actives) * 1.05) if cum_actives else 1.05
+        cost_k_y_max = max(1.05, max(cum_total_costs_k) * 1.05) if cum_total_costs_k else 1.05
 
         # Panel 1: Cumulative Actives
         ax1.plot(
@@ -430,12 +434,21 @@ class LiveDashboard:
         ax1.set_title("Cumulative Actives", fontsize=9)
         ax1.set_xlabel("Cumulative Cost ($)", fontsize=8)
         ax1.set_ylabel("Actives Found", fontsize=8)
-        ax1.set_ylim(bottom=0)
+        # Explicit range ensures 0 and 1 are always labelled even before any actives are found
+        ax1.set_ylim(0, actives_y_max)
         ax1.xaxis.set_major_locator(MaxNLocator(integer=True))
         # Integer y-ticks only — actives are whole numbers
         ax1.yaxis.set_major_locator(MaxNLocator(integer=True))
 
         # Panel 2: Per-Iteration Cost Breakdown — stacked bars + cumulative cost line
+        # ax2_r is always created so it can hold its label and default range even with no data
+        ax2_r = ax2.twinx()
+        ax2_r.set_ylabel("Cumulative Cost ($k)", fontsize=8)
+        ax2_r.tick_params(axis="y", labelsize=7)
+        # Explicit range ensures 0 and 1 are always labelled even on the first frame
+        ax2_r.set_ylim(0, cost_k_y_max)
+        # nbins=5 caps tick density; integer=True prevents fractional $k labels
+        ax2_r.yaxis.set_major_locator(MaxNLocator(integer=True, nbins=5))
         if iter_nums:
             ax2.bar(iter_nums, iter_drc_new, color=_COLOUR_DRC, label="DRC")
             ax2.bar(
@@ -447,9 +460,7 @@ class LiveDashboard:
             )
             ps_bottoms = [d + u for d, u in zip(iter_drc_new, iter_upgrades)]
             ax2.bar(iter_nums, iter_ps, bottom=ps_bottoms, color=_COLOUR_PS, label="PS")
-            ax2_r = ax2.twinx()
             # Scale to thousands so tick values stay compact whole-number integers
-            cum_total_costs_k = [c / 1000 for c in cum_total_costs]
             ax2_r.plot(
                 iter_nums,
                 cum_total_costs_k,
@@ -457,10 +468,6 @@ class LiveDashboard:
                 linewidth=2,
                 linestyle="--",
             )
-            ax2_r.set_ylabel("Cumulative Cost ($k)", fontsize=8)
-            ax2_r.tick_params(axis="y", labelsize=7)
-            # nbins=5 caps tick density; integer=True prevents fractional $k labels
-            ax2_r.yaxis.set_major_locator(MaxNLocator(integer=True, nbins=5))
             ax2.xaxis.set_major_locator(MaxNLocator(integer=True))
         ax2.set_title("Per-Iteration Cost Breakdown", fontsize=9)
         ax2.set_xlabel("Iteration", fontsize=8)
@@ -710,9 +717,12 @@ class LiveDashboard:
                 col=1,
             )
 
-        # Pre-compute data maxima for dynamic integer dtick on actives and $k axes
+        # Pre-compute data maxima for dynamic integer dtick on actives and $k axes;
+        # floor at 1.05 ensures both 0 and 1 are always visible even with no data
         max_actives = max(cum_actives, default=0)
         max_cost_k = max(cum_total_costs, default=0)
+        actives_y_max = max(1.05, max_actives * 1.05)
+        cost_k_y_max = max(1.05, max_cost_k * 1.05)
 
         fig.update_layout(
             title_text="Active Learning Campaign Dashboard",
@@ -735,10 +745,11 @@ class LiveDashboard:
         )
         # Y-axes: primary labels and floor; disable secondary gridlines to prevent clashing
         fig.update_yaxes(
-            rangemode="tozero",
             title_text="Actives Found",
             row=1,
             col=1,
+            # Explicit range ensures 0 and 1 are visible even before any actives are found
+            range=[0, actives_y_max],
             # Integer-only ticks; dtick computed from data so labels never repeat
             tickmode="linear",
             tick0=0,
@@ -753,7 +764,9 @@ class LiveDashboard:
             row=1,
             col=2,
             showgrid=False,
-            # Integer ticks computed from data so labels never repeat across frames
+            # Explicit range ensures 0 and 1 are visible even on the first frame;
+            # integer ticks computed from data so labels never repeat across frames
+            range=[0, cost_k_y_max],
             tickmode="linear",
             tick0=0,
             dtick=self._nice_dtick(max_cost_k),
