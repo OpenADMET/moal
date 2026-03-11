@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Callable
 
 import click
+import lightning as L
 import pandas as pd
 from rich.console import Console
 from rich.progress import (
@@ -112,7 +113,13 @@ def simulate(config: Path, output_dir: Path | None, verbose: bool) -> None:
         preprocessor=preprocessor,
     )
 
+    # Setting all seeds
+    L.seed_everything(cfg.seed, workers=True, verbose=False)
+
+    # Build model
     model = _build_simulation_model(cfg, oracle._ground_truth)
+
+    # Build acquisition function
     acquisition = _build_acquisition(cfg)
 
     evaluator = PipelineEvaluator(
@@ -295,13 +302,20 @@ def plan(config: Path, output_dir: Path | None, verbose: bool) -> None:
                     else ""
                 )
                 retraining_description = (
-                    f"Training model — {n_labeled} records "
+                    f"[yellow]Training model[/yellow] — {n_labeled} records "
                     f"([orange1]{n_labeled_drc} DRC[/orange1], "
                     f"[steel_blue1]{n_labeled_ps} PS[/steel_blue1]"
                     f"{upgrade_suffix})"
                 )
                 progress.update(task, description=retraining_description)
+
+                # Setting all seeds
+                L.seed_everything(cfg.seed, workers=True, verbose=False)
+
+                # Build model
                 model = _build_plan_model(cfg)
+
+                # Train model
                 model.refit(
                     records=fit_records,
                     trainer_kwargs=cfg.trainer.to_dict(),
@@ -312,9 +326,13 @@ def plan(config: Path, output_dir: Path | None, verbose: bool) -> None:
                 progress.advance(task)
 
                 progress.update(task, description=scoring_description)
+
+                # Collect SMILES for inference: unqueried compounds and PS hits eligible for upgrade
                 inference_smiles = [smi for _, smi in state.unqueried_rows] + [
                     smi for _, smi in state.ps_upgrade_rows
                 ]
+
+                # Make predictions
                 predictions = model.predict_smiles(inference_smiles)
 
                 try:
