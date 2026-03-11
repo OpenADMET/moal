@@ -26,28 +26,6 @@ def mock_werkzeug_server(monkeypatch):
     return server
 
 
-@pytest.fixture
-def mock_kaleido(monkeypatch):
-    """Patch plotly.io.to_image to return distinct minimal PNGs per call.
-
-    Distinct pixel values prevent PIL's GIF writer from deduplicating frames,
-    which would cause the GIF frame-count assertions to fail.
-    """
-    _counter = [0]
-
-    def _make_unique_png(*_a, **_kw):
-        from PIL import Image
-
-        shade = (_counter[0] * 60 + 20) % 256
-        buf = io.BytesIO()
-        Image.new("RGB", (4, 4), color=(shade, shade, shade)).save(buf, format="PNG")
-        _counter[0] += 1
-        return buf.getvalue()
-
-    monkeypatch.setattr("plotly.io.to_image", _make_unique_png)
-    return _make_unique_png
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -108,10 +86,10 @@ class TestDashboardInit:
         assert db._iterations == []
         db.close()
 
-    def test_frame_bytes_empty_on_construction(self):
-        """_frame_bytes was removed; verify the attribute no longer exists."""
+    def test_frames_empty_on_construction(self):
+        """No pre-rendered frames should exist before the first update() call."""
         db = LiveDashboard(n_iterations=5, n_compounds=20)
-        assert not hasattr(db, "_frame_bytes")
+        assert db._frames == []
         db.close()
 
     def test_close_shuts_down_server(self, mock_werkzeug_server):
@@ -362,64 +340,54 @@ class TestCompoundStatusPanel:
 
 
 class TestFrameCapture:
-    """Tests for deferred PNG frame rendering (kaleido path)."""
+    """Tests for matplotlib-based PNG frame pre-capture at update() time."""
 
-    def test_kaleido_called_once_per_iteration_in_save_gif(self, monkeypatch, tmp_path):
-        """save_gif() must invoke pio.to_image exactly once per stored iteration snapshot."""
-        call_count = [0]
-
-        def _counting_png(*_a, **_kw):
-            from PIL import Image
-
-            shade = (call_count[0] * 60 + 20) % 256
-            buf = io.BytesIO()
-            Image.new("RGB", (4, 4), color=(shade, shade, shade)).save(
-                buf, format="PNG"
-            )
-            call_count[0] += 1
-            return buf.getvalue()
-
-        monkeypatch.setattr("plotly.io.to_image", _counting_png)
+    def test_frame_appended_per_update(self):
+        """Each update() call must append exactly one pre-rendered PNG frame."""
         db = LiveDashboard(n_iterations=3, n_compounds=20)
         records = _make_records(4)
-        for _ in range(3):
-            db.update(
-                records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0
-            )
-        db.save_gif(tmp_path / "out.gif")
+        for i in range(3):
+            db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
+            assert len(db._frames) == i + 1
         db.close()
 
-        assert call_count[0] == 3
+    def test_frames_are_valid_png_bytes(self):
+        """Pre-captured frames must be valid PNG byte payloads."""
+        from PIL import Image
 
-    def test_no_kaleido_calls_before_save_gif(self, monkeypatch):
-        """update() must not invoke pio.to_image — rendering is deferred to save_gif()."""
-        call_count = [0]
-
-        def _tracking_mock(*a, **kw):
-            call_count[0] += 1
-            from PIL import Image
-
-            buf = io.BytesIO()
-            Image.new("RGB", (4, 4)).save(buf, format="PNG")
-            return buf.getvalue()
-
-        monkeypatch.setattr("plotly.io.to_image", _tracking_mock)
-        db = LiveDashboard(n_iterations=3, n_compounds=20)
+        db = LiveDashboard(n_iterations=2, n_compounds=20)
         records = _make_records(4)
-        for _ in range(3):
-            db.update(
-                records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0
-            )
+        db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
         db.close()
-        assert call_count[0] == 0
 
-    def test_gif_skipped_when_kaleido_fails(self, monkeypatch, tmp_path, caplog):
-        """A kaleido failure must warn once and produce no GIF file."""
+        assert db._frames
+        img = Image.open(io.BytesIO(db._frames[0]))
+        assert img.format == "PNG"
+
+    def test_capture_failure_is_silent(self, monkeypatch, caplog):
+        """A matplotlib render error in _capture_frame() must warn and not raise."""
         import logging
 
         monkeypatch.setattr(
-            "plotly.io.to_image",
-            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("no kaleido")),
+            "moal.dashboard.LiveDashboard._render_matplotlib_frame",
+            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("render error")),
+        )
+        db = LiveDashboard(n_iterations=2, n_compounds=20)
+        records = _make_records(4)
+        with caplog.at_level(logging.WARNING, logger="moal.dashboard"):
+            db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
+
+        assert db._frames == []
+        assert "Could not capture dashboard frame" in caplog.text
+        db.close()
+
+    def test_gif_skipped_when_no_frames_captured(self, monkeypatch, tmp_path, caplog):
+        """If all _capture_frame() calls silently fail, save_gif() must warn and skip."""
+        import logging
+
+        monkeypatch.setattr(
+            "moal.dashboard.LiveDashboard._render_matplotlib_frame",
+            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("render error")),
         )
         db = LiveDashboard(n_iterations=2, n_compounds=20)
         records = _make_records(4)
@@ -430,11 +398,7 @@ class TestFrameCapture:
             db.save_gif(gif_path)
 
         assert not gif_path.exists()
-        assert "GIF export failed" in caplog.text
-        db.close()
-
-        assert not gif_path.exists()
-        assert "GIF export failed" in caplog.text
+        assert "No frames captured" in caplog.text
         db.close()
 
 
@@ -446,8 +410,8 @@ class TestFrameCapture:
 class TestSaveGif:
     """Tests for LiveDashboard.save_gif."""
 
-    def test_gif_created_with_correct_frame_count(self, tmp_path, mock_kaleido):
-        """A GIF produced from N snapshots must contain N frames."""
+    def test_gif_created_with_correct_frame_count(self, tmp_path):
+        """A GIF produced from N updates must contain N frames."""
         from PIL import Image
 
         db = LiveDashboard(n_iterations=3, n_compounds=20)
@@ -481,7 +445,7 @@ class TestSaveGif:
         db.close()
         assert not gif_path.exists()
 
-    def test_last_frame_held_longer(self, tmp_path, mock_kaleido):
+    def test_last_frame_held_longer(self, tmp_path):
         """The final frame must carry last_frame_duration_ms, not frame_duration_ms."""
         from PIL import Image
 
@@ -508,7 +472,7 @@ class TestSaveGif:
         assert durations[-1] == 5000
         assert all(d == 500 for d in durations[:-1])
 
-    def test_single_frame_gif_uses_last_frame_duration(self, tmp_path, mock_kaleido):
+    def test_single_frame_gif_uses_last_frame_duration(self, tmp_path):
         """A single-frame GIF should apply last_frame_duration_ms to that only frame."""
         from PIL import Image
 
@@ -645,31 +609,22 @@ class TestBuildFigure:
         assert any("No test set" in t for t in annotation_texts)
         db.close()
 
-    def test_export_dimensions_passed_to_kaleido(self, monkeypatch, tmp_path):
-        """save_gif() must forward export_width and export_height to pio.to_image."""
-        captured_kwargs: list[dict] = []
-
-        def _mock_to_image(*_a, **kw):
-            captured_kwargs.append(kw)
-            from PIL import Image
-
-            buf = io.BytesIO()
-            shade = len(captured_kwargs) * 60 % 256
-            Image.new("RGB", (4, 4), color=(shade, shade, shade)).save(
-                buf, format="PNG"
-            )
-            return buf.getvalue()
-
-        monkeypatch.setattr("plotly.io.to_image", _mock_to_image)
+    def test_export_dimensions_used_in_render(self, tmp_path):
+        """export_width and export_height must control the PNG dimensions produced by save()."""
+        from PIL import Image
 
         db = LiveDashboard(
-            n_iterations=2, n_compounds=10, export_width=640, export_height=480
+            n_iterations=2, n_compounds=10, export_width=400, export_height=300
         )
         records = _make_records(2)
         db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
-        db.save_gif(tmp_path / "out.gif")
+        png_path = tmp_path / "out.png"
+        db.save(png_path)
         db.close()
 
-        assert len(captured_kwargs) == 1
-        assert captured_kwargs[0]["width"] == 640
-        assert captured_kwargs[0]["height"] == 480
+        assert png_path.exists()
+        with Image.open(png_path) as img:
+            w, h = img.size
+        # matplotlib tight_layout can adjust dimensions slightly; allow ±20%
+        assert abs(w - 400) / 400 < 0.2
+        assert abs(h - 300) / 300 < 0.2

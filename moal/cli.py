@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import importlib.metadata
 import logging
-import threading
 from pathlib import Path
 from typing import Callable
 
@@ -196,20 +195,9 @@ def simulate(config: Path, output_dir: Path | None, verbose: bool) -> None:
         html_path = out_dir / "dashboard_animation.html"
         dashboard.save_html(html_path)
 
-        # GIF export is O(N) kaleido renders — run in a background thread so
-        # the Werkzeug server can be shut down without blocking on it.  The
-        # thread is non-daemon so the process waits for it to finish cleanly.
         gif_path = out_dir / "dashboard_animation.gif"
-        gif_thread = threading.Thread(
-            target=dashboard.save_gif, args=(gif_path,), daemon=False
-        )
-        gif_thread.start()
-        logger.info(
-            "GIF animation rendering started in background",
-        )
-
+        dashboard.save_gif(gif_path)
         dashboard.close()
-        gif_thread.join()
 
 
 @main.command()

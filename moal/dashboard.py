@@ -22,6 +22,8 @@ import threading
 import webbrowser
 from pathlib import Path
 
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.figure import Figure
 import plotly.graph_objects as go
 from dash import Dash, Input, Output, dcc, html
 from plotly.subplots import make_subplots
@@ -42,6 +44,9 @@ _COLOUR_ACT = "#2CA02C"  # green
 _COLOUR_MET = "#D62728"  # red
 _COLOUR_UPGRADE = "#9B59B6"  # purple-magenta (PS→DRC upgrades)
 _COLOUR_UNQUERIED = "#888888"  # mid-grey
+
+# DPI used for matplotlib GIF/PNG frame rendering — controls output pixel density
+_GIF_RENDER_DPI: int = 100
 
 # Best-effort HTML background colours keyed by Plotly template name
 _THEME_BG: dict[str, str] = {
@@ -126,8 +131,8 @@ class LiveDashboard:
         self._lock = threading.Lock()
         # One dict per update() call; consumed by the Dash callback and save_html()
         self._iterations: list[dict] = []
-        # Warn only once when kaleido is absent or fails
-        self._kaleido_warned = False
+        # Pre-rendered PNG bytes captured at each update() for fast GIF assembly
+        self._frames: list[bytes] = []
         self._metric_label = model_metric.value.upper().replace("_", " ")
 
         self._app = Dash(__name__, suppress_callback_exceptions=True)
@@ -242,31 +247,28 @@ class LiveDashboard:
         with self._lock:
             self._iterations.append(snapshot)
 
+        # Pre-render at update time so save_gif() is pure PIL assembly (no external renderer)
+        self._capture_frame()
+
     # ------------------------------------------------------------------
     # Persistence and export
     # ------------------------------------------------------------------
 
     def save(self, path: str | Path) -> None:
-        """Save the current figure as a static PNG. Requires kaleido.
+        """Save the current figure as a static PNG.
+
+        Uses the same matplotlib renderer as GIF export — no kaleido required.
 
         Parameters
         ----------
         path : str or Path
             Destination file path.
         """
+        with self._lock:
+            iterations = list(self._iterations)
         try:
-            import plotly.io as pio
-
-            with self._lock:
-                iterations = list(self._iterations)
-            fig = self._build_figure(iterations)
-            pio.write_image(
-                fig,
-                str(path),
-                format="png",
-                width=self._export_width,
-                height=self._export_height,
-            )
+            png = self._render_matplotlib_frame(iterations)
+            Path(path).write_bytes(png)
             logger.info("Static dashboard PNG saved to %s", path)
         except Exception as exc:
             logger.warning("Could not save static dashboard PNG: %s", exc)
@@ -277,10 +279,10 @@ class LiveDashboard:
         frame_duration_ms: int = 500,
         last_frame_duration_ms: int = 5000,
     ) -> None:
-        """Render all iteration snapshots to PNG via kaleido and assemble an animated GIF.
+        """Assemble all captured PNG frames into an animated GIF.
 
-        Frames are rendered in a single batch at export time so kaleido opens and
-        closes Chromium only once regardless of how many iterations were run.
+        Frames are pre-rendered by matplotlib's Agg backend at each update()
+        call, so this method is pure PIL assembly with no external renderer.
 
         Parameters
         ----------
@@ -292,29 +294,17 @@ class LiveDashboard:
             Display duration of the final frame in milliseconds. Default is 5000.
         """
         with self._lock:
-            iterations = list(self._iterations)
+            frames = list(self._frames)
 
-        if not iterations:
-            logger.warning("No iterations recorded; skipping GIF export")
+        if not frames:
+            logger.warning("No frames captured; skipping GIF export")
             return
 
         try:
-            import plotly.io as pio
             from PIL import Image
 
-            frame_bytes: list[bytes] = []
-            for i, _ in enumerate(iterations):
-                fig = self._build_figure(iterations[: i + 1])
-                png = pio.to_image(
-                    fig,
-                    format="png",
-                    width=self._export_width,
-                    height=self._export_height,
-                )
-                frame_bytes.append(png)
-
-            frames = [Image.open(io.BytesIO(b)).convert("RGB") for b in frame_bytes]
-            palette_frames = [f.convert("P", dither=Image.Dither.NONE) for f in frames]
+            pil_frames = [Image.open(io.BytesIO(b)).convert("RGB") for b in frames]
+            palette_frames = [f.convert("P", dither=Image.Dither.NONE) for f in pil_frames]
             durations = [frame_duration_ms] * len(palette_frames)
             durations[-1] = last_frame_duration_ms
             palette_frames[0].save(
@@ -328,16 +318,11 @@ class LiveDashboard:
             )
             logger.info(
                 "GIF animation (%d frames) saved to %s",
-                len(frame_bytes),
+                len(frames),
                 path,
             )
         except Exception as exc:
-            if not self._kaleido_warned:
-                logger.warning(
-                    "GIF export failed (kaleido may not be installed or Chrome unavailable): %s",
-                    exc,
-                )
-                self._kaleido_warned = True
+            logger.warning("Could not save dashboard GIF: %s", exc)
 
     def save_html(self, path: str | Path) -> None:
         """Export the animated figure as a standalone HTML file.
@@ -371,6 +356,99 @@ class LiveDashboard:
     # ------------------------------------------------------------------
     # Figure construction
     # ------------------------------------------------------------------
+
+    def _capture_frame(self) -> None:
+        """Render the current iteration state to PNG bytes and append to _frames."""
+        with self._lock:
+            iterations = list(self._iterations)
+        try:
+            self._frames.append(self._render_matplotlib_frame(iterations))
+        except Exception as exc:
+            logger.warning("Could not capture dashboard frame: %s", exc)
+
+    def _render_matplotlib_frame(self, iterations: list[dict]) -> bytes:
+        """Build a 2×2 matplotlib figure from iteration snapshots and return PNG bytes.
+
+        Uses FigureCanvasAgg directly so no display environment or pyplot state
+        is required — safe to call from background threads and headless CI.
+        """
+        w = self._export_width / _GIF_RENDER_DPI
+        h = self._export_height / _GIF_RENDER_DPI
+        fig = Figure(figsize=(w, h), dpi=_GIF_RENDER_DPI)
+        FigureCanvasAgg(fig)  # attaches the Agg backend so fig.savefig() works headlessly
+
+        ax1, ax2, ax3, ax4 = fig.subplots(2, 2).flatten()
+
+        cum_costs = [it["cum_cost"] for it in iterations]
+        cum_actives = [it["cum_actives"] for it in iterations]
+        iter_nums = list(range(1, len(iterations) + 1))
+        iter_drc_new = [it["iter_drc_cost"] - it["iter_upgrade_cost"] for it in iterations]
+        iter_upgrades = [it["iter_upgrade_cost"] for it in iterations]
+        iter_ps = [it["iter_ps_cost"] for it in iterations]
+        cum_total_costs = list(
+            itertools.accumulate(
+                it["iter_drc_cost"] + it["iter_ps_cost"] for it in iterations
+            )
+        )
+        metric_iters = [
+            i + 1 for i, it in enumerate(iterations) if it["model_metric_value"] is not None
+        ]
+        metric_vals = [
+            it["model_metric_value"] for it in iterations if it["model_metric_value"] is not None
+        ]
+        last = iterations[-1] if iterations else {
+            "n_ps_only": 0, "n_drc_new": 0, "n_upgrades": 0, "n_unqueried": self.n_compounds,
+        }
+
+        # Panel 1: Cumulative Actives
+        ax1.plot(cum_costs, cum_actives, color=_COLOUR_ACT, linewidth=2, marker="o", markersize=4)
+        ax1.set_title("Cumulative Actives", fontsize=9)
+        ax1.set_xlabel("Cumulative Cost ($)", fontsize=8)
+        ax1.set_ylabel("Actives Found", fontsize=8)
+        ax1.set_ylim(bottom=0)
+
+        # Panel 2: Per-Iteration Cost Breakdown — stacked bars + cumulative cost line
+        if iter_nums:
+            ax2.bar(iter_nums, iter_drc_new, color=_COLOUR_DRC, label="DRC")
+            ax2.bar(iter_nums, iter_upgrades, bottom=iter_drc_new, color=_COLOUR_UPGRADE, label="PS→DRC")
+            ps_bottoms = [d + u for d, u in zip(iter_drc_new, iter_upgrades)]
+            ax2.bar(iter_nums, iter_ps, bottom=ps_bottoms, color=_COLOUR_PS, label="PS")
+            ax2_r = ax2.twinx()
+            ax2_r.plot(iter_nums, cum_total_costs, color="#555555", linewidth=1.5, linestyle="--")
+            ax2_r.set_ylabel("")
+            ax2_r.tick_params(axis="y", labelsize=7)
+        ax2.set_title("Per-Iteration Cost Breakdown", fontsize=9)
+        ax2.set_xlabel("Iteration", fontsize=8)
+        ax2.set_ylabel("Iteration Cost ($)", fontsize=8)
+
+        # Panel 3: Model Performance
+        if metric_iters:
+            ax3.plot(metric_iters, metric_vals, color=_COLOUR_MET, linewidth=2, marker="o", markersize=4)
+        else:
+            ax3.text(0.5, 0.5, "No test set provided", transform=ax3.transAxes,
+                     ha="center", va="center", color="grey", fontsize=9)
+        ax3.set_title(f"Model Performance ({self._metric_label})", fontsize=9)
+        ax3.set_xlabel("Iteration", fontsize=8)
+        ax3.set_ylabel(self._metric_label, fontsize=8)
+
+        # Panel 4: Compound Status — current pool state only (last snapshot)
+        categories = ["Unqueried", "PS", "DRC"]
+        base_vals = [last["n_unqueried"], last["n_ps_only"], last["n_drc_new"]]
+        base_colors = [_COLOUR_UNQUERIED, _COLOUR_PS, _COLOUR_DRC]
+        upgrade_vals = [0, last["n_upgrades"], last["n_upgrades"]]
+        ax4.bar(categories, base_vals, color=base_colors)
+        ax4.bar(categories, upgrade_vals, bottom=base_vals, color=_COLOUR_UPGRADE)
+        ax4.set_title("Compound Status", fontsize=9)
+        ax4.set_xlabel("Category", fontsize=8)
+        ax4.set_ylabel("Compounds", fontsize=8)
+        ax4.set_ylim(0, 1.05 * max(self.n_compounds, 1))
+
+        fig.suptitle("Active Learning Campaign Dashboard", fontsize=11, fontweight="bold")
+        fig.tight_layout(pad=2.0)
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=_GIF_RENDER_DPI)
+        return buf.getvalue()
 
     def _build_figure(self, iterations: list[dict]) -> go.Figure:
         """Build the 2×2 Plotly subplot figure from a list of iteration snapshots."""
