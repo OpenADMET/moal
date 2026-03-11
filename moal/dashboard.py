@@ -638,6 +638,29 @@ class LiveDashboard:
 
     def _build_figure(self, iterations: list[dict]) -> go.Figure:
         """Build the 2×2 Plotly subplot figure from a list of iteration snapshots."""
+        if not iterations:
+            bg = _THEME_BG.get(self._theme.lower(), "#ffffff")
+            fig = go.Figure()
+            fig.add_annotation(
+                text="Waiting for first iteration\u2026",
+                xref="paper",
+                yref="paper",
+                x=0.5,
+                y=0.5,
+                showarrow=False,
+                font=dict(size=20, color="#aaaaaa"),
+            )
+            fig.update_layout(
+                template=self._theme,
+                paper_bgcolor=bg,
+                plot_bgcolor=bg,
+                xaxis=dict(visible=False),
+                yaxis=dict(visible=False),
+                height=self._export_height,
+                width=self._export_width,
+            )
+            return fig
+
         fig = make_subplots(
             rows=2,
             cols=2,
@@ -679,15 +702,7 @@ class LiveDashboard:
             if it["model_metric_value"] is not None
         ]
 
-        if iterations:
-            last = iterations[-1]
-        else:
-            last = {
-                "n_ps_only": 0,
-                "n_drc_new": 0,
-                "n_upgrades": 0,
-                "n_unqueried": self.n_compounds,
-            }
+        last = iterations[-1]
 
         # Panel 1: Cumulative Actives line
         fig.add_trace(
