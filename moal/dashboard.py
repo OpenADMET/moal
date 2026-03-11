@@ -18,6 +18,7 @@ from __future__ import annotations
 import io
 import itertools
 import logging
+import math
 import threading
 import webbrowser
 from pathlib import Path
@@ -26,7 +27,7 @@ import plotly.graph_objects as go
 from dash import Dash, Input, Output, dcc, html
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
-from matplotlib.ticker import MaxNLocator
+from matplotlib.ticker import Locator, MaxNLocator
 from plotly.subplots import make_subplots
 from werkzeug.serving import make_server
 
@@ -95,6 +96,39 @@ _PLAY_PAUSE_SCRIPT = r"""
 # Row 1 col 1 → x, y1 | Row 1 col 2 → x2, y2 (primary), y3 (secondary)
 # Row 2 col 1 → x3, y4 | Row 2 col 2 → x4, y5
 _SUBPLOT_SPECS = [[{}, {"secondary_y": True}], [{}, {}]]
+
+
+class _OneDPLocator(Locator):
+    """Tick locator that restricts steps to the 1-2-5 sequence with step >= 0.1.
+
+    This prevents the model performance y-axis from ever displaying ticks that
+    require more than one decimal place (e.g. 0.35, 0.40, 0.45), which occurs
+    when a narrow metric range causes MaxNLocator to choose step=0.05 or smaller.
+    Falls back to showing the single mid-point value when the span is near zero.
+    """
+
+    _STEPS = [0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0]
+    _MAX_TICKS = 6
+
+    def __call__(self) -> list[float]:
+        vmin, vmax = self.axis.get_view_interval()
+        return self.tick_values(vmin, vmax)
+
+    def tick_values(self, vmin: float, vmax: float) -> list[float]:
+        import numpy as np
+
+        span = vmax - vmin
+        if span < 1e-12:
+            return [round((vmin + vmax) / 2, 10)]
+        for step in self._STEPS:
+            if span / step <= self._MAX_TICKS - 1:
+                start = np.floor(vmin / step) * step
+                end = vmax + step * 1e-9
+                ticks = np.arange(start, end, step)
+                return [round(float(t), 10) for t in ticks]
+        # Safety fallback: use first and last value only
+        return [round(vmin, 10), round(vmax, 10)]
+
 
 
 class LiveDashboard:
@@ -503,9 +537,13 @@ class LiveDashboard:
         ax3.set_title(f"Model Performance ({self._metric_label})", fontsize=9)
         ax3.set_xlabel("Iteration", fontsize=8)
         ax3.set_ylabel(self._metric_label, fontsize=8)
-        # Prefer steps of 1, 2, or 5 × 10^n to avoid close labels collapsing to the same value;
-        # nbins=5 caps at 6 ticks so no frame becomes over-crowded
-        ax3.yaxis.set_major_locator(MaxNLocator(steps=[1, 2, 5, 10], nbins=5))
+        # _OneDPLocator restricts steps to 1-2-5 sequence with step >= 0.1,
+        # preventing ticks that need more than one decimal place on any frame.
+        # The explicit ylim from _metric_axis_params guarantees the view always
+        # spans at least one full step, so _OneDPLocator sees >= 2 tick positions.
+        ax3.yaxis.set_major_locator(_OneDPLocator())
+        metric_ymin, metric_ymax, _, _ = self._metric_axis_params(metric_vals)
+        ax3.set_ylim(metric_ymin, metric_ymax)
         ax3.set_xlim(0.5, max(1, len(iterations)) + 0.5)
         ax3.xaxis.set_major_locator(MaxNLocator(integer=True, nbins=5, min_n_ticks=1))
 
@@ -553,6 +591,50 @@ class LiveDashboard:
             if candidate >= raw_step:
                 return candidate
         return max(1, int(max_val))
+
+    @staticmethod
+    def _metric_axis_params(
+        metric_vals: list[float],
+    ) -> tuple[float, float, float, float]:
+        """Return ``(ymin, ymax, tick0, dtick)`` for the Model Performance y-axis.
+
+        Guarantees that at least two tick positions (multiples of *dtick* starting
+        from *tick0*) fall within ``[ymin, ymax]``, without requiring labels with
+        more than one decimal place.  The step is chosen from the 1-2-5 sequence
+        based on the *span* of the data so the panel scales sensibly across both
+        narrow early-iteration ranges and large final-iteration ranges.
+
+        Parameters
+        ----------
+        metric_vals:
+            The metric values collected so far.  An empty list produces a
+            sensible default range ``[0.0, 0.2]`` with ``dtick=0.1``.
+        """
+        _STEPS = [0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0]
+        _MAX_TICKS = 6
+
+        if not metric_vals:
+            return (0.0, 0.2, 0.0, 0.1)
+
+        vmin_data = min(metric_vals)
+        vmax_data = max(metric_vals)
+        span = vmax_data - vmin_data
+
+        step = _STEPS[-1]
+        for s in _STEPS:
+            if span < 1e-12 or span / s <= _MAX_TICKS - 1:
+                step = s
+                break
+
+        t_lo = math.floor(vmin_data / step) * step
+        t_hi = math.ceil(vmax_data / step) * step
+
+        # Guarantee at least two distinct tick positions.
+        if t_hi <= t_lo + step * 0.5:
+            t_hi = t_lo + step
+
+        margin = step * 0.05
+        return (t_lo - margin, t_hi + margin, t_lo, step)
 
     def _build_figure(self, iterations: list[dict]) -> go.Figure:
         """Build the 2×2 Plotly subplot figure from a list of iteration snapshots."""
@@ -738,6 +820,11 @@ class LiveDashboard:
         max_cost_k = max(cum_total_costs, default=0)
         actives_y_max = max(1.05, max_actives * 1.05)
         cost_k_y_max = max(1.05, max_cost_k * 1.05)
+        # Metric axis: explicit range + tick0/dtick computed from data span so at
+        # least two tick labels are always visible even on narrow early-iteration ranges.
+        metric_ymin, metric_ymax, metric_tick0, metric_dtick = self._metric_axis_params(
+            metric_vals
+        )
 
         fig.update_layout(
             title_text="Active Learning Campaign Dashboard",
@@ -790,9 +877,15 @@ class LiveDashboard:
             title_text=self._metric_label,
             row=2,
             col=1,
-            # Trim trailing zeros without forcing a fixed decimal width; nticks caps density
+            # Explicit range from _metric_axis_params guarantees >= 2 tick positions
+            # are always visible. tick0/dtick are span-based (not max-based) so they
+            # stay consistent with the range on every frame, including narrow early ones.
+            # tickformat ".3~g" trims trailing zeros (e.g. 1.0 → "1", 0.5 → "0.5").
+            range=[metric_ymin, metric_ymax],
+            tickmode="linear",
+            tick0=metric_tick0,
+            dtick=metric_dtick,
             tickformat=".3~g",
-            nticks=6,
         )
         fig.update_yaxes(
             title_text="Compounds",

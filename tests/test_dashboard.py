@@ -628,3 +628,75 @@ class TestBuildFigure:
         # matplotlib tight_layout can adjust dimensions slightly; allow ±20%
         assert abs(w - 400) / 400 < 0.2
         assert abs(h - 300) / 300 < 0.2
+
+
+# ---------------------------------------------------------------------------
+# _metric_axis_params
+# ---------------------------------------------------------------------------
+
+
+class TestMetricAxisParams:
+    """Unit tests for LiveDashboard._metric_axis_params.
+
+    The method must return (ymin, ymax, tick0, dtick) such that at least two
+    multiples of dtick starting from tick0 fall within [ymin, ymax], and all
+    ticks land on multiples of 0.1 or larger (so 1 decimal place is sufficient
+    to distinguish every label).
+    """
+
+    @staticmethod
+    def _count_ticks_in_range(ymin, ymax, tick0, dtick):
+        """Count how many tick positions tick0 + k*dtick lie within [ymin, ymax]."""
+        import math
+
+        if dtick <= 0:
+            return 0
+        k_start = math.ceil((ymin - tick0) / dtick)
+        k_end = math.floor((ymax - tick0) / dtick)
+        return max(0, k_end - k_start + 1)
+
+    def test_empty_gives_two_ticks(self):
+        """No data should return a default range with >= 2 visible ticks."""
+        ymin, ymax, tick0, dtick = LiveDashboard._metric_axis_params([])
+        assert self._count_ticks_in_range(ymin, ymax, tick0, dtick) >= 2
+
+    def test_single_point_gives_two_ticks(self):
+        """A single metric value should produce a range with exactly 2 ticks."""
+        ymin, ymax, tick0, dtick = LiveDashboard._metric_axis_params([0.6])
+        assert self._count_ticks_in_range(ymin, ymax, tick0, dtick) >= 2
+
+    def test_two_close_points_same_step_bucket(self):
+        """Two points in the same 0.1-step bucket should still give >= 2 ticks."""
+        ymin, ymax, tick0, dtick = LiveDashboard._metric_axis_params([0.60, 0.65])
+        assert self._count_ticks_in_range(ymin, ymax, tick0, dtick) >= 2
+
+    def test_wide_range_gives_multiple_ticks(self):
+        """A wide range should produce multiple ticks and never exceed MAX_TICKS."""
+        ymin, ymax, tick0, dtick = LiveDashboard._metric_axis_params([0.5, 2.5])
+        n = self._count_ticks_in_range(ymin, ymax, tick0, dtick)
+        assert n >= 2
+        assert n <= 6
+
+    def test_step_always_at_least_0_1(self):
+        """dtick must never be smaller than 0.1 regardless of data span."""
+        for vals in [[], [0.6], [0.60, 0.61], [0.0, 100.0]]:
+            _, _, _, dtick = LiveDashboard._metric_axis_params(vals)
+            assert dtick >= 0.1 - 1e-12, f"dtick={dtick} for vals={vals}"
+
+    def test_data_values_within_range(self):
+        """All input values must lie within the returned [ymin, ymax]."""
+        vals = [0.45, 0.72, 1.1]
+        ymin, ymax, _, _ = LiveDashboard._metric_axis_params(vals)
+        for v in vals:
+            assert ymin <= v <= ymax, f"value {v} outside [{ymin}, {ymax}]"
+
+    def test_near_zero_value(self):
+        """A value at 0.0 should not produce a negative ymin that breaks log scales."""
+        ymin, ymax, tick0, dtick = LiveDashboard._metric_axis_params([0.0])
+        assert self._count_ticks_in_range(ymin, ymax, tick0, dtick) >= 2
+
+    def test_large_values(self):
+        """Large metric values (e.g. RMSE ~10) should scale gracefully."""
+        ymin, ymax, tick0, dtick = LiveDashboard._metric_axis_params([8.5, 9.5])
+        assert self._count_ticks_in_range(ymin, ymax, tick0, dtick) >= 2
+        assert dtick >= 0.1
