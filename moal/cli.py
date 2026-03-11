@@ -206,7 +206,7 @@ def simulate(config: Path, output_dir: Path | None, verbose: bool) -> None:
         )
         gif_thread.start()
         logger.info(
-            "GIF animation rendering started in background; will be saved to %s",
+            "GIF animation rendering started in background",
             gif_path,
         )
 
