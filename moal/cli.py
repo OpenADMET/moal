@@ -295,7 +295,7 @@ def plan(config: Path, output_dir: Path | None, verbose: bool) -> None:
                     else ""
                 )
                 retraining_description = (
-                    f"Retraining model — {n_labeled} records "
+                    f"Training model — {n_labeled} records "
                     f"([orange1]{n_labeled_drc} DRC[/orange1], "
                     f"[steel_blue1]{n_labeled_ps} PS[/steel_blue1]"
                     f"{upgrade_suffix})"

@@ -321,7 +321,7 @@ class TestPlanCommand:
             if "description" in update
         ]
         assert (
-            "Retraining model — 2 records ([orange1]1 DRC[/orange1], [steel_blue1]1 PS[/steel_blue1])"
+            "Training model — 2 records ([orange1]1 DRC[/orange1], [steel_blue1]1 PS[/steel_blue1])"
             in descriptions
         )
         assert (
@@ -615,7 +615,7 @@ class TestPlanCommand:
             "[green]Scoring compounds[/green] - [white]0 unqueried[/white], "
             "[magenta]0 PS hits[/magenta] eligible for upgrade"
         ) in descriptions
-        assert not any("Retraining model -" in desc for desc in descriptions)
+        assert not any("Training model -" in desc for desc in descriptions)
         # Terminal-only path produces zero recommendations; completion line still renders
         cli_out = _cli_output(result)
         assert "Plan complete." in cli_out
