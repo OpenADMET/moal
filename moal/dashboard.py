@@ -130,7 +130,6 @@ class _OneDPLocator(Locator):
         return [round(vmin, 10), round(vmax, 10)]
 
 
-
 class LiveDashboard:
     """Four-panel live-updating campaign dashboard backed by Plotly + Dash.
 
@@ -178,8 +177,9 @@ class LiveDashboard:
 
         self._app.layout = html.Div(
             [
-                # No fixed height/width — the figure layout dimensions from config control size
-                dcc.Graph(id="live-graph"),
+                # Seed with the loading splash so there is no flash of a default blank figure
+                # before the first Interval callback round-trip completes.
+                dcc.Graph(id="live-graph", figure=self._build_figure([])),
                 dcc.Interval(id="interval-component", interval=1000, n_intervals=0),
             ],
             style={"backgroundColor": bg},
