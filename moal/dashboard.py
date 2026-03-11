@@ -59,6 +59,7 @@ _THEME_BG: dict[str, str] = {
     "seaborn": "#eaeaf2",
     "simple_white": "#ffffff",
 }
+_EASING = "circle"
 
 # JS injected after Plotly initialisation in the HTML export to provide a single
 # play/pause toggle button; uses querySelector so it avoids {plot_id} substitution issues
@@ -129,8 +130,12 @@ _PLAY_PAUSE_SCRIPT = r"""
 
       return Plotly.animate(gd, remainingFrames, {
         mode: 'afterall',
-        frame: {duration: 500, redraw: false},
-        transition: {duration: 0, ordering: 'layout first'}
+        frame: {duration: 700, redraw: false},
+        transition: {
+          duration: 300,
+          easing: '__EASING__',
+          ordering: 'layout first'
+        }
       });
     }).catch(function() {
       return;
@@ -152,6 +157,7 @@ _PLAY_PAUSE_SCRIPT = r"""
   playAnimation();
 })();
 """
+_PLAY_PAUSE_SCRIPT = _PLAY_PAUSE_SCRIPT.replace("__EASING__", _EASING)
 
 # Axis index constants for the 2×2 subplot with secondary_y on (1,2)
 # Row 1 col 1 → x, y1 | Row 1 col 2 → x2, y2 (primary), y3 (secondary)
@@ -1029,9 +1035,13 @@ class LiveDashboard:
                 "args": [
                     [str(i + 1)],
                     {
-                        "frame": {"duration": 0, "redraw": False},
+                        "frame": {"duration": 350, "redraw": False},
                         "mode": "immediate",
-                        "transition": {"duration": 0, "ordering": "layout first"},
+                        "transition": {
+                            "duration": 220,
+                            "easing": _EASING,
+                            "ordering": "layout first",
+                        },
                     },
                 ],
                 "label": str(i + 1),
