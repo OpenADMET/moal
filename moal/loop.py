@@ -18,7 +18,7 @@ from rich.progress import (
 
 from moal.acquisition import CostAwareGreedyAcquisition
 from moal.evaluation import ModelMetric, PipelineEvaluator
-from moal.logging_config import suppress_noisy_loggers
+from moal.logging_config import suppress_noisy_loggers, temporary_log_level
 from moal.model import ChemPropLightningModule, NoisyOracleModel
 from moal.oracle import CostAwareOracle
 from moal.preprocessing import SMILESPreprocessor
@@ -193,202 +193,207 @@ class ActiveLearningLoop:
         )
 
         total_steps = n_iterations * 3
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[bold]{task.description}"),
-            BarColumn(),
-            TextColumn("{task.percentage:>3.0f}%"),
-            TimeElapsedColumn(),
-            console=_console,
-            transient=False,
-        ) as progress:
-            task = progress.add_task("Starting…", total=total_steps)
+        with temporary_log_level(logging.WARNING, ["moal"]):
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[bold]{task.description}"),
+                BarColumn(),
+                TextColumn("{task.percentage:>3.0f}%"),
+                TimeElapsedColumn(),
+                console=_console,
+                transient=False,
+            ) as progress:
+                task = progress.add_task("Starting…", total=total_steps)
 
-            for iteration in range(n_iterations):
-                queries = pending_queries  # prepared at end of previous iter
+                for iteration in range(n_iterations):
+                    queries = pending_queries  # prepared at end of previous iter
 
-                # --- Query oracle -------------------------------------
-                # Snapshot the PS-labeled pool before querying so planned DRC
-                # queries can be classified as upgrades vs. first-pass in the
-                # progress display without waiting for oracle results.
-                ps_labeled_before = set(self.oracle.get_ps_labeled_smiles())
-                n_drc = sum(1 for _, qt in queries if qt == QueryType.DOSE_RESPONSE)
-                n_ps = sum(1 for _, qt in queries if qt == QueryType.PRIMARY_SCREEN)
-                n_drc_upgrade_planned = sum(
-                    1
-                    for smi, qt in queries
-                    if qt == QueryType.DOSE_RESPONSE and smi in ps_labeled_before
-                )
-                n_drc_new_planned = n_drc - n_drc_upgrade_planned
-                upgrade_drc_label = (
-                    f" ([magenta]{n_drc_upgrade_planned} upgrades[/magenta])"
-                    if n_drc_upgrade_planned > 0
-                    else ""
-                )
-                progress.update(
-                    task,
-                    description=(
-                        f"[cyan]Iter {iteration + 1}/{n_iterations}[/cyan]  "
-                        f"Querying oracle — [orange1]{n_drc_new_planned} DRC[/orange1]"
-                        f"{upgrade_drc_label}"
-                        f", [steel_blue1]{n_ps} PS[/steel_blue1]"
-                    ),
-                )
-                # Forward is_canonical so query_batch uses the same key strategy
-                # that was used when building the ground truth dict; omitting it
-                # would cause re-canonicalization to produce keys that don't exist
-                # when the oracle was initialised with is_canonical=True.
-                new_records = self.oracle.query_batch(
-                    queries, iteration, is_canonical=self.oracle.is_canonical
-                )
-                # Derive actual per-fidelity costs from records returned by the
-                # oracle — not from the pre-query candidate list, which may
-                # differ if the oracle skips invalid or already-labeled compounds.
-                iter_drc_cost = sum(
-                    r.cost for r in new_records if r.fidelity == QueryType.DOSE_RESPONSE
-                )
-                iter_ps_cost = sum(
-                    r.cost
-                    for r in new_records
-                    if r.fidelity == QueryType.PRIMARY_SCREEN
-                )
-                # Upgrades are DRC queries for compounds already in the PS pool;
-                # ps_labeled_before was captured before this iteration's queries.
-                iter_upgrade_cost = sum(
-                    r.cost
-                    for r in new_records
-                    if r.fidelity == QueryType.DOSE_RESPONSE
-                    and r.canonical_smiles in ps_labeled_before
-                )
-                progress.advance(task)
-
-                # --- Refit model --------------------------------------
-                all_labeled = self.oracle.labeled_records
-                n_labeled = len(all_labeled)
-                n_labeled_drc = sum(
-                    1 for r in all_labeled if r.fidelity == QueryType.DOSE_RESPONSE
-                )
-                n_labeled_ps = sum(
-                    1 for r in all_labeled if r.fidelity == QueryType.PRIMARY_SCREEN
-                )
-                # Count cumulative upgrades from the evaluator breakdown so the
-                # refit message is consistent with the metrics that get logged.
-                n_cumulative_upgrades = int(
-                    self.evaluator.fidelity_breakdown(all_labeled).get("upgrades", 0)
-                )
-                upgrade_suffix = (
-                    f", [magenta]{n_cumulative_upgrades} upgrades[/magenta]"
-                    if n_cumulative_upgrades > 0
-                    else ""
-                )
-                progress.update(
-                    task,
-                    description=(
-                        f"[yellow]Iter {iteration + 1}/{n_iterations}[/yellow]  "
-                        f"Retraining model — {n_labeled} records "
-                        f"([orange1]{n_labeled_drc} DRC[/orange1], "
-                        f"[steel_blue1]{n_labeled_ps} PS[/steel_blue1]"
-                        f"{upgrade_suffix})"
-                    ),
-                )
-                if new_records:
-                    self.model.refit(
-                        records=self.oracle.training_records,
-                        trainer_kwargs=self.trainer_kwargs,
-                        datamodule_kwargs=self.datamodule_kwargs,
-                        reset_weights=self.reset_weights_on_refit,
-                        output_dir=self.output_dir,
+                    # --- Query oracle -------------------------------------
+                    # Snapshot the PS-labeled pool before querying so planned DRC
+                    # queries can be classified as upgrades vs. first-pass in the
+                    # progress display without waiting for oracle results.
+                    ps_labeled_before = set(self.oracle.get_ps_labeled_smiles())
+                    n_drc = sum(1 for _, qt in queries if qt == QueryType.DOSE_RESPONSE)
+                    n_ps = sum(1 for _, qt in queries if qt == QueryType.PRIMARY_SCREEN)
+                    n_drc_upgrade_planned = sum(
+                        1
+                        for smi, qt in queries
+                        if qt == QueryType.DOSE_RESPONSE and smi in ps_labeled_before
                     )
-
-                # Evaluate model metric on held-out test set.
-                model_metric_value: float | None = None
-                if self.test_set is not None:
-                    test_smiles, test_pec50 = self.test_set
-                    model_metric_value = self.evaluator.evaluate_model(
-                        self.model,
-                        test_smiles,
-                        test_pec50,
-                        self.model_metric,
-                        noise_scale=noise_schedule[iteration]
-                        if noise_schedule is not None
-                        else None,
+                    n_drc_new_planned = n_drc - n_drc_upgrade_planned
+                    upgrade_drc_label = (
+                        f" ([magenta]{n_drc_upgrade_planned} upgrades[/magenta])"
+                        if n_drc_upgrade_planned > 0
+                        else ""
                     )
-                progress.advance(task)
-
-                # --- Select next compounds ----------------------------
-                remaining_unlabeled = self.oracle.get_unlabeled_smiles()
-                remaining_ps_labeled = self.oracle.get_ps_labeled_smiles()
-                all_remaining = remaining_unlabeled + remaining_ps_labeled
-                progress.update(
-                    task,
-                    description=(
-                        f"[green]Iter {iteration + 1}/{n_iterations}[/green]  "
-                        f"Selecting next {k_per_iteration} — "
-                        f"[white]{len(remaining_unlabeled)} unqueried[/white], "
-                        f"[magenta]{len(remaining_ps_labeled)} PS hits[/magenta] eligible for upgrade"
-                    ),
-                )
-                if all_remaining:
-                    all_preds = self._predict(
-                        all_remaining,
-                        noise_schedule[iteration]
-                        if noise_schedule is not None
-                        else None,
-                    )
-                    unlabeled_preds = all_preds[: len(remaining_unlabeled)]
-                    ps_labeled_preds = all_preds[len(remaining_unlabeled) :]
-                    pending_queries = self.acquisition.select(
-                        remaining_unlabeled,
-                        unlabeled_preds,
-                        k_per_iteration,
-                        ps_labeled_smiles=remaining_ps_labeled,
-                        ps_labeled_predictions=ps_labeled_preds
-                        if remaining_ps_labeled
-                        else None,
-                    )
-                else:
-                    pending_queries = []
-                progress.advance(task)
-
-                # ---- Metrics & dashboard update -------------------------
-                metrics = self.evaluator.evaluate(
-                    labeled=self.oracle.labeled_records,
-                    n_total=n_total,
-                    n_true_actives=n_true_actives,
-                    iteration=iteration,
-                )
-                if model_metric_value is not None:
-                    metrics[f"model_{self.model_metric.value}"] = model_metric_value
-
-                iter_result = IterationResults(
-                    iteration=iteration,
-                    queries=queries,
-                    new_records=new_records,
-                    metrics=metrics,
-                    cumulative_cost=self.oracle.total_cost,
-                    cumulative_labeled=n_labeled,
-                    model_metric_value=model_metric_value,
-                )
-                results.iterations.append(iter_result)
-                results.total_cost = self.oracle.total_cost
-                results.total_labeled = n_labeled
-
-                if self.dashboard is not None:
-                    self.dashboard.update(
-                        labeled_records=self.oracle.labeled_records,
-                        activity_threshold=self.evaluator.activity_threshold,
-                        iter_drc_cost=iter_drc_cost,
-                        iter_ps_cost=iter_ps_cost,
-                        iter_upgrade_cost=iter_upgrade_cost,
-                        model_metric_value=model_metric_value,
-                    )
-
-                if not all_remaining:
                     progress.update(
                         task,
-                        description="[green]All compounds queried — stopping early.",
+                        description=(
+                            f"[cyan]Iter {iteration + 1}/{n_iterations}[/cyan]  "
+                            f"Querying oracle — [orange1]{n_drc_new_planned} DRC[/orange1]"
+                            f"{upgrade_drc_label}"
+                            f", [steel_blue1]{n_ps} PS[/steel_blue1]"
+                        ),
                     )
-                    break
+                    # Forward is_canonical so query_batch uses the same key strategy
+                    # that was used when building the ground truth dict; omitting it
+                    # would cause re-canonicalization to produce keys that don't exist
+                    # when the oracle was initialised with is_canonical=True.
+                    new_records = self.oracle.query_batch(
+                        queries, iteration, is_canonical=self.oracle.is_canonical
+                    )
+                    # Derive actual per-fidelity costs from records returned by the
+                    # oracle — not from the pre-query candidate list, which may
+                    # differ if the oracle skips invalid or already-labeled compounds.
+                    iter_drc_cost = sum(
+                        r.cost
+                        for r in new_records
+                        if r.fidelity == QueryType.DOSE_RESPONSE
+                    )
+                    iter_ps_cost = sum(
+                        r.cost
+                        for r in new_records
+                        if r.fidelity == QueryType.PRIMARY_SCREEN
+                    )
+                    # Upgrades are DRC queries for compounds already in the PS pool;
+                    # ps_labeled_before was captured before this iteration's queries.
+                    iter_upgrade_cost = sum(
+                        r.cost
+                        for r in new_records
+                        if r.fidelity == QueryType.DOSE_RESPONSE
+                        and r.canonical_smiles in ps_labeled_before
+                    )
+                    progress.advance(task)
+
+                    # --- Refit model --------------------------------------
+                    all_labeled = self.oracle.labeled_records
+                    n_labeled = len(all_labeled)
+                    n_labeled_drc = sum(
+                        1 for r in all_labeled if r.fidelity == QueryType.DOSE_RESPONSE
+                    )
+                    n_labeled_ps = sum(
+                        1 for r in all_labeled if r.fidelity == QueryType.PRIMARY_SCREEN
+                    )
+                    # Count cumulative upgrades from the evaluator breakdown so the
+                    # refit message is consistent with the metrics that get logged.
+                    n_cumulative_upgrades = int(
+                        self.evaluator.fidelity_breakdown(all_labeled).get(
+                            "upgrades", 0
+                        )
+                    )
+                    upgrade_suffix = (
+                        f", [magenta]{n_cumulative_upgrades} upgrades[/magenta]"
+                        if n_cumulative_upgrades > 0
+                        else ""
+                    )
+                    progress.update(
+                        task,
+                        description=(
+                            f"[yellow]Iter {iteration + 1}/{n_iterations}[/yellow]  "
+                            f"Retraining model — {n_labeled} records "
+                            f"([orange1]{n_labeled_drc} DRC[/orange1], "
+                            f"[steel_blue1]{n_labeled_ps} PS[/steel_blue1]"
+                            f"{upgrade_suffix})"
+                        ),
+                    )
+                    if new_records:
+                        self.model.refit(
+                            records=self.oracle.training_records,
+                            trainer_kwargs=self.trainer_kwargs,
+                            datamodule_kwargs=self.datamodule_kwargs,
+                            reset_weights=self.reset_weights_on_refit,
+                            output_dir=self.output_dir,
+                        )
+
+                    # Evaluate model metric on held-out test set.
+                    model_metric_value: float | None = None
+                    if self.test_set is not None:
+                        test_smiles, test_pec50 = self.test_set
+                        model_metric_value = self.evaluator.evaluate_model(
+                            self.model,
+                            test_smiles,
+                            test_pec50,
+                            self.model_metric,
+                            noise_scale=noise_schedule[iteration]
+                            if noise_schedule is not None
+                            else None,
+                        )
+                    progress.advance(task)
+
+                    # --- Select next compounds ----------------------------
+                    remaining_unlabeled = self.oracle.get_unlabeled_smiles()
+                    remaining_ps_labeled = self.oracle.get_ps_labeled_smiles()
+                    all_remaining = remaining_unlabeled + remaining_ps_labeled
+                    progress.update(
+                        task,
+                        description=(
+                            f"[green]Iter {iteration + 1}/{n_iterations}[/green]  "
+                            f"Selecting next {k_per_iteration} — "
+                            f"[white]{len(remaining_unlabeled)} unqueried[/white], "
+                            f"[magenta]{len(remaining_ps_labeled)} PS hits[/magenta] eligible for upgrade"
+                        ),
+                    )
+                    if all_remaining:
+                        all_preds = self._predict(
+                            all_remaining,
+                            noise_schedule[iteration]
+                            if noise_schedule is not None
+                            else None,
+                        )
+                        unlabeled_preds = all_preds[: len(remaining_unlabeled)]
+                        ps_labeled_preds = all_preds[len(remaining_unlabeled) :]
+                        pending_queries = self.acquisition.select(
+                            remaining_unlabeled,
+                            unlabeled_preds,
+                            k_per_iteration,
+                            ps_labeled_smiles=remaining_ps_labeled,
+                            ps_labeled_predictions=ps_labeled_preds
+                            if remaining_ps_labeled
+                            else None,
+                        )
+                    else:
+                        pending_queries = []
+                    progress.advance(task)
+
+                    # ---- Metrics & dashboard update -------------------------
+                    metrics = self.evaluator.evaluate(
+                        labeled=self.oracle.labeled_records,
+                        n_total=n_total,
+                        n_true_actives=n_true_actives,
+                        iteration=iteration,
+                    )
+                    if model_metric_value is not None:
+                        metrics[f"model_{self.model_metric.value}"] = model_metric_value
+
+                    iter_result = IterationResults(
+                        iteration=iteration,
+                        queries=queries,
+                        new_records=new_records,
+                        metrics=metrics,
+                        cumulative_cost=self.oracle.total_cost,
+                        cumulative_labeled=n_labeled,
+                        model_metric_value=model_metric_value,
+                    )
+                    results.iterations.append(iter_result)
+                    results.total_cost = self.oracle.total_cost
+                    results.total_labeled = n_labeled
+
+                    if self.dashboard is not None:
+                        self.dashboard.update(
+                            labeled_records=self.oracle.labeled_records,
+                            activity_threshold=self.evaluator.activity_threshold,
+                            iter_drc_cost=iter_drc_cost,
+                            iter_ps_cost=iter_ps_cost,
+                            iter_upgrade_cost=iter_upgrade_cost,
+                            model_metric_value=model_metric_value,
+                        )
+
+                    if not all_remaining:
+                        progress.update(
+                            task,
+                            description="[green]All compounds queried — stopping early.",
+                        )
+                        break
 
         results.final_metrics = self.evaluator.evaluate(
             labeled=self.oracle.labeled_records,
