@@ -348,7 +348,9 @@ class TestFrameCapture:
         db = LiveDashboard(n_iterations=3, n_compounds=20)
         records = _make_records(4)
         for i in range(3):
-            db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
+            db.update(
+                records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0
+            )
             assert len(db._frames) == i + 1
         db.close()
 
@@ -376,7 +378,9 @@ class TestFrameCapture:
         db = LiveDashboard(n_iterations=2, n_compounds=20)
         records = _make_records(4)
         with caplog.at_level(logging.WARNING, logger="moal.dashboard"):
-            db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
+            db.update(
+                records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0
+            )
 
         assert db._frames == []
         assert "Could not capture dashboard frame" in caplog.text
@@ -576,8 +580,11 @@ class TestSaveHtml:
         db.close()
 
         content = html_path.read_text()
-        assert re.search(r"Plotly\.animate\(gd,\s*\[frameNames\[startIndex\]\]", content)
+        assert re.search(
+            r"Plotly\.animate\(gd,\s*\[frameNames\[startIndex\]\]", content
+        )
         assert re.search(r"Plotly\.animate\('[^']+', null\);", content) is None
+        assert "redraw: false" in content
 
     def test_animated_frames_include_per_iteration_axis_layout(self):
         """Animated HTML frames must carry per-iteration axis updates, not just trace data."""
@@ -629,7 +636,9 @@ class TestSaveHtml:
             assert list(frame.layout.yaxis.range) == pytest.approx(
                 list(frame_fig.layout.yaxis.range)
             )
-            assert frame.layout.yaxis.dtick == pytest.approx(frame_fig.layout.yaxis.dtick)
+            assert frame.layout.yaxis.dtick == pytest.approx(
+                frame_fig.layout.yaxis.dtick
+            )
 
             assert list(frame.layout.yaxis3.range) == pytest.approx(
                 list(frame_fig.layout.yaxis3.range)
@@ -641,14 +650,27 @@ class TestSaveHtml:
             assert list(frame.layout.yaxis4.range) == pytest.approx(
                 list(frame_fig.layout.yaxis4.range)
             )
-            assert frame.layout.yaxis4.tick0 == pytest.approx(frame_fig.layout.yaxis4.tick0)
+            assert frame.layout.yaxis4.tick0 == pytest.approx(
+                frame_fig.layout.yaxis4.tick0
+            )
             assert frame.layout.yaxis4.dtick == pytest.approx(
                 frame_fig.layout.yaxis4.dtick
             )
+            assert (
+                frame.layout.xaxis4.categoryarray
+                == frame_fig.layout.xaxis4.categoryarray
+            )
+            assert frame.layout.yaxis2.title.text == frame_fig.layout.yaxis2.title.text
+            assert list(frame.layout.yaxis5.range) == pytest.approx(
+                list(frame_fig.layout.yaxis5.range)
+            )
 
-            x_upper = float(i) + 0.25
-            assert list(frame.layout.xaxis2.range) == pytest.approx([0.75, x_upper])
-            assert list(frame.layout.xaxis3.range) == pytest.approx([0.75, x_upper])
+            assert list(frame.layout.xaxis2.range) == pytest.approx(
+                [0.5, float(i) + 0.5]
+            )
+            assert list(frame.layout.xaxis3.range) == pytest.approx(
+                [0.75, float(i) + 0.25]
+            )
             assert list(frame.traces) == list(range(len(frame_fig.data)))
 
             expected_cum_cost_upper = max(
@@ -707,7 +729,7 @@ class TestSaveHtml:
             assert list(actual.x) == list(expected.x)
             assert list(actual.y) == list(expected.y)
 
-        assert list(animated_fig.layout.xaxis2.range) == pytest.approx([0.75, 1.25])
+        assert list(animated_fig.layout.xaxis2.range) == pytest.approx([0.5, 1.5])
         assert list(animated_fig.layout.xaxis3.range) == pytest.approx([0.75, 1.25])
 
         assert list(animated_fig.layout.yaxis.range) == pytest.approx(

@@ -119,7 +119,7 @@ _PLAY_PAUSE_SCRIPT = r"""
 
     return Plotly.animate(gd, [frameNames[startIndex]], {
       mode: 'immediate',
-      frame: {duration: 0, redraw: true},
+      frame: {duration: 0, redraw: false},
       transition: {duration: 0, ordering: 'layout first'}
     }).then(function() {
       if (token !== playToken) return;
@@ -129,7 +129,7 @@ _PLAY_PAUSE_SCRIPT = r"""
 
       return Plotly.animate(gd, remainingFrames, {
         mode: 'afterall',
-        frame: {duration: 500, redraw: true},
+        frame: {duration: 500, redraw: false},
         transition: {duration: 0, ordering: 'layout first'}
       });
     }).catch(function() {
@@ -985,7 +985,7 @@ class LiveDashboard:
             row=1,
             col=2,
             tickformat="d",
-            range=self._iteration_x_range(len(iterations)),
+            range=self._iteration_x_range(len(iterations), padding=0.5),
         )
         fig.update_xaxes(
             title_text="Iteration",
@@ -1029,7 +1029,7 @@ class LiveDashboard:
                 "args": [
                     [str(i + 1)],
                     {
-                        "frame": {"duration": 0, "redraw": True},
+                        "frame": {"duration": 0, "redraw": False},
                         "mode": "immediate",
                         "transition": {"duration": 0, "ordering": "layout first"},
                     },
@@ -1098,15 +1098,18 @@ class LiveDashboard:
             },
             xaxis2={
                 **frame_fig.layout.xaxis2.to_plotly_json(),
-                "range": self._iteration_x_range(n_iterations),
+                "range": self._iteration_x_range(n_iterations, padding=0.5),
             },
             xaxis3={
                 **frame_fig.layout.xaxis3.to_plotly_json(),
                 "range": self._iteration_x_range(n_iterations),
             },
+            xaxis4=frame_fig.layout.xaxis4.to_plotly_json(),
             yaxis=frame_fig.layout.yaxis.to_plotly_json(),
+            yaxis2=frame_fig.layout.yaxis2.to_plotly_json(),
             yaxis3=frame_fig.layout.yaxis3.to_plotly_json(),
             yaxis4=frame_fig.layout.yaxis4.to_plotly_json(),
+            yaxis5=frame_fig.layout.yaxis5.to_plotly_json(),
         )
 
     @staticmethod
@@ -1116,10 +1119,9 @@ class LiveDashboard:
         return [0.0, max(1.0, max_cost * 1.05)]
 
     @staticmethod
-    def _iteration_x_range(n_iterations: int) -> list[float]:
+    def _iteration_x_range(n_iterations: int, padding: float = 0.25) -> list[float]:
         """Return an explicit x-range for iteration-indexed subplots."""
         upper = max(float(n_iterations), 1.0)
-        padding = 0.25
         return [1.0 - padding, upper + padding]
 
     @staticmethod
