@@ -40,6 +40,11 @@ def suppress_noisy_loggers() -> None:
             "fsspec",
             "importlib_metadata",
             "pkg_resources",
+            "kaleido",
+            "choreographer",
+            "choreographer.browsers.chromium",
+            "choreographer.browser_async",
+            "choreographer.utils._tmpfile",
         ],
     )
 

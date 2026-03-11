@@ -1,68 +1,215 @@
-"""LiveDashboard: real-time updating matplotlib figure for campaign monitoring.
+"""LiveDashboard: Plotly + Dash live-updating campaign dashboard.
 
 Four subplots (2×2) update after every active learning iteration:
   1. Cumulative Actives Curve  — x: cumulative cost ($), y: actives found
-  2. Cumulative Cost Curve     — stacked bar per iteration (DRC + PS) with total line
+  2. Per-Iteration Cost Breakdown — stacked bars (DRC new, PS→DRC upgrades, PS)
+                                    with cumulative cost line on secondary y-axis
   3. Model Performance Curve   — x: iteration, y: configurable metric on test set
-  4. Compound Status           — bar per category (PS-only, DRC, Unqueried) showing
-                                 current pool state; DRC bar is stacked to show
-                                 PS→DRC upgrades
+  4. Compound Status           — bar per category (PS-only, DRC, Unqueried) with
+                                 PS→DRC upgrades stacked on top of each relevant bar
+
+The Dash server runs in a background daemon thread for live in-browser viewing.
+After simulation completes, call ``save_html()`` to export the final animated
+figure with a scrub slider and play/pause controls, then ``close()`` to stop the server.
 """
 
 from __future__ import annotations
 
 import io
+import itertools
 import logging
+import math
+import threading
+import webbrowser
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-import matplotlib
-import matplotlib.pyplot as plt
-import numpy as np
-from matplotlib.axes import Axes
-from matplotlib.ticker import MaxNLocator
+import plotly.graph_objects as go
+from dash import Dash, Input, Output, dcc, html
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.figure import Figure
+from matplotlib.ticker import Locator, MaxNLocator
+from plotly.subplots import make_subplots
+from werkzeug.serving import make_server
 
 from moal.evaluation import ModelMetric
-from moal.types import LabelRecord
-
-if TYPE_CHECKING:
-    pass
+from moal.types import CensoringType, LabelRecord, QueryType
 
 logger = logging.getLogger(__name__)
 
-# Suppress matplotlib's own internal chatter.
-logging.getLogger("matplotlib").setLevel(logging.WARNING)
-logging.getLogger("matplotlib.font_manager").setLevel(logging.WARNING)
+# Suppress noisy Werkzeug HTTP access logs during simulation
+logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
-# Colour palette
+# Colour palette (kept consistent with previous terminal palette)
 _COLOUR_DRC = "#E07B39"  # orange
 _COLOUR_PS = "#4C9BE8"  # blue
 _COLOUR_ACT = "#2CA02C"  # green
 _COLOUR_MET = "#D62728"  # red
-_COLOUR_UPGRADE = (
-    "#9B59B6"  # purple-magenta (PS→DRC upgrades, matches terminal [magenta])
-)
-_COLOUR_UNQUERIED = "#D3D3D3"  # light gray
+_COLOUR_UPGRADE = "#9B59B6"  # purple-magenta (PS→DRC upgrades)
+_COLOUR_UNQUERIED = "#888888"  # mid-grey
+
+# DPI used for matplotlib GIF/PNG frame rendering — controls output pixel density
+_GIF_RENDER_DPI: int = 150
+
+# Best-effort HTML background colours keyed by Plotly template name
+_THEME_BG: dict[str, str] = {
+    "plotly_dark": "#111111",
+    "plotly": "#ffffff",
+    "plotly_white": "#ffffff",
+    "ggplot2": "#e5e5e5",
+    "seaborn": "#eaeaf2",
+    "simple_white": "#ffffff",
+}
+_EASING = "circle"
+
+# JS injected after Plotly initialisation in the HTML export to provide a single
+# play/pause toggle button; uses querySelector so it avoids {plot_id} substitution issues
+_PLAY_PAUSE_SCRIPT = r"""
+(function() {
+  var gd = document.querySelector('.js-plotly-plot');
+  if (!gd) return;
+  var playing = false;
+  var playToken = 0;
+  var toolbar = document.createElement('div');
+  toolbar.style.cssText = 'margin:4px 0;padding-left:4px;';
+  var btn = document.createElement('button');
+  btn.innerHTML = '\u25B6 Play';
+  btn.style.cssText = 'padding:5px 14px;font-size:13px;cursor:pointer;background:#555;color:#fff;border:1px solid #888;border-radius:4px;';
+  toolbar.appendChild(btn);
+  gd.insertAdjacentElement('beforebegin', toolbar);
+
+  function setPlaying(isPlaying) {
+    playing = isPlaying;
+    btn.innerHTML = isPlaying ? '\u23F8 Pause' : '\u25B6 Play';
+  }
+
+  function getFrameNames() {
+    var frames = (gd._transitionData && gd._transitionData._frames) || [];
+    return frames.map(function(frame) { return frame.name; }).filter(Boolean);
+  }
+
+  function getStartIndex(frameNames) {
+    var sliders = gd._fullLayout && gd._fullLayout.sliders;
+    var active = sliders && sliders.length ? sliders[0].active : 0;
+    if (typeof active !== 'number' || !isFinite(active) || active < 0) {
+      return 0;
+    }
+    if (active >= frameNames.length - 1) {
+      return 0;
+    }
+    return active;
+  }
+
+  function stopAnimation() {
+    playToken += 1;
+    setPlaying(false);
+    return Plotly.animate(gd, [null], {
+      mode: 'immediate',
+      frame: {duration: 0, redraw: false},
+      transition: {duration: 0, ordering: 'layout first'}
+    });
+  }
+
+  function playAnimation() {
+    var frameNames = getFrameNames();
+    if (!frameNames.length) return Promise.resolve();
+
+    var startIndex = getStartIndex(frameNames);
+    var token = playToken + 1;
+    playToken = token;
+    setPlaying(true);
+
+    return Plotly.animate(gd, [frameNames[startIndex]], {
+      mode: 'immediate',
+      frame: {duration: 0, redraw: false},
+      transition: {duration: 0, ordering: 'layout first'}
+    }).then(function() {
+      if (token !== playToken) return;
+
+      var remainingFrames = frameNames.slice(startIndex + 1);
+      if (!remainingFrames.length) return;
+
+      return Plotly.animate(gd, remainingFrames, {
+        mode: 'afterall',
+        frame: {duration: 700, redraw: false},
+        transition: {
+          duration: 300,
+          easing: '__EASING__',
+          ordering: 'layout first'
+        }
+      });
+    }).catch(function() {
+      return;
+    }).then(function() {
+      if (token === playToken) {
+        setPlaying(false);
+      }
+    });
+  }
+
+  btn.addEventListener('click', function() {
+    if (!playing) {
+      playAnimation();
+    } else {
+      stopAnimation();
+    }
+  });
+
+  playAnimation();
+})();
+"""
+_PLAY_PAUSE_SCRIPT = _PLAY_PAUSE_SCRIPT.replace("__EASING__", _EASING)
+
+# Axis index constants for the 2×2 subplot with secondary_y on (1,2)
+# Row 1 col 1 → x, y1 | Row 1 col 2 → x2, y2 (primary), y3 (secondary)
+# Row 2 col 1 → x3, y4 | Row 2 col 2 → x4, y5
+_SUBPLOT_SPECS = [[{}, {"secondary_y": True}], [{}, {}]]
+
+
+class _OneDPLocator(Locator):
+    """Tick locator that restricts steps to the 1-2-5 sequence with step >= 0.1.
+
+    This prevents the model performance y-axis from ever displaying ticks that
+    require more than one decimal place (e.g. 0.35, 0.40, 0.45), which occurs
+    when a narrow metric range causes MaxNLocator to choose step=0.05 or smaller.
+    Falls back to showing the single mid-point value when the span is near zero.
+    """
+
+    _STEPS = [0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0]
+    _MAX_TICKS = 6
+
+    def __call__(self) -> list[float]:
+        vmin, vmax = self.axis.get_view_interval()
+        return self.tick_values(vmin, vmax)
+
+    def tick_values(self, vmin: float, vmax: float) -> list[float]:
+        import numpy as np
+
+        span = vmax - vmin
+        if span < 1e-12:
+            return [round((vmin + vmax) / 2, 10)]
+        for step in self._STEPS:
+            if span / step <= self._MAX_TICKS - 1:
+                start = np.floor(vmin / step) * step
+                end = vmax + step * 1e-9
+                ticks = np.arange(start, end, step)
+                return [round(float(t), 10) for t in ticks]
+        # Safety fallback: use first and last value only
+        return [round(vmin, 10), round(vmax, 10)]
 
 
 class LiveDashboard:
-    """Four-panel live-updating campaign dashboard (2×2 grid).
+    """Four-panel live-updating campaign dashboard backed by Plotly + Dash.
 
     Parameters
     ----------
     n_iterations : int
-        Total planned iterations (used to pre-size x-axes).
+        Total planned iterations (used to label the x-axis upper bound).
     n_compounds : int, optional
-        Total number of compounds in the pool (used to compute the unqueried
-        count in the compound status panel). Default is 0.
+        Total pool size (used to compute the unqueried count). Default is 0.
     model_metric : ModelMetric, optional
-        Metric to display in the model performance panel. Default is MAE.
-    figsize : tuple[int, int], optional
-        Overall figure size (width, height) in inches. Default is (14, 8).
-    show : bool, optional
-        If True, attempt interactive ``plt.ion()`` mode. If False (or if the
-        display is unavailable), fall back to file-save-only mode.
-        Default is True.
+        Metric to show in the model performance panel. Default is MAE.
+    port : int, optional
+        Local port for the Dash server. Default is 8050.
     """
 
     def __init__(
@@ -70,99 +217,69 @@ class LiveDashboard:
         n_iterations: int,
         n_compounds: int = 0,
         model_metric: ModelMetric = ModelMetric.MAE,
-        figsize: tuple[int, int] = (14, 8),
-        show: bool = True,
+        port: int = 8050,
+        export_width: int = 1400,
+        export_height: int = 800,
+        theme: str = "plotly_dark",
     ) -> None:
         self.n_iterations = n_iterations
         self.n_compounds = n_compounds
         self.model_metric = model_metric
-        self._interactive = False
-        self._update_count = 0
-        # In-memory PNG frames captured after every update, used by save_gif.
+        self._port = port
+        self._export_width = export_width
+        self._export_height = export_height
+        self._theme = theme
+        self._lock = threading.Lock()
+        # One dict per update() call; consumed by the Dash callback and save_html()
+        self._iterations: list[dict] = []
+        # Pre-rendered PNG bytes captured at each update() for fast GIF assembly
         self._frames: list[bytes] = []
+        self._metric_label = model_metric.value.upper().replace("_", " ")
 
-        # Use a non-interactive backend when show=False or when we detect
-        # there is no display environment.
-        if not show:
-            matplotlib.use("Agg")
+        self._app = Dash(__name__, suppress_callback_exceptions=True)
+        # Silence the Flask/Dash internal logger; warnings surface via moal's logger
+        self._app.logger.setLevel(logging.ERROR)
 
-        self._fig, _axes = plt.subplots(2, 2, figsize=figsize, dpi=150)
-        self._ax1: Axes = _axes[0, 0]
-        self._ax2: Axes = _axes[0, 1]
-        self._ax3: Axes = _axes[1, 0]
-        self._ax4: Axes = _axes[1, 1]
-        self._fig.suptitle(
-            "Active Learning Campaign Dashboard", fontsize=11, fontweight="bold"
-        )
-        self._fig.tight_layout(pad=2.5)
+        bg = _THEME_BG.get(theme.lower(), "#ffffff")
 
-        self._init_axes()
-
-        if show:
-            try:
-                import warnings
-
-                plt.ion()
-                with warnings.catch_warnings():
-                    warnings.simplefilter("error", UserWarning)
-                    plt.pause(0.05)
-                self._interactive = True
-            except (OSError, RuntimeError, UserWarning):
-                logger.debug(
-                    "Interactive display unavailable; using file-save-only mode."
-                )
-                self._interactive = False
-
-        # Data accumulators
-        self._cum_costs: list[float] = []
-        self._cum_actives: list[int] = []
-        self._iter_drc_costs: list[float] = []
-        self._iter_ps_costs: list[float] = []
-        self._iter_upgrade_costs: list[float] = []
-        self._model_metric_values: list[float] = []
-
-        # Twin y-axis for the cost panel — created once, reused on every update.
-        self._ax2r: Axes = self._ax2.twinx()
-        self._ax2r.set_ylabel("Cumulative Cost ($k)", fontsize=8)
-        self._ax2r.tick_params(axis="y", labelsize=7)
-
-    # ------------------------------------------------------------------
-    # Axis initialisation
-    # ------------------------------------------------------------------
-
-    def _init_axes(self) -> None:
-        self._ax1.set_title("Cumulative Actives", fontsize=9)
-        self._ax1.set_xlabel("Cumulative Cost ($)")
-        self._ax1.set_ylabel("Confirmed Actives Found")
-        self._ax1.grid(True, linestyle="--", alpha=0.4)
-
-        self._ax2.set_title("Per-Iteration Cost Breakdown", fontsize=9)
-        self._ax2.set_xlabel("Iteration")
-        self._ax2.set_ylabel("Cost ($)")
-        self._ax2.grid(True, linestyle="--", alpha=0.4, axis="y")
-
-        metric_label = self.model_metric.value.upper().replace("_", " ")
-        self._ax3.set_title(f"Model Performance ({metric_label})", fontsize=9)
-        self._ax3.set_xlabel("Iteration")
-        self._ax3.set_ylabel(metric_label)
-        self._ax3.grid(True, linestyle="--", alpha=0.4)
-
-        # If no test set, render a placeholder annotation.
-        self._no_test_annotation = self._ax3.text(
-            0.5,
-            0.5,
-            "No test set provided",
-            transform=self._ax3.transAxes,
-            ha="center",
-            va="center",
-            fontsize=9,
-            color="grey",
-            fontstyle="italic",
+        self._app.layout = html.Div(
+            [
+                # Seed with the loading splash so there is no flash of a default blank figure
+                # before the first Interval callback round-trip completes.
+                dcc.Graph(id="live-graph", figure=self._build_figure([])),
+                dcc.Interval(id="interval-component", interval=1000, n_intervals=0),
+            ],
+            style={"backgroundColor": bg},
         )
 
-        self._ax4.set_title("Compound Status", fontsize=9)
-        self._ax4.set_ylabel("Compounds")
-        self._ax4.grid(True, linestyle="--", alpha=0.4, axis="y")
+        @self._app.callback(
+            Output("live-graph", "figure"),
+            Input("interval-component", "n_intervals"),
+        )
+        def _refresh(_n: int) -> go.Figure:
+            with self._lock:
+                iterations = list(self._iterations)
+            return self._build_figure(iterations)
+
+        # Attempt to bind the port; log a warning and continue without a server on failure
+        self._server_active = False
+        try:
+            self._werkzeug_server = make_server("127.0.0.1", port, self._app.server)
+            self._thread = threading.Thread(
+                target=self._werkzeug_server.serve_forever, daemon=True
+            )
+            self._thread.start()
+            self._server_active = True
+            url = f"http://127.0.0.1:{port}"
+            logger.info("Live dashboard available at %s", url)
+            webbrowser.open(url)
+        except OSError as exc:
+            logger.warning(
+                "Could not start dashboard server on port %d (%s); "
+                "live browser view will be unavailable — HTML export will still work",
+                port,
+                exc,
+            )
 
     # ------------------------------------------------------------------
     # Public update API
@@ -177,239 +294,23 @@ class LiveDashboard:
         iter_upgrade_cost: float = 0.0,
         model_metric_value: float | None = None,
     ) -> None:
-        """Redraw all panels with the latest campaign state.
+        """Append iteration data for live display and deferred GIF/HTML export.
 
         Parameters
         ----------
         labeled_records : list[LabelRecord]
-            All oracle-labeled records accumulated so far, ordered by
-            acquisition time.
+            All oracle-labeled records accumulated so far.
         activity_threshold : float
             pEC50 threshold defining a confirmed active.
         iter_drc_cost : float
-            Total DRC cost incurred in the *current* iteration (includes
-            upgrade costs).
+            Total DRC cost incurred in the current iteration (includes upgrades).
         iter_ps_cost : float
-            Total PS cost incurred in the *current* iteration.
+            Total PS cost incurred in the current iteration.
         iter_upgrade_cost : float, optional
-            Portion of ``iter_drc_cost`` that came from PS→DRC upgrades.
-            Defaults to 0.0 (no upgrade distinction).
+            Portion of ``iter_drc_cost`` attributable to PS→DRC upgrades.
         model_metric_value : float, optional
-            Metric value from ``evaluate_model()`` for this iteration, or None
-            if no test set is available.
+            Held-out test-set metric for this iteration, or None if unavailable.
         """
-        self._update_count += 1
-
-        # Accumulate per-iteration cost data.
-        self._iter_drc_costs.append(iter_drc_cost)
-        self._iter_ps_costs.append(iter_ps_cost)
-        self._iter_upgrade_costs.append(iter_upgrade_cost)
-
-        # Build cumulative actives/cost from records.
-        cum_cost = 0.0
-        cum_active = 0
-        self._cum_costs = []
-        self._cum_actives = []
-        for rec in labeled_records:
-            cum_cost += rec.cost
-            if self._record_is_active(rec, activity_threshold):
-                cum_active += 1
-            self._cum_costs.append(cum_cost)
-            self._cum_actives.append(cum_active)
-
-        if model_metric_value is not None:
-            self._model_metric_values.append(model_metric_value)
-
-        self._draw_actives_panel()
-        self._draw_cost_panel()
-        self._draw_metric_panel()
-        self._draw_compound_status_panel(labeled_records)
-
-        self._fig.tight_layout(pad=2.5)
-
-        if self._interactive:
-            try:
-                import warnings
-
-                self._fig.canvas.draw_idle()
-                with warnings.catch_warnings():
-                    warnings.simplefilter("error", UserWarning)
-                    plt.pause(0.05)
-            except (OSError, RuntimeError, UserWarning):
-                self._interactive = False
-
-        self._capture_frame()
-
-    # ------------------------------------------------------------------
-    # Panel drawing
-    # ------------------------------------------------------------------
-
-    def _draw_actives_panel(self) -> None:
-        ax: Axes = self._ax1
-        ax.cla()
-        ax.set_title("Cumulative Actives", fontsize=9)
-        ax.set_xlabel("Cumulative Cost ($)")
-        ax.set_ylabel("Confirmed Actives Found")
-        ax.grid(True, linestyle="--", alpha=0.4)
-
-        # Set initial y-axis limit to 1.05 to ensure the first active found is visible
-        ax.set_ylim(0, 1.05)
-
-        # If no actives found yet, skip plotting the curve (but keep axes/labels visible)
-        if not self._cum_costs:
-            return
-
-        # Convert to numpy arrays for plotting
-        xs = np.array(self._cum_costs)
-        ys = np.array(self._cum_actives)
-
-        # Fill area under the curve with a semi-transparent color, then plot the line on top
-        ax.fill_between(xs, ys, color=_COLOUR_ACT, zorder=2, alpha=0.2)
-        ax.plot(xs, ys, color=_COLOUR_ACT, linewidth=2, zorder=3, marker="")
-
-        # Set x-axis limit
-        ax.set_xlim(left=0)
-
-        # Set y-axis limit slightly above the max actives found (or 1 if none)
-        y_top = max(int(np.max(ys)) * 1.05, 1.05)
-        ax.set_ylim(0, y_top)
-
-        # Force integer-only tick positions so labels never display as floats
-        ax.yaxis.set_major_locator(MaxNLocator(nbins=4, integer=True))
-        ax.xaxis.set_major_locator(MaxNLocator(nbins=4, integer=True))
-
-    def _draw_cost_panel(self) -> None:
-        ax: Axes = self._ax2
-        ax2r: Axes = self._ax2r
-        ax.cla()
-        ax2r.cla()
-        ax.set_title("Per-Iteration Cost Breakdown", fontsize=9)
-        ax.set_xlabel("Iteration")
-        ax.set_ylabel("Cost ($)")
-        ax.grid(True, linestyle="--", alpha=0.4, axis="y")
-        ax2r.set_ylabel("Cumulative Cost ($k)", fontsize=8)
-        ax2r.tick_params(axis="y", labelsize=7)
-        ax2r.yaxis.set_label_position("right")
-        ax2r.yaxis.set_ticks_position("right")
-
-        # Set initial right y-axis limit to 1.05k to ensure the first iteration's cost is visible
-        ax2r.set_ylim(0, 1.05)
-
-        # If no cost data yet, skip plotting (but keep axes/labels visible)
-        n = len(self._iter_drc_costs)
-        if n == 0:
-            return
-
-        # Convert to numpy arrays for plotting
-        iters = np.arange(1, n + 1)
-        drc_arr = np.array(self._iter_drc_costs)
-        ps_arr = np.array(self._iter_ps_costs)
-        upgrade_arr = np.array(self._iter_upgrade_costs)
-
-        # First-pass DRC is total DRC minus the upgrade portion
-        drc_new_arr = drc_arr - upgrade_arr
-
-        # Stacked bars: first-pass DRC on the bottom, PS on top, and upgrades stacked on top of DRC
-        ax.bar(iters, drc_new_arr, color=_COLOUR_DRC, label="DRC", zorder=2)
-        ax.bar(
-            iters,
-            upgrade_arr,
-            bottom=drc_new_arr,
-            color=_COLOUR_UPGRADE,
-            label="PS→DRC",
-            zorder=2,
-        )
-        ax.bar(iters, ps_arr, bottom=drc_arr, color=_COLOUR_PS, label="PS", zorder=2)
-
-        # Cumulative total cost line (DRC + PS) on the secondary y-axis, converted to thousands of dollars
-        cum_total_k = np.cumsum(drc_arr + ps_arr) / 1000
-        ax2r.plot(
-            iters,
-            cum_total_k,
-            color="black",
-            linewidth=1.5,
-            linestyle="--",
-            label="Cumulative",
-            zorder=3,
-        )
-
-        # Combine legends from both axes
-        handles1, labels1 = ax.get_legend_handles_labels()
-        handles2, labels2 = ax2r.get_legend_handles_labels()
-        ax.legend(handles1 + handles2, labels1 + labels2, fontsize=7, loc="upper left")
-        ax.set_xlim(0.5, max(n + 0.5, self.n_iterations + 0.5))
-        ax.set_ylim(bottom=0)
-
-        # Set right y-axis limit
-        y_top = max(np.max(cum_total_k) * 1.05, 1.05)
-        ax2r.set_ylim(0, y_top)
-
-        # Force integer-only tick positions so labels never display as floats
-        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
-        ax2r.yaxis.set_major_locator(MaxNLocator(nbins=4, integer=True))
-        ax.yaxis.set_major_locator(MaxNLocator(nbins=4, integer=True))
-
-    def _draw_metric_panel(self) -> None:
-        ax: Axes = self._ax3
-        ax.cla()
-        metric_label = self.model_metric.value.upper().replace("_", " ")
-        ax.set_title(f"Model Performance ({metric_label})", fontsize=9)
-        ax.set_xlabel("Iteration")
-        ax.set_ylabel(metric_label)
-        ax.grid(True, linestyle="--", alpha=0.4)
-
-        if not self._model_metric_values:
-            ax.text(
-                0.5,
-                0.5,
-                "No test set provided",
-                transform=ax.transAxes,
-                ha="center",
-                va="center",
-                fontsize=9,
-                color="grey",
-                fontstyle="italic",
-            )
-            return
-
-        iters = np.arange(1, len(self._model_metric_values) + 1)
-        vals = np.array(self._model_metric_values)
-        ax.plot(
-            iters,
-            vals,
-            color=_COLOUR_MET,
-            linewidth=1.5,
-            marker="o",
-            markersize=5,
-            zorder=2,
-        )
-        # Highlight latest.
-        ax.scatter(
-            [iters[-1]],
-            [vals[-1]],
-            s=60,
-            color=_COLOUR_MET,
-            zorder=3,
-            edgecolors="white",
-            linewidths=1.2,
-        )
-        ax.set_xlim(0.5, max(len(iters) + 0.5, self.n_iterations + 0.5))
-        # Force integer-only tick positions so labels never display as floats
-        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
-        # Snap y ticks to multiples of 0.1 so 1dp labels are always unique.
-        ax.yaxis.set_major_locator(
-            MaxNLocator(nbins=4, steps=[1, 2, 5, 10], prune="both")
-        )
-
-    def _draw_compound_status_panel(self, labeled_records: list[LabelRecord]) -> None:
-        ax: Axes = self._ax4
-        ax.cla()
-        ax.set_title("Compound Status", fontsize=9)
-        ax.set_ylabel("Compounds")
-        ax.grid(True, linestyle="--", alpha=0.4, axis="y")
-
-        from moal.types import QueryType
-
         ps_smiles = {
             r.canonical_smiles
             for r in labeled_records
@@ -421,94 +322,58 @@ class LiveDashboard:
             if r.fidelity == QueryType.DOSE_RESPONSE
         }
 
-        # Determine counts for each category
         n_upgrades = len(ps_smiles & drc_smiles)
         n_ps_only = len(ps_smiles) - n_upgrades
         n_drc_new = len(drc_smiles) - n_upgrades
         n_queried = n_ps_only + len(drc_smiles)
         n_unqueried = max(self.n_compounds - n_queried, 0)
-        n_all = n_ps_only + n_drc_new + n_upgrades + n_unqueried
 
-        # Definie categories and their x positions
-        categories = ["PS", "DRC", "Unqueried"]
-        x = np.arange(len(categories))
-
-        # PS bar: PS-only on the bottom, upgrades stacked on top (but not counted in PS-only)
-        ax.bar([x[0]], [n_ps_only], color=_COLOUR_PS, zorder=2, label="PS")
-        ax.bar(
-            [x[0]],
-            [n_upgrades],
-            bottom=[n_ps_only],
-            color=_COLOUR_UPGRADE,
-            zorder=2,
-            # label="PS→DRC",
+        cum_actives = sum(
+            1 for r in labeled_records if self._record_is_active(r, activity_threshold)
         )
+        cum_cost = sum(r.cost for r in labeled_records)
 
-        # DRC bar: first-pass DRC on the bottom, upgrades stacked on top
-        ax.bar([x[1]], [n_drc_new], color=_COLOUR_DRC, zorder=2, label="DRC")
-        ax.bar(
-            [x[1]],
-            [n_upgrades],
-            bottom=[n_drc_new],
-            color=_COLOUR_UPGRADE,
-            zorder=2,
-            label="PS→DRC",
-        )
+        snapshot = {
+            "cum_cost": cum_cost,
+            "cum_actives": cum_actives,
+            "iter_drc_cost": iter_drc_cost,
+            "iter_ps_cost": iter_ps_cost,
+            "iter_upgrade_cost": iter_upgrade_cost,
+            "model_metric_value": model_metric_value,
+            "n_ps_only": n_ps_only,
+            "n_drc_new": n_drc_new,
+            "n_upgrades": n_upgrades,
+            "n_unqueried": n_unqueried,
+        }
 
-        # Unqueried bar
-        ax.bar(
-            [x[2]], [n_unqueried], color=_COLOUR_UNQUERIED, zorder=2, label="Unqueried"
-        )
+        with self._lock:
+            self._iterations.append(snapshot)
 
-        # Set x-ticks and labels
-        ax.set_xticks(x)
-        ax.set_xticklabels(categories, fontsize=8)
-
-        # Set y-axis limit slightly above the total compound count to ensure all bars are fully visible
-        ax.set_ylim(bottom=0, top=n_all * 1.05)
-
-        # Draw legend
-        ax.legend(fontsize=7, loc="upper right")
-
-        # Force integer-only tick positions so labels never display as floats
-        ax.yaxis.set_major_locator(MaxNLocator(nbins=4, integer=True))
+        # Pre-render at update time so save_gif() is pure PIL assembly (no external renderer)
+        self._capture_frame()
 
     # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _record_is_active(rec: LabelRecord, threshold: float) -> bool:
-        from moal.types import CensoringType
-
-        if rec.censoring_type == CensoringType.EXACT:
-            return rec.value >= threshold
-        if rec.censoring_type == CensoringType.INTERVAL:
-            return rec.value >= threshold
-        return False
-
-    def _capture_frame(self) -> None:
-        """Render the current figure into an in-memory PNG buffer."""
-        buf = io.BytesIO()
-        try:
-            self._fig.savefig(buf, format="png", dpi=600, bbox_inches="tight")
-            self._frames.append(buf.getvalue())
-        except Exception as exc:
-            logger.warning("Could not capture dashboard frame: %s", exc)
-
-    # ------------------------------------------------------------------
-    # Lifecycle
+    # Persistence and export
     # ------------------------------------------------------------------
 
     def save(self, path: str | Path) -> None:
-        """Save the current figure to a file.
+        """Save the current figure as a static PNG.
+
+        Uses the same matplotlib renderer as GIF export — no kaleido required.
 
         Parameters
         ----------
         path : str or Path
-            Destination file path (format inferred from extension).
+            Destination file path.
         """
-        self._fig.savefig(path, dpi=600, bbox_inches="tight")
+        with self._lock:
+            iterations = list(self._iterations)
+        try:
+            png = self._render_matplotlib_frame(iterations)
+            Path(path).write_bytes(png)
+            logger.info("Static dashboard PNG saved to %s", path)
+        except Exception as exc:
+            logger.warning("Could not save static dashboard PNG: %s", exc)
 
     def save_gif(
         self,
@@ -516,33 +381,34 @@ class LiveDashboard:
         frame_duration_ms: int = 500,
         last_frame_duration_ms: int = 5000,
     ) -> None:
-        """Assemble all captured frames into an animated GIF.
+        """Assemble all captured PNG frames into an animated GIF.
 
-        Uses the in-memory PNG frames captured by :meth:`_capture_frame` after
-        every :meth:`update` call. This method is a no-op (with a warning) when
-        no updates have been made yet.
+        Frames are pre-rendered by matplotlib's Agg backend at each update()
+        call, so this method is pure PIL assembly with no external renderer.
 
         Parameters
         ----------
         path : str or Path
             Destination file path for the GIF.
         frame_duration_ms : int, optional
-            Display duration of each frame in milliseconds. Default is 500
-            (half a second per iteration frame).
+            Display duration of each frame in milliseconds. Default is 500.
         last_frame_duration_ms : int, optional
-            Display duration of the final frame in milliseconds, allowing the
-            viewer to read the completed state before the animation loops.
-            Default is 5000 (5 seconds).
+            Display duration of the final frame in milliseconds. Default is 5000.
         """
-        if not self._frames:
-            logger.warning("No frames captured; skipping GIF")
+        with self._lock:
+            frames = list(self._frames)
+
+        if not frames:
+            logger.warning("No frames captured; skipping GIF export")
             return
 
         try:
             from PIL import Image
 
-            frames = [Image.open(io.BytesIO(f)).convert("RGB") for f in self._frames]
-            palette_frames = [f.convert("P", dither=Image.Dither.NONE) for f in frames]
+            pil_frames = [Image.open(io.BytesIO(b)).convert("RGB") for b in frames]
+            palette_frames = [
+                f.convert("P", dither=Image.Dither.NONE) for f in pil_frames
+            ]
             durations = [frame_duration_ms] * len(palette_frames)
             durations[-1] = last_frame_duration_ms
             palette_frames[0].save(
@@ -551,17 +417,728 @@ class LiveDashboard:
                 save_all=True,
                 append_images=palette_frames[1:],
                 duration=durations,
-                loop=0,  # 0 = loop forever
+                loop=0,
                 optimize=False,
             )
             logger.info(
-                "Dashboard animation (%d frames) saved to %s",
-                len(self._frames),
+                "GIF animation (%d frames) saved to %s",
+                len(frames),
                 path,
             )
         except Exception as exc:
             logger.warning("Could not save dashboard GIF: %s", exc)
 
+    def save_html(self, path: str | Path) -> None:
+        """Export the animated figure as a standalone HTML file.
+
+        The exported file embeds an iteration slider and play/pause buttons so
+        the user can scrub through all simulation iterations offline, without a
+        running Dash server.
+
+        Parameters
+        ----------
+        path : str or Path
+            Destination file path (should end in ``.html``).
+        """
+        animated_fig = self._build_animated_figure()
+        animated_fig.update_layout(width=self._export_width, height=self._export_height)
+        animated_fig.write_html(
+            str(path),
+            include_plotlyjs=True,
+            post_script=_PLAY_PAUSE_SCRIPT,
+            auto_play=False,
+        )
+        logger.info("Animated HTML dashboard saved to %s", path)
+
     def close(self) -> None:
-        """Close the matplotlib figure and release resources."""
-        plt.close(self._fig)
+        """Shut down the Werkzeug server and release the background thread."""
+        if not self._server_active:
+            return
+        try:
+            self._werkzeug_server.shutdown()
+            self._thread.join(timeout=5.0)
+        except Exception as exc:
+            logger.warning("Error shutting down dashboard server: %s", exc)
+
+    # ------------------------------------------------------------------
+    # Figure construction
+    # ------------------------------------------------------------------
+
+    def _capture_frame(self) -> None:
+        """Render the current iteration state to PNG bytes and append to _frames."""
+        with self._lock:
+            iterations = list(self._iterations)
+        try:
+            self._frames.append(self._render_matplotlib_frame(iterations))
+        except Exception as exc:
+            logger.warning("Could not capture dashboard frame: %s", exc)
+
+    def _render_matplotlib_frame(self, iterations: list[dict]) -> bytes:
+        """Build a 2×2 matplotlib figure from iteration snapshots and return PNG bytes.
+
+        Uses FigureCanvasAgg directly so no display environment or pyplot state
+        is required — safe to call from background threads and headless CI.
+        """
+        w = self._export_width / _GIF_RENDER_DPI
+        h = self._export_height / _GIF_RENDER_DPI
+        fig = Figure(figsize=(w, h), dpi=_GIF_RENDER_DPI)
+        FigureCanvasAgg(
+            fig
+        )  # attaches the Agg backend so fig.savefig() works headlessly
+
+        ax1, ax2, ax3, ax4 = fig.subplots(2, 2).flatten()
+
+        cum_costs = [0.0, *[it["cum_cost"] for it in iterations]]
+        cum_actives = [0, *[it["cum_actives"] for it in iterations]]
+        iter_nums = list(range(1, len(iterations) + 1))
+        iter_drc_new = [
+            it["iter_drc_cost"] - it["iter_upgrade_cost"] for it in iterations
+        ]
+        iter_upgrades = [it["iter_upgrade_cost"] for it in iterations]
+        iter_ps = [it["iter_ps_cost"] for it in iterations]
+        cum_total_costs = list(
+            itertools.accumulate(
+                it["iter_drc_cost"] + it["iter_ps_cost"] for it in iterations
+            )
+        )
+        cum_total_costs_k = [c / 1000 for c in cum_total_costs]
+        metric_iters = [
+            i + 1
+            for i, it in enumerate(iterations)
+            if it["model_metric_value"] is not None
+        ]
+        metric_vals = [
+            it["model_metric_value"]
+            for it in iterations
+            if it["model_metric_value"] is not None
+        ]
+        last = (
+            iterations[-1]
+            if iterations
+            else {
+                "n_ps_only": 0,
+                "n_drc_new": 0,
+                "n_upgrades": 0,
+                "n_unqueried": self.n_compounds,
+            }
+        )
+        # Floor at 1.05 guarantees 0 and 1 are labelled even before any data arrives
+        actives_y_max = max(1.05, max(cum_actives) * 1.05) if cum_actives else 1.05
+        cost_k_y_max = (
+            max(1.05, max(cum_total_costs_k) * 1.05) if cum_total_costs_k else 1.05
+        )
+
+        # Panel 1: Cumulative Actives
+        ax1.plot(
+            cum_costs,
+            cum_actives,
+            color=_COLOUR_ACT,
+            linewidth=2,
+            marker="o",
+            markersize=4,
+        )
+        ax1.set_title("Cumulative Actives", fontsize=9)
+        ax1.set_xlabel("Cumulative Cost ($)", fontsize=8)
+        ax1.set_ylabel("Actives Found", fontsize=8)
+        # Explicit range ensures 0 and 1 are always labelled even before any actives are found
+        ax1.set_ylim(-0.05, actives_y_max)
+        ax1.xaxis.set_major_locator(MaxNLocator(integer=True, nbins=5, min_n_ticks=1))
+        # Integer y-ticks only — actives are whole numbers; min_n_ticks=1 prevents
+        # fallback to float ticks when fewer than two integers are within the view
+        ax1.yaxis.set_major_locator(MaxNLocator(integer=True, nbins=5, min_n_ticks=1))
+
+        # Panel 2: Per-Iteration Cost Breakdown — stacked bars + cumulative cost line
+        # ax2_r is always created so it can hold its label and default range even with no data
+        ax2_r = ax2.twinx()
+        ax2_r.set_ylabel("Cumulative Cost ($k)", fontsize=8)
+        ax2_r.tick_params(axis="y", labelsize=7)
+        # Explicit range ensures 0 and 1 are always labelled even on the first frame
+        ax2_r.set_ylim(0, cost_k_y_max)
+        # nbins=5 caps tick density; integer=True + min_n_ticks=1 prevents fractional
+        # $k labels when fewer than two integers are within the view
+        ax2_r.yaxis.set_major_locator(MaxNLocator(integer=True, nbins=5, min_n_ticks=1))
+        if iter_nums:
+            ax2.bar(iter_nums, iter_drc_new, color=_COLOUR_DRC, label="DRC")
+            ax2.bar(
+                iter_nums,
+                iter_upgrades,
+                bottom=iter_drc_new,
+                color=_COLOUR_UPGRADE,
+                label="PS→DRC",
+            )
+            ps_bottoms = [d + u for d, u in zip(iter_drc_new, iter_upgrades)]
+            ax2.bar(iter_nums, iter_ps, bottom=ps_bottoms, color=_COLOUR_PS, label="PS")
+            # Scale to thousands so tick values stay compact whole-number integers
+            ax2_r.plot(
+                iter_nums,
+                cum_total_costs_k,
+                color="#555555",
+                linewidth=2,
+                linestyle="--",
+            )
+
+        ax2.set_title("Per-Iteration Cost Breakdown", fontsize=9)
+        ax2.set_xlabel("Iteration", fontsize=8)
+        ax2.set_ylabel("Iteration Cost ($)", fontsize=8)
+        ax2.set_xlim(0.5, max(1, len(iterations)) + 0.5)
+        ax2.xaxis.set_major_locator(MaxNLocator(integer=True, nbins=5, min_n_ticks=1))
+
+        # Panel 3: Model Performance
+        if metric_iters:
+            ax3.plot(
+                metric_iters,
+                metric_vals,
+                color=_COLOUR_MET,
+                linewidth=2,
+                marker="o",
+                markersize=4,
+            )
+        else:
+            ax3.text(
+                0.5,
+                0.5,
+                "No test set provided",
+                transform=ax3.transAxes,
+                ha="center",
+                va="center",
+                color="grey",
+                fontsize=9,
+            )
+        ax3.set_title(f"Model Performance ({self._metric_label})", fontsize=9)
+        ax3.set_xlabel("Iteration", fontsize=8)
+        ax3.set_ylabel(self._metric_label, fontsize=8)
+        # _OneDPLocator restricts steps to 1-2-5 sequence with step >= 0.1,
+        # preventing ticks that need more than one decimal place on any frame.
+        # The explicit ylim from _metric_axis_params guarantees the view always
+        # spans at least one full step, so _OneDPLocator sees >= 2 tick positions.
+        ax3.yaxis.set_major_locator(_OneDPLocator())
+        metric_ymin, metric_ymax, _, _ = self._metric_axis_params(metric_vals)
+        ax3.set_ylim(metric_ymin, metric_ymax)
+        ax3.set_xlim(0.5, max(1, len(iterations)) + 0.5)
+        ax3.xaxis.set_major_locator(MaxNLocator(integer=True, nbins=5, min_n_ticks=1))
+
+        # Panel 4: Compound Status — current pool state only (last snapshot)
+        categories = ["Unqueried", "PS", "DRC"]
+        base_vals = [last["n_unqueried"], last["n_ps_only"], last["n_drc_new"]]
+        base_colors = [_COLOUR_UNQUERIED, _COLOUR_PS, _COLOUR_DRC]
+        upgrade_vals = [0, last["n_upgrades"], last["n_upgrades"]]
+        ax4.bar(categories, base_vals, color=base_colors, label=categories)
+        ax4.bar(
+            categories,
+            upgrade_vals,
+            bottom=base_vals,
+            color=_COLOUR_UPGRADE,
+            label="PS→DRC",
+        )
+        ax4.set_title("Compound Status", fontsize=9)
+        ax4.set_xlabel("Category", fontsize=8)
+        ax4.set_ylabel("Compounds", fontsize=8)
+        ax4.set_ylim(0, 1.05 * max(self.n_compounds, 1))
+
+        ax4.legend(loc="upper right", fontsize=7)
+
+        fig.suptitle(
+            "Active Learning Campaign Dashboard", fontsize=11, fontweight="bold"
+        )
+        fig.tight_layout(pad=2.0)
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=_GIF_RENDER_DPI)
+        return buf.getvalue()
+
+    @staticmethod
+    def _nice_dtick(max_val: float, max_ticks: int = 5) -> int:
+        """Return the smallest integer step from a standard sequence that keeps tick count ≤ max_ticks.
+
+        Guarantees non-repeating integer labels on any axis range without requiring
+        the math module — the candidate list covers values from 1 to 10 000 (sufficient
+        for actives counts and $k-scaled cumulative costs on typical campaigns).
+        """
+        if max_val <= 0:
+            return 1
+        raw_step = max_val / max_ticks
+        for candidate in [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000]:
+            if candidate >= raw_step:
+                return candidate
+        return max(1, int(max_val))
+
+    @staticmethod
+    def _metric_axis_params(
+        metric_vals: list[float],
+    ) -> tuple[float, float, float, float]:
+        """Return ``(ymin, ymax, tick0, dtick)`` for the Model Performance y-axis.
+
+        Guarantees that at least two tick positions (multiples of *dtick* starting
+        from *tick0*) fall within ``[ymin, ymax]``, without requiring labels with
+        more than one decimal place.  The step is chosen from the 1-2-5 sequence
+        based on the *span* of the data so the panel scales sensibly across both
+        narrow early-iteration ranges and large final-iteration ranges.
+
+        Parameters
+        ----------
+        metric_vals:
+            The metric values collected so far.  An empty list produces a
+            sensible default range ``[0.0, 0.2]`` with ``dtick=0.1``.
+        """
+        _STEPS = [0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0]
+        _MAX_TICKS = 6
+
+        if not metric_vals:
+            return (0.0, 0.2, 0.0, 0.1)
+
+        vmin_data = min(metric_vals)
+        vmax_data = max(metric_vals)
+        span = vmax_data - vmin_data
+
+        step = _STEPS[-1]
+        for s in _STEPS:
+            if span < 1e-12 or span / s <= _MAX_TICKS - 1:
+                step = s
+                break
+
+        t_lo = math.floor(vmin_data / step) * step
+        t_hi = math.ceil(vmax_data / step) * step
+
+        # Guarantee at least two distinct tick positions.
+        if t_hi <= t_lo + step * 0.5:
+            t_hi = t_lo + step
+
+        margin = step * 0.05
+        return (t_lo - margin, t_hi + margin, t_lo, step)
+
+    def _build_figure(self, iterations: list[dict]) -> go.Figure:
+        """Build the 2×2 Plotly subplot figure from a list of iteration snapshots."""
+        if not iterations:
+            bg = _THEME_BG.get(self._theme.lower(), "#ffffff")
+            fig = go.Figure()
+            fig.add_annotation(
+                text="Waiting for first iteration\u2026",
+                xref="paper",
+                yref="paper",
+                x=0.5,
+                y=0.5,
+                showarrow=False,
+                font=dict(size=20, color="#aaaaaa"),
+            )
+            fig.update_layout(
+                template=self._theme,
+                paper_bgcolor=bg,
+                plot_bgcolor=bg,
+                xaxis=dict(visible=False),
+                yaxis=dict(visible=False),
+                height=self._export_height,
+                width=self._export_width,
+            )
+            return fig
+
+        fig = make_subplots(
+            rows=2,
+            cols=2,
+            specs=_SUBPLOT_SPECS,
+            subplot_titles=[
+                "Cumulative Actives",
+                "Per-Iteration Cost Breakdown",
+                f"Model Performance ({self._metric_label})",
+                "Compound Status",
+            ],
+            vertical_spacing=0.18,
+            horizontal_spacing=0.12,
+        )
+
+        cum_costs = [0.0, *[it["cum_cost"] for it in iterations]]
+        cum_actives = [0, *[it["cum_actives"] for it in iterations]]
+        iter_nums = list(range(1, len(iterations) + 1))
+        iter_drc_new = [
+            it["iter_drc_cost"] - it["iter_upgrade_cost"] for it in iterations
+        ]
+        iter_upgrades = [it["iter_upgrade_cost"] for it in iterations]
+        iter_ps = [it["iter_ps_cost"] for it in iterations]
+        # Scale to thousands so secondary y-axis ticks stay compact whole-number integers
+        cum_total_costs = [
+            c / 1000
+            for c in itertools.accumulate(
+                it["iter_drc_cost"] + it["iter_ps_cost"] for it in iterations
+            )
+        ]
+
+        metric_iters = [
+            i + 1
+            for i, it in enumerate(iterations)
+            if it["model_metric_value"] is not None
+        ]
+        metric_vals = [
+            it["model_metric_value"]
+            for it in iterations
+            if it["model_metric_value"] is not None
+        ]
+
+        last = iterations[-1]
+
+        # Panel 1: Cumulative Actives line
+        fig.add_trace(
+            go.Scatter(
+                x=cum_costs,
+                y=cum_actives,
+                mode="lines+markers",
+                name="Actives",
+                line=dict(color=_COLOUR_ACT, width=2),
+                marker=dict(size=6),
+                showlegend=False,
+            ),
+            row=1,
+            col=1,
+        )
+
+        # Panel 2: Stacked cost bars — legend entries suppressed; panel 4 owns all legend items
+        fig.add_trace(
+            go.Bar(
+                x=iter_nums,
+                y=iter_drc_new,
+                name="DRC",
+                marker_color=_COLOUR_DRC,
+                showlegend=False,
+            ),
+            row=1,
+            col=2,
+        )
+        fig.add_trace(
+            go.Bar(
+                x=iter_nums,
+                y=iter_upgrades,
+                name="PS→DRC",
+                marker_color=_COLOUR_UPGRADE,
+                showlegend=False,
+            ),
+            row=1,
+            col=2,
+        )
+        fig.add_trace(
+            go.Bar(
+                x=iter_nums,
+                y=iter_ps,
+                name="PS",
+                marker_color=_COLOUR_PS,
+                showlegend=False,
+            ),
+            row=1,
+            col=2,
+        )
+
+        # Cumulative cost line on secondary y-axis for panel 2 (scaled to $k)
+        line_color = "#FFFFFF" if self._theme == "plotly_dark" else "#555555"
+        fig.add_trace(
+            go.Scatter(
+                x=iter_nums,
+                y=cum_total_costs,
+                mode="lines",
+                name="Cumulative Cost ($k)",
+                line=dict(color=line_color, width=2, dash="dot"),
+                showlegend=False,
+            ),
+            row=1,
+            col=2,
+            secondary_y=True,
+        )
+
+        # Panel 3: Model metric line
+        fig.add_trace(
+            go.Scatter(
+                x=metric_iters,
+                y=metric_vals,
+                mode="lines+markers",
+                name=self._metric_label,
+                line=dict(color=_COLOUR_MET, width=2),
+                marker=dict(size=6),
+                showlegend=False,
+            ),
+            row=2,
+            col=1,
+        )
+
+        # Panel 4: Compound status — source of truth for the unified legend (canonical order via legendrank)
+        for cat_name, y_val, color, rank in [
+            ("Unqueried", last["n_unqueried"], _COLOUR_UNQUERIED, 4),
+            ("PS", last["n_ps_only"], _COLOUR_PS, 3),
+            ("DRC", last["n_drc_new"], _COLOUR_DRC, 1),
+        ]:
+            fig.add_trace(
+                go.Bar(
+                    x=[cat_name],
+                    y=[y_val],
+                    name=cat_name,
+                    marker_color=color,
+                    legendrank=rank,
+                ),
+                row=2,
+                col=2,
+            )
+        # PS→DRC upgrade overlay stacked on top of PS and DRC bars
+        fig.add_trace(
+            go.Bar(
+                x=["PS", "DRC", "Unqueried"],
+                y=[last["n_upgrades"], last["n_upgrades"], 0],
+                name="PS→DRC",
+                marker_color=_COLOUR_UPGRADE,
+                legendrank=2,
+            ),
+            row=2,
+            col=2,
+        )
+
+        # "No test set" annotation when no metric data is available
+        if not metric_vals:
+            fig.add_annotation(
+                text="No test set provided",
+                xref="x domain",
+                yref="y domain",
+                x=0.5,
+                y=0.5,
+                showarrow=False,
+                font=dict(color="grey", size=12),
+                row=2,
+                col=1,
+            )
+
+        # Pre-compute data maxima for dynamic integer dtick on actives and $k axes;
+        # floor at 1.05 ensures both 0 and 1 are always visible even with no data
+        max_actives = max(cum_actives, default=0)
+        max_cost_k = max(cum_total_costs, default=0)
+        actives_y_max = max(1.05, max_actives * 1.05)
+        cost_k_y_max = max(1.05, max_cost_k * 1.05)
+        # Metric axis: explicit range + tick0/dtick computed from data span so at
+        # least two tick labels are always visible even on narrow early-iteration ranges.
+        metric_ymin, metric_ymax, metric_tick0, metric_dtick = self._metric_axis_params(
+            metric_vals
+        )
+
+        fig.update_layout(
+            title_text="Active Learning Campaign Dashboard",
+            barmode="stack",
+            template=self._theme,
+            width=self._export_width,
+            height=self._export_height,
+            legend=dict(
+                orientation="h",
+                x=0.98,
+                y=1.05,
+                xanchor="right",
+                yanchor="bottom",
+                bgcolor="rgba(0,0,0,0)",
+                bordercolor="rgba(0,0,0,0)",
+                font=dict(size=10),
+                itemclick=False,
+                itemdoubleclick=False,
+            ),
+        )
+        # Y-axes: primary labels and floor; disable secondary gridlines to prevent clashing
+        fig.update_yaxes(
+            title_text="Actives Found",
+            row=1,
+            col=1,
+            # Explicit range ensures 0 and 1 are visible even before any actives are found
+            range=[0, actives_y_max],
+            # Integer-only ticks; dtick computed from data so labels never repeat
+            tickmode="linear",
+            tick0=0,
+            dtick=self._nice_dtick(max_actives),
+        )
+        fig.update_yaxes(
+            title_text="Iteration Cost ($)", secondary_y=False, row=1, col=2
+        )
+        fig.update_yaxes(
+            title_text="Cumulative Cost ($k)",
+            secondary_y=True,
+            row=1,
+            col=2,
+            showgrid=False,
+            # Explicit range ensures 0 and 1 are visible even on the first frame;
+            # integer ticks computed from data so labels never repeat across frames
+            range=[0, cost_k_y_max],
+            tickmode="linear",
+            tick0=0,
+            dtick=self._nice_dtick(max_cost_k),
+        )
+        fig.update_yaxes(
+            title_text=self._metric_label,
+            row=2,
+            col=1,
+            # Explicit range from _metric_axis_params guarantees >= 2 tick positions
+            # are always visible. tick0/dtick are span-based (not max-based) so they
+            # stay consistent with the range on every frame, including narrow early ones.
+            # tickformat ".3~g" trims trailing zeros (e.g. 1.0 → "1", 0.5 → "0.5").
+            range=[metric_ymin, metric_ymax],
+            tickmode="linear",
+            tick0=metric_tick0,
+            dtick=metric_dtick,
+            tickformat=".3~g",
+        )
+        fig.update_yaxes(
+            title_text="Compounds",
+            range=[0, 1.05 * max(self.n_compounds, 1)],
+            row=2,
+            col=2,
+        )
+        # X-axis labels — integer ticks on all numerical axes to avoid fractional iteration labels
+        fig.update_xaxes(
+            title_text="Cumulative Cost ($)",
+            row=1,
+            col=1,
+            tickformat=",.0f",
+            range=self._cumulative_cost_x_range(cum_costs),
+        )
+        fig.update_xaxes(
+            title_text="Iteration",
+            row=1,
+            col=2,
+            tickformat="d",
+            range=self._iteration_x_range(len(iterations), padding=0.5),
+        )
+        fig.update_xaxes(
+            title_text="Iteration",
+            row=2,
+            col=1,
+            tickformat="d",
+            range=self._iteration_x_range(len(iterations)),
+        )
+        fig.update_xaxes(
+            title_text="Category",
+            categoryorder="array",
+            categoryarray=["Unqueried", "PS", "DRC"],
+            row=2,
+            col=2,
+        )
+
+        return fig
+
+    def _build_animated_figure(self) -> go.Figure:
+        """Construct an animated Plotly figure with per-iteration frames, slider, and play/pause."""
+        with self._lock:
+            iterations = list(self._iterations)
+
+        if not iterations:
+            return self._build_figure([])
+
+        initial_fig = self._build_figure(iterations[:1])
+
+        # Build one frame per iteration so the slider steps through cumulative history
+        frames = [
+            self._build_animation_frame(iterations[: i + 1], i + 1)
+            for i in range(len(iterations))
+        ]
+
+        animated_fig = go.Figure(
+            data=initial_fig.data, layout=initial_fig.layout, frames=frames
+        )
+
+        steps = [
+            {
+                "args": [
+                    [str(i + 1)],
+                    {
+                        "frame": {"duration": 350, "redraw": False},
+                        "mode": "immediate",
+                        "transition": {
+                            "duration": 220,
+                            "easing": _EASING,
+                            "ordering": "layout first",
+                        },
+                    },
+                ],
+                "label": str(i + 1),
+                "method": "animate",
+            }
+            for i in range(len(iterations))
+        ]
+
+        animated_fig.update_layout(
+            sliders=[
+                {
+                    "active": 0,
+                    "yanchor": "top",
+                    "xanchor": "left",
+                    "currentvalue": {
+                        "prefix": "Iteration: ",
+                        "visible": True,
+                        "xanchor": "right",
+                    },
+                    "pad": {"b": 10, "t": 50},
+                    # Full-width slider; play/pause is provided via injected DOM button
+                    "len": 1.0,
+                    "x": 0.0,
+                    "y": 0,
+                    "steps": steps,
+                    # Hide per-step tick labels; the currentvalue readout is sufficient
+                    "tickcolor": "rgba(0,0,0,0)",
+                    "font": {"color": "rgba(0,0,0,0)", "size": 1},
+                }
+            ],
+            # No Plotly updatemenus — play/pause toggle is injected via post_script in save_html
+            updatemenus=[],
+        )
+
+        return animated_fig
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _build_animation_frame(
+        self, iterations: list[dict], iteration_index: int
+    ) -> go.Frame:
+        """Build a Plotly animation frame with both data and per-frame axis layout."""
+        frame_fig = self._build_figure(iterations)
+        return go.Frame(
+            data=list(frame_fig.data),
+            layout=self._build_animation_frame_layout(frame_fig, iterations),
+            name=str(iteration_index),
+            traces=list(range(len(frame_fig.data))),
+        )
+
+    def _build_animation_frame_layout(
+        self, frame_fig: go.Figure, iterations: list[dict]
+    ) -> go.Layout:
+        """Return layout updates needed for exported HTML animation frame scrubbing."""
+        n_iterations = len(iterations)
+        cum_costs = [it["cum_cost"] for it in iterations]
+
+        return go.Layout(
+            xaxis={
+                **frame_fig.layout.xaxis.to_plotly_json(),
+                "range": self._cumulative_cost_x_range(cum_costs),
+            },
+            xaxis2={
+                **frame_fig.layout.xaxis2.to_plotly_json(),
+                "range": self._iteration_x_range(n_iterations, padding=0.5),
+            },
+            xaxis3={
+                **frame_fig.layout.xaxis3.to_plotly_json(),
+                "range": self._iteration_x_range(n_iterations),
+            },
+            xaxis4=frame_fig.layout.xaxis4.to_plotly_json(),
+            yaxis=frame_fig.layout.yaxis.to_plotly_json(),
+            yaxis2=frame_fig.layout.yaxis2.to_plotly_json(),
+            yaxis3=frame_fig.layout.yaxis3.to_plotly_json(),
+            yaxis4=frame_fig.layout.yaxis4.to_plotly_json(),
+            yaxis5=frame_fig.layout.yaxis5.to_plotly_json(),
+        )
+
+    @staticmethod
+    def _cumulative_cost_x_range(cum_costs: list[float]) -> list[float]:
+        """Return an explicit x-range for the cumulative-cost subplot."""
+        max_cost = max(cum_costs, default=0.0)
+        return [0.0, max(1.0, max_cost * 1.05)]
+
+    @staticmethod
+    def _iteration_x_range(n_iterations: int, padding: float = 0.25) -> list[float]:
+        """Return an explicit x-range for iteration-indexed subplots."""
+        upper = max(float(n_iterations), 1.0)
+        return [1.0 - padding, upper + padding]
+
+    @staticmethod
+    def _record_is_active(rec: LabelRecord, threshold: float) -> bool:
+        """Return True when a labeled record's value meets the activity threshold."""
+        if rec.censoring_type == CensoringType.EXACT:
+            return rec.value >= threshold
+        if rec.censoring_type == CensoringType.INTERVAL:
+            return rec.value >= threshold
+        return False

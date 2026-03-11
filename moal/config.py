@@ -162,21 +162,28 @@ class TrainerConfig:
 
 @dataclass(frozen=True)
 class DashboardConfig:
-    """Configuration for the live matplotlib campaign dashboard."""
+    """Configuration for the Plotly + Dash live campaign dashboard."""
 
     enabled: bool = True
-    """Whether to show the live dashboard at all."""
+    """Whether to run the live dashboard server at all."""
 
     model_metric: str = "mae"
     """Metric to display in the model performance panel.
     Valid values: ``mae``, ``rmse``, ``kendall_tau``, ``spearman_r``, ``r2``."""
 
-    figsize: tuple[int, int] = (15, 4)
-    """Overall figure size (width, height) in inches."""
+    port: int = 8050
+    """Local port for the Dash server (bound to 127.0.0.1 only)."""
 
-    show: bool = True
-    """If True, attempt interactive ``plt.ion()`` display.
-    Set to False for headless/server environments."""
+    export_width: int = 1400
+    """Pixel width used when exporting static PNG frames (requires kaleido)."""
+
+    export_height: int = 800
+    """Pixel height used when exporting static PNG frames (requires kaleido)."""
+
+    theme: str = "plotly_dark"
+    """Plotly template applied to all figure renders (live browser, HTML, and GIF).
+    Any valid Plotly template name is accepted, e.g. ``plotly``, ``plotly_white``,
+    ``ggplot2``, ``seaborn``, ``simple_white``."""
 
 
 @dataclass(frozen=True)

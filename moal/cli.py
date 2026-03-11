@@ -149,8 +149,10 @@ def simulate(config: Path, output_dir: Path | None, verbose: bool) -> None:
             n_iterations=cfg.active_learning_loop.n_iterations,
             n_compounds=len(oracle),
             model_metric=ModelMetric(cfg.dashboard.model_metric),
-            figsize=cfg.dashboard.figsize,
-            show=cfg.dashboard.show,
+            port=cfg.dashboard.port,
+            export_width=cfg.dashboard.export_width,
+            export_height=cfg.dashboard.export_height,
+            theme=cfg.dashboard.theme,
         )
 
     from moal.evaluation import ModelMetric
@@ -177,15 +179,8 @@ def simulate(config: Path, output_dir: Path | None, verbose: bool) -> None:
         k_per_iteration=cfg.active_learning_loop.k_per_iteration,
     )
 
-    if dashboard is not None:
-        final_path = out_dir / "dashboard_final.png"
-        dashboard.save(final_path)
-        logger.info("Final dashboard saved to %s", final_path)
-
-        gif_path = out_dir / "dashboard_animation.gif"
-        dashboard.save_gif(gif_path)
-        dashboard.close()
-
+    # Write output CSVs immediately so results are available as soon as
+    # computation finishes, independent of any dashboard export latency.
     metrics_df = pd.DataFrame([r.metrics for r in results.iterations])
     metrics_path = out_dir / "iteration_metrics.csv"
     metrics_df.to_csv(metrics_path, index=False)
@@ -195,6 +190,14 @@ def simulate(config: Path, output_dir: Path | None, verbose: bool) -> None:
     curve_path = out_dir / "cumulative_actives_curve.csv"
     curve_df.to_csv(curve_path, index=False)
     logger.info("Cumulative actives curve written to %s", curve_path)
+
+    if dashboard is not None:
+        html_path = out_dir / "dashboard_animation.html"
+        dashboard.save_html(html_path)
+
+        gif_path = out_dir / "dashboard_animation.gif"
+        dashboard.save_gif(gif_path)
+        dashboard.close()
 
 
 @main.command()
