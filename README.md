@@ -1,21 +1,19 @@
 ![banner](assets/banner_no_text.png)
 
-# moal: multi-objective active learning
+# `moal`: multi-objective active learning
 
 A Python pipeline for maximizing the discovery of **active compounds** (pEC50 > 7) from an unrevealed dataset while strictly minimizing labeling cost. The oracle offers two query fidelities:
 
 - **Primary Screen (PS):** Returns an inequality label (`< T` or `>= T`) at a configurable threshold. Cheap. A hit (`>= T`) is an INTERVAL-censored label — eligible for a DRC upgrade in a later iteration.
 - **Dose-Response Curve (DRC):** Returns the exact continuous pEC50 value. Expensive. Can be run as a first-pass query *or* as a follow-up upgrade on a PS hit.
 
-The underlying predictive model is **ChemProp** initialized with **CheMeleon** pretrained weights, trained with a **Tobit (censored regression) loss** that correctly handles both label types. The framework is **PyTorch Lightning**.
+The underlying predictive model is **ChemProp** initialized with **CheMeleon** pretrained weights, trained with a **Tobit (censored regression) loss** that correctly handles both label types.
 
 ## Installation
 
 ```bash
 pip install -e .
 ```
-
-**Requirements:** `Python≥3.10`, `chemprop>=2.0`, `lightning>=2.0`, `rdkit`, `pytorch`.
 
 ## Quick Start
 
@@ -27,7 +25,8 @@ Copy and edit the example config to point at your data:
 
 ```bash
 cp examples/default_config.yaml my_campaign.yaml
-# edit my_campaign.yaml: set data.simulate.input_csv
+
+# Edit my_campaign.yaml: set data.simulate.input_csv
 moal simulate --config my_campaign.yaml --output-dir results/
 ```
 
@@ -89,39 +88,6 @@ unmodified** in the next iteration after new experimental results are filled in.
 `plan` does not support `model.fast = true`, because offline planning has no
 oracle ground truth for unseen compounds.
 
-The full set of options (with defaults and documentation) is in
-`examples/default_config.yaml`. A minimal config looks like:
-
-```yaml
-oracle:
-  cost_ps: 1.0
-  cost_drc: 10.0
-  ps_threshold: 5.0
-  activity_threshold: 7.0
-
-model:
-  freeze_epochs: 2
-  lr_encoder: 1.0e-4
-  lr_head: 1.0e-3
-
-acquisition:
-  ps_threshold: 5.0
-  target_threshold: 6.5
-  tau: 0.5
-
-data:
-  output_dir: results/
-  simulate:
-    input_csv: data/compounds.csv   # columns: smiles, pec50
-  plan:
-    input_csv: data/campaign_state.csv   # columns: smiles, relation, value
-    output_csv: campaign_state.csv
-
-active_learning_loop:
-  n_iterations: 20
-  k_per_iteration: 100
-```
-
 ## Live Dashboard
 
 Four panels update in real time after every iteration:
@@ -131,7 +97,7 @@ Four panels update in real time after every iteration:
 | Cumulative Actives | Cost ($) | Confirmed actives found |
 | Cost Breakdown | Iteration | Per-iter DRC (orange) + PS (blue) cost, cumulative total line |
 | Model Performance | Iteration | Configurable metric (MAE / RMSE / Kendall's τ / Spearman's ρ / R²) |
-| Compound Status | PS, DRC, Unqueried | Number of compounds |
+| Compound Status | Unqueried, PS, DRC | Number of compounds |
 
 The model performance panel requires a held-out test set (scaffold-split) — the CLI creates one automatically. In headless/server environments, set `dashboard.show: false` in your YAML config.
 
@@ -168,8 +134,8 @@ The campaign emits a rich progress bar with `n_iterations × 3` discrete steps:
 |---|---|
 | `results/iteration_metrics.csv` | Per-iteration scalar metrics |
 | `results/cumulative_actives_curve.csv` | Cumulative actives vs. cost curve |
-| `results/dashboard_final.png` | Final dashboard snapshot |
-| `results/dashboard_animation.gif` | Campaign dashboard animation |
+| `results/dashboard_animation.html` | Campaign dashboard animation as interactive HTML |
+| `results/dashboard_animation.gif` | Campaign dashboard animation as portable GIF |
 | `results/config_used.yaml` | Exact config used for reproducibility |
 
 ### `plan`
