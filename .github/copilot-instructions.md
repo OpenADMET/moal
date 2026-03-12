@@ -16,10 +16,13 @@ python -m pytest tests/test_loss.py
 python -m pytest tests/test_loss.py::TestLossBreakdown
 python -m pytest tests/test_loss.py::TestLossBreakdown::test_forward_consistent_with_breakdown
 
-# CLI entry point
-moal --config examples/default_config.yaml
-moal --config examples/default_config.yaml --output-dir results/
-moal --config examples/default_config.yaml --verbose
+# CLI entry points
+moal simulate --config examples/default_config.yaml
+moal simulate --config examples/default_config.yaml --output-dir results/
+moal simulate --config examples/default_config.yaml --verbose
+
+moal plan --config examples/default_config.yaml
+moal plan --config examples/default_config.yaml --output-dir results/
 ```
 
 No linter is configured. `pytest` is the only test runner; config lives in `pyproject.toml` under `[tool.pytest.ini_options]`.
@@ -28,9 +31,9 @@ No linter is configured. `pytest` is the only test runner; config lives in `pypr
 
 ## Architecture
 
-The pipeline is a **cost-aware active learning loop** over a fixed compound pool. The user provides a CSV with `smiles` and `pec50` columns; the oracle simulates a wet-lab screen by dispensing labels at cost.
+The pipeline has two modes: **`moal simulate`** runs a synthetic active learning campaign over a fixed compound pool (ground-truth CSV with `smiles` and `pec50`); **`moal plan`** trains on a real mixed-fidelity campaign state CSV and scores the next acquisition batch for wet-lab prioritization.
 
-### Data flow
+### Data flow — `moal simulate`
 
 ```
 PipelineConfig (YAML)
@@ -68,15 +71,43 @@ ActiveLearningLoop.run()  →  LoopResults
     │  3 Rich progress steps per iteration: query → refit → select
     │  NoisyOracleModel: noise_scale ramps linearly initial_error → final_error
     ▼
-LiveDashboard (matplotlib, 3 panels: actives curve, cost stacks, model metric)
-    │  PNG snapshot after every update; save_gif() exports animated GIF
+LiveDashboard (Plotly + Dash, 4 panels: actives curve, cost stacks, model metric, compound status)
+    │  Live browser at 127.0.0.1:8050 (1s refresh); PNG frames via matplotlib Agg
+    │  save_html() → interactive HTML with iteration slider
+    │  save_gif()  → animated GIF from matplotlib PNG frames
     ▼
 output_dir/
     ├── config_used.yaml
-    ├── dashboard_final.png
-    ├── dashboard_animation.gif
+    ├── dashboard_animation.html          # interactive Plotly with slider
+    ├── dashboard_animation.gif           # animated GIF
     ├── iteration_metrics.csv
-    └── cumulative_actives_curve.csv
+    ├── cumulative_actives_curve.csv
+    └── lightning_logs/
+```
+
+### Data flow — `moal plan`
+
+```
+PipelineConfig (YAML)
+    │
+    ▼
+parse_campaign_state(df)  ──── unified campaign state CSV
+    │  relation="" / value=""  → unqueried (eligible for PS or DRC)
+    │  relation="<"            → PS miss (LEFT label, train only)
+    │  relation=">="           → PS hit  (INTERVAL label, train + upgrade candidate)
+    │  relation="=="           → DRC exact label (EXACT, train only)
+    ▼
+CampaignState
+    │  .training_records  → MixedFidelityDataModule → ChemPropLightningModule.refit()
+    │  .unqueried_rows + .ps_upgrade_rows → model.predict_smiles() → predictions
+    ▼
+CostAwareGreedyAcquisition.score_summary()
+    ▼
+annotate_campaign_state(df, state, predictions, acquisition)
+    │  appends: ps_score, drc_score, overall_score, recommendation ("ps"/"drc")
+    │  sorted by overall_score descending
+    ▼
+output_dir/campaign_state.csv   (configurable via data.plan.output_csv)
 ```
 
 ### Three distinct threshold parameters
@@ -94,7 +125,7 @@ These are separate and must not be conflated:
 - **PS `>= T` labels are INTERVAL-censored `[T, upper_bound]`**, not right-censored at T. Right-censoring inverts gradients for active compounds. See `CensoringType.INTERVAL` in `types.py` and the `INTERVAL` branch in `loss.py`.
 - **pEC50 values outside `[0.0, 14.0]`** (and NaN/inf) are excluded by `oracle._build_ground_truth()` before they reach the loss function. Silently passing NaN would corrupt entire training batches.
 - **`Chem.MolToSmiles(mol, isomericSmiles=True)`** is explicit in `preprocessing.py`. Do not remove this — RDKit's default has changed historically and chirality must be preserved.
-- **`TrainerConfig.to_dict()`** returns only `L.Trainer`-compatible keys (`max_epochs`, `accelerator`, `enable_progress_bar`, `enable_model_summary`). `val_fraction` and `split_seed` are consumed by `MixedFidelityDataModule` via `to_datamodule_kwargs()` which returns `{val_fraction, seed}`. Passing them to `L.Trainer` raises `TypeError`.
+- **`TrainerConfig.to_dict()`** returns only `L.Trainer`-compatible keys (`max_epochs`, `accelerator`, `enable_progress_bar`, `enable_model_summary`, `log_every_n_steps`). `val_fraction`, `split_seed`, and `num_workers` are consumed by `MixedFidelityDataModule` via `to_datamodule_kwargs()` which returns `{val_fraction, seed, num_workers}`. Passing them to `L.Trainer` raises `TypeError`.
 - **`logging.basicConfig`** must only be called inside `cli.main()`, never at module scope. Module-level calls fire on import and reconfigure the root logger during test collection.
 - **`oracle.training_records`** (not `oracle.labeled_records`) must be passed to `model.refit()`. It excludes PS INTERVAL records for compounds that have a DRC record, preventing double-weighting of upgraded compounds.
 
@@ -111,17 +142,38 @@ All campaign parameters live in `moal/config.py` as frozen dataclasses. The YAML
 | YAML key | Dataclass | Notable fields |
 |---|---|---|
 | `oracle:` | `OracleConfig` | `cost_ps`, `cost_drc`, `ps_threshold`, `upper_bound`, `activity_threshold` |
-| `model:` | `ModelConfig` | `hidden_size`, `depth`, `ffn_hidden_size`, `ffn_num_layers`, `freeze_epochs`, `lr_encoder`, `lr_head`, `sigma`, `w_drc`, `w_ps`, `learnable_sigma`, **`fast`**, **`initial_error`**, **`final_error`** |
+| `model:` | `ModelConfig` | `hidden_size`, `depth`, `ffn_hidden_size`, `ffn_num_layers`, `freeze_epochs`, `lr_encoder`, `lr_head`, `sigma`, `w_drc`, `w_ps`, `learnable_sigma`, `reset_weights_on_refit`, **`fast`**, **`initial_error`**, **`final_error`** |
 | `acquisition:` | `AcquisitionConfig` | `ps_threshold`, `target_threshold`, **`tau`** |
-| `trainer:` | `TrainerConfig` | `max_epochs`, `accelerator`, `enable_progress_bar`, `enable_model_summary`, `val_fraction`, `split_seed` |
-| `dashboard:` | `DashboardConfig` | `enabled`, `model_metric`, `figsize`, `show` |
-| `data:` | `DataConfig` | `ground_truth_csv`, `smiles_column`, `pec50_column`, `is_canonical`, `output_dir`, `test_set_size` |
+| `trainer:` | `TrainerConfig` | `max_epochs`, `accelerator`, `enable_progress_bar`, `enable_model_summary`, `val_fraction`, `split_seed`, `num_workers`, `log_every_n_steps` |
+| `dashboard:` | `DashboardConfig` | `enabled`, `model_metric`, `port`, `export_width`, `export_height`, `theme` |
+| `data:` | `DataConfig` | `output_dir`; nested `simulate:` → `SimulationDataConfig`; nested `plan:` → `PlanDataConfig` |
+| `data.simulate:` | `SimulationDataConfig` | `input_csv`, `smiles_column`, `pec50_column`, `is_canonical`, `test_set_size` |
+| `data.plan:` | `PlanDataConfig` | `input_csv`, `output_csv`, `smiles_column`, `relation_column`, `value_column`, `is_canonical` |
 | `active_learning_loop:` | `ActiveLearningLoopConfig` | `n_iterations`, `k_per_iteration` |
 | *(top-level)* | `PipelineConfig` | `seed` |
 
 ### Fast mode (NoisyOracleModel)
 
 When `model.fast = true` in the config, `ActiveLearningLoop` uses `NoisyOracleModel` instead of `ChemPropLightningModule`. This surrogate looks up true pEC50 values from the oracle's ground truth and adds uniform noise, skipping all neural network training. The noise scale ramps linearly from `model.initial_error` down to `model.final_error` across iterations. Use fast mode for rapid campaign prototyping and integration tests; never for real experiments.
+
+### Planning module
+
+`moal/planning.py` powers the `moal plan` command. Key components:
+
+- **`CampaignState`** (dataclass) — holds `training_records: list[LabelRecord]`, `unqueried_rows: list[tuple[int, str]]`, and `ps_upgrade_rows: list[tuple[int, str]]` (DRC upgrade candidates).
+- **`parse_campaign_state(df, *, cost_ps, cost_drc, upper_bound, preprocessor, ...)`** — converts the unified campaign state CSV into a `CampaignState`. Validates that no compound appears in multiple partitions and that relation/value fields are consistent.
+- **`training_records_for_refit(records)`** — mirrors `oracle.training_records` deduplication logic: drops PS INTERVAL rows for compounds that also have a DRC record.
+- **`annotate_campaign_state(df, state, predictions, acquisition)`** — appends `ps_score`, `drc_score`, `overall_score`, and `recommendation` columns; sorts by `overall_score` descending. `predictions` must align with `state.unqueried_rows + state.ps_upgrade_rows`.
+
+### Dashboard (Plotly + Dash)
+
+`LiveDashboard` in `moal/dashboard.py` replaced the old matplotlib-only dashboard. Key notes:
+
+- **Live browser view** served at `127.0.0.1:<port>` (default 8050) with 1-second Dash callback refresh during `moal simulate`.
+- **4-panel 2×2 subplot layout:** (1) cumulative actives curve, (2) per-iteration cost breakdown with secondary-y cumulative cost line, (3) model performance metric over iterations, (4) compound status bars (PS-only, DRC, upgrades, unqueried).
+- **`save_html(path)`** exports a standalone Plotly HTML file with an iteration slider and play/pause controls.
+- **`save_gif(path)`** assembles matplotlib PNG frames (rendered via the Agg backend) into an animated GIF — no external renderer required.
+- **`DashboardConfig`** fields: `enabled`, `model_metric`, `port`, `export_width`, `export_height`, `theme` (Plotly template name, e.g. `"plotly_dark"`). The old `figsize` and `show` fields no longer exist.
 
 ### Label records
 
