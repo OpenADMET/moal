@@ -217,7 +217,26 @@ def parse_campaign_state(
 
 
 def training_records_for_refit(records: list[LabelRecord]) -> list[LabelRecord]:
-    """Return model-training records with upgraded PS hits de-duplicated."""
+    """Return model-training records with upgraded PS hits de-duplicated.
+
+    When a compound has both a PS INTERVAL record (``>=`` hit) and a DRC
+    EXACT record, the PS record is excluded to prevent double-weighting
+    during model training.  PS LEFT records (``<`` misses) are always
+    retained regardless of DRC coverage.
+
+    Parameters
+    ----------
+    records : list[LabelRecord]
+        All labeled records from the campaign state, including both PS and
+        DRC entries.
+
+    Returns
+    -------
+    list[LabelRecord]
+        Filtered list suitable for passing to ``model.refit()``.  At most
+        one record per compound for upgraded compounds; both record types
+        are retained for compounds that have only a PS miss.
+    """
     upgraded_smiles = {
         rec.canonical_smiles
         for rec in records
@@ -322,6 +341,28 @@ def annotate_campaign_state(
 
 
 def _validate_training_records(records: list[LabelRecord]) -> None:
+    """Validate per-compound label consistency across training records.
+
+    Each canonical SMILES may appear at most once per fidelity tier.  A
+    compound that carries both a PS ``<`` LEFT record and a DRC EXACT record
+    is rejected because the active/inactive disagreement between the two
+    labels cannot be resolved during Tobit-loss training.
+
+    Parameters
+    ----------
+    records : list[LabelRecord]
+        Labeled records to validate, as returned by ``parse_campaign_state``.
+
+    Raises
+    ------
+    ValueError
+        If any canonical SMILES has more than one DRC record.
+    ValueError
+        If any canonical SMILES has more than one PS record.
+    ValueError
+        If any canonical SMILES has both a PS LEFT (``<``) record and a
+        DRC record.
+    """
     by_smiles: dict[str, list[LabelRecord]] = {}
     for record in records:
         by_smiles.setdefault(record.canonical_smiles, []).append(record)

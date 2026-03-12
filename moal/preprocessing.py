@@ -16,22 +16,21 @@ class SMILESPreprocessor:
     """Canonicalize SMILES and strip counterions/salts using RDKit.
 
     All SMILES must pass through this preprocessor before being stored in a
-    LabelRecord or passed to any model. This ensures consistent graph
+    ``LabelRecord`` or passed to any model. This ensures consistent graph
     construction regardless of input source.
+
+    Parameters
+    ----------
+    remove_salts : bool, optional
+        When ``True`` (default), strip counterions and salts via RDKit's
+        ``SaltRemover`` before canonicalization.
     """
 
     def __init__(self, remove_salts: bool = True) -> None:
-        """
-        Parameters
-        ----------
-        remove_salts : bool, optional
-            When True (default), strip counterions and salts via RDKit's
-            ``SaltRemover`` before canonicalization.
-        """
         self._remove_salts = remove_salts
 
     def canonicalize(self, smiles: str) -> str | None:
-        """Return the RDKit-canonical, salt-stripped SMILES, or None on failure.
+        """Return the RDKit-canonical, salt-stripped SMILES, or ``None`` on failure.
 
         Parameters
         ----------
@@ -41,8 +40,14 @@ class SMILESPreprocessor:
         Returns
         -------
         str or None
-            Canonical SMILES string, or None if the molecule could not be
+            Canonical SMILES string, or ``None`` if the molecule could not be
             parsed or was reduced to an empty structure after salt stripping.
+
+        Notes
+        -----
+        Canonicalization uses ``isomericSmiles=True`` to preserve
+        stereochemistry. This is set explicitly because RDKit's default
+        behavior has changed across versions and chirality must be retained.
         """
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
@@ -58,20 +63,21 @@ class SMILESPreprocessor:
         return Chem.MolToSmiles(mol, isomericSmiles=True)
 
     def process_batch(self, smiles_list: list[str]) -> tuple[list[str], list[str]]:
-        """Canonicalize a batch of SMILES.
+        """Canonicalize a batch of SMILES strings.
 
         Parameters
         ----------
-        smiles_list : list[str]
+        smiles_list : list of str
             Input SMILES strings to process.
 
         Returns
         -------
-        canonical : list[str]
-            Successfully canonicalized SMILES (same length as valid entries in
-            ``smiles_list``).
-        failed : list[str]
-            Original SMILES strings that could not be processed.
+        canonical : list of str
+            Successfully canonicalized SMILES. Length equals
+            ``len(smiles_list) - len(failed)``.
+        failed : list of str
+            Original SMILES strings that could not be canonicalized (unparseable
+            or reduced to an empty structure after salt stripping).
         """
         canonical: list[str] = []
         failed: list[str] = []

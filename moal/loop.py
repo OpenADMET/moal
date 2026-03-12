@@ -58,17 +58,17 @@ class ActiveLearningLoop:
         Acquisition function for query selection.
     evaluator : PipelineEvaluator
         Evaluator for metric computation.
-    preprocessor : SMILESPreprocessor, optional
+    preprocessor : SMILESPreprocessor or None, optional
         Used for pre-flight SMILES checks. A default instance is created if
         None is provided.
-    trainer_kwargs : dict[str, Any], optional
+    trainer_kwargs : dict[str, Any] or None, optional
         Forwarded to ``lightning.Trainer`` at each refit.
-    datamodule_kwargs : dict[str, Any], optional
+    datamodule_kwargs : dict[str, Any] or None, optional
         Forwarded to ``MixedFidelityDataModule`` at each refit (e.g.,
         ``val_fraction``, ``seed``).
-    dashboard : LiveDashboard, optional
+    dashboard : LiveDashboard or None, optional
         If provided, updated after every iteration.
-    test_set : tuple[list[str], np.ndarray], optional
+    test_set : tuple[list[str], numpy.ndarray] or None, optional
         ``(smiles_list, pec50_array)`` held-out scaffold split for model
         performance tracking. If provided, the model metric is computed after
         every refit and shown in the dashboard.
@@ -87,10 +87,11 @@ class ActiveLearningLoop:
         When True, pass ``reset_weights=True`` to ``model.refit()`` at every
         active learning iteration. Default is False, which continues
         fine-tuning from the current model weights.
-    output_dir : str or Path, optional
+    output_dir : str or Path or None, optional
         Directory for Lightning default logs (``lightning_logs/``). Forwarded
         as ``output_dir`` to every ``model.refit()`` call. When None (default),
         Lightning writes to the current working directory.
+
     """
 
     def __init__(
@@ -110,6 +111,7 @@ class ActiveLearningLoop:
         reset_weights_on_refit: bool = False,
         output_dir: str | Path | None = None,
     ) -> None:
+        """Initialise the loop and store all campaign components."""
         self.oracle = oracle
         self.model = model
         self.acquisition = acquisition
@@ -132,17 +134,42 @@ class ActiveLearningLoop:
     def run(self, n_iterations: int, k_per_iteration: int) -> LoopResults:
         """Execute the full active learning campaign.
 
+        Each iteration completes three sequential steps tracked in the Rich
+        progress bar:
+
+        1. **Query oracle** — issue ``k`` queries from the pre-computed
+           candidate list assembled at the end of the previous iteration.
+        2. **Refit model** — fine-tune the model on the growing labeled pool.
+        3. **Select compounds** — run model inference and acquisition scoring
+           over the remaining pool to prepare the next iteration's queries.
+
         Parameters
         ----------
         n_iterations : int
-            Total number of AL iterations (m).
+            Total number of active learning iterations to run.
         k_per_iteration : int
-            Number of oracle queries per iteration (k).
+            Number of oracle queries to issue per iteration.
 
         Returns
         -------
         LoopResults
-            Per-iteration history and final metrics.
+            Aggregated per-iteration history, final evaluation metrics,
+            total cost, and total number of labeled compounds at campaign end.
+
+        Notes
+        -----
+        The first iteration's candidate queries are pre-computed before the
+        main loop begins so that the acquisition step of iteration *i* can be
+        treated as preparation for iteration *i+1*, keeping latency off the
+        critical path.
+
+        When ``model`` is a :class:`~moal.model.NoisyOracleModel`, the noise
+        scale decreases linearly from ``initial_error`` to ``final_error``
+        across all ``n_iterations`` via a ``numpy.linspace`` schedule.
+
+        The loop terminates early (before reaching ``n_iterations``) if the
+        unlabeled pool is exhausted.  ``LoopResults.iterations`` will then
+        contain fewer than ``n_iterations`` entries.
         """
         suppress_noisy_loggers()
 
@@ -429,21 +456,33 @@ class ActiveLearningLoop:
     ) -> np.ndarray:
         """Route inference to the appropriate model backend.
 
-        Passes ``noise_scale`` to ``NoisyOracleModel`` to support per-iteration
-        error scheduling; ignored for ``ChemPropLightningModule``.
+        Dispatches to :meth:`~moal.model.NoisyOracleModel.predict_smiles` or
+        :meth:`~moal.model.ChemPropLightningModule.predict_smiles` depending on
+        the runtime type of ``self.model``, forwarding ``noise_scale`` only to
+        the noisy surrogate.
 
         Parameters
         ----------
         smiles_list : list[str]
             Canonical SMILES strings to score.
         noise_scale : float, optional
-            Noise half-width for ``NoisyOracleModel``. Must be set when the
-            active model is a ``NoisyOracleModel``; ignored otherwise.
+            Uniform noise half-width (pEC50 log-units) passed to
+            :class:`~moal.model.NoisyOracleModel`.  Must be provided when
+            ``self.model`` is a :class:`~moal.model.NoisyOracleModel`; the
+            value is ignored for :class:`~moal.model.ChemPropLightningModule`.
 
         Returns
         -------
-        np.ndarray
-            Array of shape ``(N,)`` with pEC50 point estimates.
+        numpy.ndarray
+            Array of shape ``(N,)`` containing pEC50 point estimates, where
+            ``N = len(smiles_list)``.
+
+        Notes
+        -----
+        When the active model is :class:`~moal.model.NoisyOracleModel`,
+        ``noise_scale`` is always populated from the per-iteration schedule
+        constructed in :meth:`run`.  Passing ``None`` in that case will
+        propagate to the surrogate model and may cause unexpected behaviour.
         """
         if isinstance(self.model, NoisyOracleModel):
             # noise_scale is always set from the schedule when NoisyOracleModel is active
@@ -451,6 +490,29 @@ class ActiveLearningLoop:
         return self.model.predict_smiles(smiles_list)
 
     def _empty_result(self, iteration: int) -> IterationResults:
+        """Build a placeholder :class:`~moal.types.IterationResults` for a skipped iteration.
+
+        Parameters
+        ----------
+        iteration : int
+            Zero-based index of the iteration that produced no queries or
+            new records.
+
+        Returns
+        -------
+        IterationResults
+            An :class:`~moal.types.IterationResults` instance with empty
+            ``queries``, ``new_records``, and ``metrics`` collections.
+            ``cumulative_cost`` and ``cumulative_labeled`` reflect the oracle
+            state at the time of the call.
+
+        Notes
+        -----
+        Intended as a safe sentinel for iterations where the unlabeled pool
+        is already exhausted or no valid queries could be constructed.  The
+        returned object keeps ``LoopResults.iterations`` length-consistent
+        with the requested ``n_iterations``.
+        """
         return IterationResults(
             iteration=iteration,
             queries=[],

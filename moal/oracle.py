@@ -89,6 +89,29 @@ class CostAwareOracle:
     # ------------------------------------------------------------------
 
     def _build_ground_truth(self, df: pd.DataFrame) -> dict[str, float]:
+        """Build and validate the internal ground-truth mapping.
+
+        Filters out rows with invalid or out-of-range pEC50 values, optionally
+        canonicalizes SMILES, and deduplicates entries (first occurrence wins).
+        Warnings are emitted for every rejected row.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Raw DataFrame supplied by the caller. Must contain columns named
+            ``self.smiles_column`` and ``self.pec50_column``.
+
+        Returns
+        -------
+        dict[str, float]
+            Mapping from (canonical) SMILES key to validated pEC50 value.
+            Contains only physically plausible pEC50 values in ``[0.0, 14.0]``.
+
+        Raises
+        ------
+        ValueError
+            If ``df`` does not contain the expected SMILES and pEC50 columns.
+        """
         required = {self.smiles_column, self.pec50_column}
         if not required.issubset(df.columns):
             raise ValueError(
@@ -309,6 +332,34 @@ class CostAwareOracle:
     def _make_ps_record(
         self, smiles: str, canonical: str, true_pec50: float, iteration: int
     ) -> LabelRecord:
+        """Construct the appropriate PS ``LabelRecord`` for a compound.
+
+        Compounds with ``true_pec50 < ps_threshold`` receive a LEFT-censored
+        label at the threshold (confirmed inactive).  All other compounds
+        receive an INTERVAL-censored label ``[ps_threshold, upper_bound]``
+        (potentially active but exact value unknown from PS alone).
+
+        Parameters
+        ----------
+        smiles : str
+            Original SMILES string as supplied by the caller (stored verbatim
+            in the record for downstream traceability).
+        canonical : str
+            Canonical SMILES key used for ground-truth lookup and deduplication.
+        true_pec50 : float
+            Ground-truth pEC50 value, already validated to be finite and within
+            ``[0.0, 14.0]``.
+        iteration : int
+            Active learning iteration index (0-based) at which the query was
+            issued.
+
+        Returns
+        -------
+        LabelRecord
+            A ``LEFT``-censored record when ``true_pec50 < ps_threshold``,
+            or an ``INTERVAL``-censored record ``[ps_threshold, upper_bound]``
+            otherwise.
+        """
         if true_pec50 < self.ps_threshold:
             return LabelRecord(
                 smiles=smiles,
@@ -335,6 +386,32 @@ class CostAwareOracle:
     def _make_drc_record(
         self, smiles: str, canonical: str, true_pec50: float, iteration: int
     ) -> LabelRecord:
+        """Construct an EXACT ``LabelRecord`` for a DRC query.
+
+        DRC assays yield a precise pEC50 estimate, so the record is
+        uncensored (``CensoringType.EXACT``) with ``value == upper_bound ==
+        true_pec50``.
+
+        Parameters
+        ----------
+        smiles : str
+            Original SMILES string as supplied by the caller (stored verbatim
+            in the record for downstream traceability).
+        canonical : str
+            Canonical SMILES key used for ground-truth lookup and deduplication.
+        true_pec50 : float
+            Ground-truth pEC50 value, already validated to be finite and within
+            ``[0.0, 14.0]``.
+        iteration : int
+            Active learning iteration index (0-based) at which the query was
+            issued.
+
+        Returns
+        -------
+        LabelRecord
+            An ``EXACT``-censored record whose ``value`` and ``upper_bound``
+            are both set to ``true_pec50``.
+        """
         return LabelRecord(
             smiles=smiles,
             canonical_smiles=canonical,
@@ -352,6 +429,17 @@ class CostAwareOracle:
 
     @property
     def total_cost(self) -> float:
+        """Cumulative cost of all queries issued so far, in dollars.
+
+        Incremented atomically inside :meth:`query` after each successful
+        label dispensation.  Includes both PS and DRC costs.
+
+        Returns
+        -------
+        float
+            Running sum of ``cost`` fields across all :class:`LabelRecord`
+            instances stored in the oracle.
+        """
         return self._total_cost
 
     @property
@@ -364,6 +452,13 @@ class CostAwareOracle:
         ``enrichment_factor`` to produce correct values when PS→DRC upgrades
         are present — without sorting, upgrade records would appear at the
         wrong position in the running totals.
+
+        Returns
+        -------
+        list[LabelRecord]
+            All records across every labeled compound, sorted by
+            ``(iteration, fidelity_rank)`` where PS rank is 0 and DRC rank
+            is 1.
         """
         flat = [r for records in self._labeled.values() for r in records]
         # Sort key: (iteration, fidelity rank) where PS=0 < DRC=1 so that
@@ -380,12 +475,23 @@ class CostAwareOracle:
     def training_records(self) -> list[LabelRecord]:
         """Labeled records suitable for model training.
 
-        Identical to ``labeled_records`` except that PS INTERVAL records are
-        excluded for any compound that also has a DRC record.  Keeping the
+        Identical to :attr:`labeled_records` except that PS INTERVAL records
+        are excluded for any compound that also has a DRC record.  Keeping the
         redundant INTERVAL label alongside its EXACT counterpart adds no
         gradient information and inflates the compound's effective loss weight
         by ``w_ps`` (typically 0.3×), which biases gradient updates toward
         the most-upgraded scaffold clusters over many iterations.
+
+        Returns
+        -------
+        list[LabelRecord]
+            Chronologically ordered records with PS INTERVAL records removed
+            for any compound that has been upgraded to DRC.
+
+        Notes
+        -----
+        Always pass ``oracle.training_records`` (not ``oracle.labeled_records``)
+        to :meth:`~moal.model.ChemPropLightningModule.refit`.
         """
         upgraded_smiles: set[str] = {
             key
@@ -408,6 +514,12 @@ class CostAwareOracle:
         ``is_canonical=False`` (the default), or the raw CSV SMILES when
         ``is_canonical=True``.  Callers that forward these keys to
         :meth:`query_batch` must pass the matching ``is_canonical`` flag.
+
+        Returns
+        -------
+        list[str]
+            SMILES keys present in the ground-truth pool that have not yet
+            received any PS or DRC label.
         """
         return [s for s in self._ground_truth if s not in self._labeled]
 
@@ -418,6 +530,12 @@ class CostAwareOracle:
         are confirmed inactive (pEC50 < ps_threshold) and are not useful DRC
         upgrade candidates.  Callers that forward these keys to
         :meth:`query_batch` must pass the matching ``is_canonical`` flag.
+
+        Returns
+        -------
+        list[str]
+            SMILES keys that hold exactly one PS INTERVAL record and no DRC
+            record — i.e., compounds eligible for a DRC upgrade query.
         """
         result = []
         for key, records in self._labeled.items():
@@ -433,15 +551,58 @@ class CostAwareOracle:
         return result
 
     def is_active(self, smiles: str, threshold: float = 7.0) -> bool:
-        """Return True if the compound's true pEC50 meets the activity threshold."""
+        """Return ``True`` if the compound's true pEC50 meets the activity threshold.
+
+        Parameters
+        ----------
+        smiles : str
+            SMILES string of the compound to look up. Canonicalized internally
+            before the ground-truth lookup.
+        threshold : float, optional
+            Minimum pEC50 required to be considered active (inclusive).
+            Default is ``7.0`` (IC50 ≤ 100 nM).
+
+        Returns
+        -------
+        bool
+            ``True`` when ``ground_truth[canonical] >= threshold``, ``False``
+            otherwise.
+
+        Raises
+        ------
+        KeyError
+            If the SMILES cannot be parsed or is not present in the
+            ground-truth pool.
+        """
         canonical = self._preprocessor.canonicalize(smiles)
         if canonical is None or canonical not in self._ground_truth:
             raise KeyError(f"Compound not found or invalid SMILES: {smiles!r}")
         return self._ground_truth[canonical] >= threshold
 
     def n_true_actives(self, threshold: float = 7.0) -> int:
-        """Total number of active compounds in the ground truth pool."""
+        """Return the total number of active compounds in the ground-truth pool.
+
+        Parameters
+        ----------
+        threshold : float, optional
+            Minimum pEC50 required to be considered active (inclusive).
+            Default is ``7.0`` (IC50 ≤ 100 nM).
+
+        Returns
+        -------
+        int
+            Count of compounds in the ground-truth pool whose pEC50 is
+            greater than or equal to ``threshold``.
+        """
         return sum(1 for v in self._ground_truth.values() if v >= threshold)
 
     def __len__(self) -> int:
+        """Return the total number of compounds in the ground-truth pool.
+
+        Returns
+        -------
+        int
+            Number of entries in the internal ground-truth mapping, after
+            filtering invalid pEC50 values and deduplicating SMILES.
+        """
         return len(self._ground_truth)

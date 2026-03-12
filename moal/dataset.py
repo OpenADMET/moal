@@ -37,9 +37,29 @@ class MixedFidelityDataset(Dataset):
         )
 
     def __len__(self) -> int:
+        """Return the number of records in the dataset.
+
+        Returns
+        -------
+        int
+            Total number of labeled observations.
+        """
         return len(self.records)
 
     def __getitem__(self, idx: int) -> tuple[Any, LabelRecord]:
+        """Return the (MoleculeDatapoint, LabelRecord) pair at index ``idx``.
+
+        Parameters
+        ----------
+        idx : int
+            Zero-based index into the dataset.
+
+        Returns
+        -------
+        tuple[Any, LabelRecord]
+            A ``(MoleculeDatapoint, LabelRecord)`` pair where the datapoint
+            holds the lazily-cached molecular graph.
+        """
         return self._mol_graphs[idx], self.records[idx]
 
     @staticmethod
@@ -47,6 +67,12 @@ class MixedFidelityDataset(Dataset):
         batch: list[tuple[Any, LabelRecord]],
     ) -> tuple[Any, list[LabelRecord]]:
         """Collate a list of (MoleculeDatapoint, LabelRecord) into a batch.
+
+        Parameters
+        ----------
+        batch : list[tuple[Any, LabelRecord]]
+            A list of ``(MoleculeDatapoint, LabelRecord)`` pairs as returned
+            by :meth:`__getitem__`.
 
         Returns
         -------
@@ -98,6 +124,21 @@ class MixedFidelityDataModule(L.LightningDataModule):
         self._val_dataset: MixedFidelityDataset | None = None
 
     def setup(self, stage: str | None = None) -> None:
+        """Create the train and validation dataset splits.
+
+        Called by Lightning before the first dataloader is requested.  The
+        dataset is split with :func:`torch.utils.data.random_split` using
+        ``self.seed``.  When the record pool is too small to form a validation
+        split (i.e. ``n_train <= 0``), all records are used for training and
+        ``_val_dataset`` is set to ``None``.
+
+        Parameters
+        ----------
+        stage : str or None, optional
+            Lightning stage identifier (``"fit"``, ``"validate"``,
+            ``"test"``, ``"predict"``). Not used; accepted for interface
+            compatibility.
+        """
         n_val = max(1, int(len(self.records) * self.val_fraction))
         n_train = len(self.records) - n_val
         if n_train <= 0:
@@ -154,6 +195,14 @@ class MixedFidelityDataModule(L.LightningDataModule):
         return mol_graph, records
 
     def train_dataloader(self) -> DataLoader:
+        """Return the training DataLoader.
+
+        Returns
+        -------
+        DataLoader
+            Shuffled DataLoader over the training split using
+            :meth:`MixedFidelityDataset.collate_fn`.
+        """
         return DataLoader(
             self._train_dataset,
             batch_size=self.batch_size,
@@ -165,6 +214,15 @@ class MixedFidelityDataModule(L.LightningDataModule):
         )
 
     def val_dataloader(self) -> DataLoader | None:
+        """Return the validation DataLoader, or ``None`` when no val split exists.
+
+        Returns
+        -------
+        DataLoader or None
+            Non-shuffled DataLoader over the validation split, or ``None``
+            if the record pool was too small to form a validation set during
+            :meth:`setup`.
+        """
         if self._val_dataset is None:
             return None
         return DataLoader(
@@ -194,7 +252,27 @@ class _SubsetWrapper(Dataset):
         self._full = full_dataset
 
     def __len__(self) -> int:
+        """Return the number of samples in the subset.
+
+        Returns
+        -------
+        int
+            Number of samples in the wrapped ``random_split`` subset.
+        """
         return len(self._subset)
 
     def __getitem__(self, idx: int) -> tuple[Any, LabelRecord]:
+        """Return the item at index ``idx`` from the wrapped subset.
+
+        Parameters
+        ----------
+        idx : int
+            Zero-based index into the subset.
+
+        Returns
+        -------
+        tuple[Any, LabelRecord]
+            A ``(MoleculeDatapoint, LabelRecord)`` pair delegated to the
+            underlying :class:`~torch.utils.data.Subset`.
+        """
         return self._subset[idx]

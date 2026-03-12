@@ -180,10 +180,39 @@ class _OneDPLocator(Locator):
     _MAX_TICKS = 6
 
     def __call__(self) -> list[float]:
+        """Return tick positions for the current axis view interval.
+
+        Delegates to :meth:`tick_values` using the axis view interval obtained
+        from ``self.axis.get_view_interval()``.
+
+        Returns
+        -------
+        list[float]
+            Tick positions restricted to the 1-2-5 step sequence with
+            step >= 0.1.
+        """
         vmin, vmax = self.axis.get_view_interval()
         return self.tick_values(vmin, vmax)
 
     def tick_values(self, vmin: float, vmax: float) -> list[float]:
+        """Compute tick positions for the given axis range.
+
+        Selects the smallest step from the 1-2-5 sequence (starting at 0.1)
+        such that at most ``_MAX_TICKS - 1`` steps fit within ``[vmin, vmax]``.
+        Falls back to a single midpoint value when the span is near zero.
+
+        Parameters
+        ----------
+        vmin : float
+            Lower bound of the axis range.
+        vmax : float
+            Upper bound of the axis range.
+
+        Returns
+        -------
+        list[float]
+            Tick positions rounded to ten decimal places.
+        """
         span = vmax - vmin
         if span < 1e-12:
             return [round((vmin + vmax) / 2, 10)]
@@ -267,6 +296,21 @@ class LiveDashboard:
             Input("interval-component", "n_intervals"),
         )
         def _refresh(_n: int) -> go.Figure:
+            """Rebuild the live figure from the latest iteration snapshots.
+
+            Parameters
+            ----------
+            _n : int
+                Interval tick counter supplied by the Dash ``Interval``
+                component; the value itself is unused — the callback fires on
+                every tick regardless.
+
+            Returns
+            -------
+            plotly.graph_objects.Figure
+                Up-to-date four-panel figure built from all accumulated
+                iterations.
+            """
             with self._lock:
                 iterations = list(self._iterations)
             return self._build_figure(iterations)
@@ -459,7 +503,11 @@ class LiveDashboard:
         logger.info("Animated HTML dashboard saved to %s", path)
 
     def close(self) -> None:
-        """Shut down the Werkzeug server and release the background thread."""
+        """Shut down the Werkzeug server and release the background thread.
+
+        A no-op when the server was never successfully started (e.g., because
+        the requested port was already in use at construction time).
+        """
         if not self._server_active:
             return
         try:
@@ -473,7 +521,13 @@ class LiveDashboard:
     # ------------------------------------------------------------------
 
     def _capture_frame(self) -> None:
-        """Render the current iteration state to PNG bytes and append to _frames."""
+        """Render the current iteration state to PNG bytes and append to ``_frames``.
+
+        Acquires the iteration lock, delegates rendering to
+        :meth:`_render_matplotlib_frame`, and appends the result to
+        ``self._frames``. Exceptions are caught and logged as warnings so a
+        rendering failure does not abort the active-learning loop.
+        """
         with self._lock:
             iterations = list(self._iterations)
         try:
@@ -484,8 +538,22 @@ class LiveDashboard:
     def _render_matplotlib_frame(self, iterations: list[dict]) -> bytes:
         """Build a 2×2 matplotlib figure from iteration snapshots and return PNG bytes.
 
-        Uses FigureCanvasAgg directly so no display environment or pyplot state
-        is required — safe to call from background threads and headless CI.
+        Uses ``FigureCanvasAgg`` directly so no display environment or pyplot
+        state is required — safe to call from background threads and headless CI.
+
+        Parameters
+        ----------
+        iterations : list[dict]
+            Accumulated iteration snapshots as produced by :meth:`update`.
+            Each dict contains the keys ``cum_cost``, ``cum_actives``,
+            ``iter_drc_cost``, ``iter_upgrade_cost``, ``iter_ps_cost``,
+            ``model_metric_value``, ``n_ps_only``, ``n_drc_new``,
+            ``n_upgrades``, and ``n_unqueried``.
+
+        Returns
+        -------
+        bytes
+            Raw PNG image bytes rendered at ``_GIF_RENDER_DPI`` resolution.
         """
         w = self._export_width / _GIF_RENDER_DPI
         h = self._export_height / _GIF_RENDER_DPI
@@ -733,7 +801,22 @@ class LiveDashboard:
         return (t_lo - margin, t_hi + margin, t_lo, step)
 
     def _build_figure(self, iterations: list[dict]) -> go.Figure:
-        """Build the 2×2 Plotly subplot figure from a list of iteration snapshots."""
+        """Build the 2×2 Plotly subplot figure from a list of iteration snapshots.
+
+        Returns a loading-splash figure when ``iterations`` is empty, and a
+        fully populated four-panel figure otherwise.
+
+        Parameters
+        ----------
+        iterations : list[dict]
+            Accumulated iteration snapshots as produced by :meth:`update`.
+
+        Returns
+        -------
+        plotly.graph_objects.Figure
+            Four-panel Plotly figure with cumulative actives, per-iteration
+            cost breakdown, model performance, and compound status subplots.
+        """
         if not iterations:
             bg = _THEME_BG.get(self._theme.lower(), "#ffffff")
             fig = go.Figure()
@@ -1037,7 +1120,20 @@ class LiveDashboard:
         return fig
 
     def _build_animated_figure(self) -> go.Figure:
-        """Construct an animated Plotly figure with per-iteration frames, slider, and play/pause."""
+        """Construct an animated Plotly figure with per-iteration frames, slider, and play/pause.
+
+        Acquires the iteration lock and builds one Plotly ``Frame`` per
+        iteration so the HTML slider can scrub through cumulative history.
+        Falls back to the loading-splash figure when no iterations have been
+        recorded yet.
+
+        Returns
+        -------
+        plotly.graph_objects.Figure
+            Animated figure containing per-iteration frames, a full-width
+            scrub slider, and an empty ``updatemenus`` list (play/pause is
+            injected via ``_PLAY_PAUSE_SCRIPT`` in :meth:`save_html`).
+        """
         with self._lock:
             iterations = list(self._iterations)
 
@@ -1111,7 +1207,23 @@ class LiveDashboard:
     def _build_animation_frame(
         self, iterations: list[dict], iteration_index: int
     ) -> go.Frame:
-        """Build a Plotly animation frame with both data and per-frame axis layout."""
+        """Build a Plotly animation frame with both data and per-frame axis layout.
+
+        Parameters
+        ----------
+        iterations : list[dict]
+            Cumulative iteration snapshots up to and including the current
+            iteration (i.e., a prefix of the full history).
+        iteration_index : int
+            One-based iteration number used as the frame name for slider
+            step addressing.
+
+        Returns
+        -------
+        plotly.graph_objects.Frame
+            Plotly frame whose ``data`` and ``layout`` reflect the cumulative
+            state at ``iteration_index``.
+        """
         frame_fig = self._build_figure(iterations)
         return go.Frame(
             data=list(frame_fig.data),
@@ -1123,7 +1235,26 @@ class LiveDashboard:
     def _build_animation_frame_layout(
         self, frame_fig: go.Figure, iterations: list[dict]
     ) -> go.Layout:
-        """Return layout updates needed for exported HTML animation frame scrubbing."""
+        """Return layout updates needed for exported HTML animation frame scrubbing.
+
+        Reconstructs per-axis range settings so that x-axes rescale correctly
+        as the slider advances through iteration frames in the exported HTML.
+
+        Parameters
+        ----------
+        frame_fig : plotly.graph_objects.Figure
+            Fully rendered figure for the current iteration prefix, used as
+            the source of truth for all axis attributes not computed here.
+        iterations : list[dict]
+            Cumulative iteration snapshots up to and including the current
+            iteration.
+
+        Returns
+        -------
+        plotly.graph_objects.Layout
+            Partial layout containing updated ``xaxis``/``yaxis`` entries for
+            all five axes in the 2×2 subplot grid.
+        """
         n_iterations = len(iterations)
         cum_costs = [it["cum_cost"] for it in iterations]
 
@@ -1150,19 +1281,67 @@ class LiveDashboard:
 
     @staticmethod
     def _cumulative_cost_x_range(cum_costs: list[float]) -> list[float]:
-        """Return an explicit x-range for the cumulative-cost subplot."""
+        """Return an explicit x-range for the cumulative-cost subplot.
+
+        Pads the maximum observed cumulative cost by 5 % and floors the upper
+        bound at 1.0 so the axis is never empty before the first data point.
+
+        Parameters
+        ----------
+        cum_costs : list[float]
+            Sequence of cumulative costs, one per recorded iteration.
+
+        Returns
+        -------
+        list[float]
+            Two-element list ``[0.0, upper]`` suitable for Plotly's
+            ``range`` axis parameter.
+        """
         max_cost = max(cum_costs, default=0.0)
         return [0.0, max(1.0, max_cost * 1.05)]
 
     @staticmethod
     def _iteration_x_range(n_iterations: int, padding: float = 0.25) -> list[float]:
-        """Return an explicit x-range for iteration-indexed subplots."""
+        """Return an explicit x-range for iteration-indexed subplots.
+
+        Parameters
+        ----------
+        n_iterations : int
+            Number of iterations recorded so far.
+        padding : float, optional
+            Symmetric padding added to either side of the ``[1, n_iterations]``
+            range so bars and markers are not clipped at the axis edges.
+            Default is 0.25.
+
+        Returns
+        -------
+        list[float]
+            Two-element list ``[1 - padding, n_iterations + padding]``.
+        """
         upper = max(float(n_iterations), 1.0)
         return [1.0 - padding, upper + padding]
 
     @staticmethod
     def _record_is_active(rec: LabelRecord, threshold: float) -> bool:
-        """Return True when a labeled record's value meets the activity threshold."""
+        """Return ``True`` when a labeled record's value meets the activity threshold.
+
+        Only ``EXACT`` and ``INTERVAL``-censored records can be confirmed
+        active. ``LEFT``-censored records (PS inactive labels, i.e. pEC50
+        below the PS threshold) are always inactive and return ``False``.
+
+        Parameters
+        ----------
+        rec : LabelRecord
+            A single oracle-labeled compound record.
+        threshold : float
+            pEC50 threshold at or above which a compound is considered active.
+
+        Returns
+        -------
+        bool
+            ``True`` if ``rec.value >= threshold`` for an ``EXACT`` or
+            ``INTERVAL`` record; ``False`` for a ``LEFT``-censored record.
+        """
         if rec.censoring_type == CensoringType.EXACT:
             return rec.value >= threshold
         if rec.censoring_type == CensoringType.INTERVAL:

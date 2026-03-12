@@ -27,7 +27,23 @@ _LOG_SQRT_2PI = math.log(math.sqrt(2 * math.pi))
 
 
 def _normal_log_cdf(x: Tensor) -> Tensor:
-    """Log of the standard normal CDF: log Φ(x)."""
+    """Log of the standard normal CDF.
+
+    Computes ``log Φ(x)`` where ``Φ`` is the standard normal CDF,
+    i.e. ``log(P(Z ≤ x))`` for ``Z ~ N(0, 1)``. A small epsilon
+    (``1e-12``) is added inside the log to ensure numerical stability
+    when ``x`` is very negative and the CDF approaches zero.
+
+    Parameters
+    ----------
+    x : Tensor
+        Input values; any shape.
+
+    Returns
+    -------
+    Tensor
+        ``log Φ(x)``, same shape and dtype as ``x``.
+    """
     return torch.log(0.5 * (1.0 + torch.erf(x / math.sqrt(2))) + 1e-12)
 
 
@@ -86,6 +102,16 @@ class CensoredRegressionLoss(nn.Module):
 
     @property
     def sigma(self) -> Tensor:
+        """Current noise scale σ in pEC50 log-units.
+
+        Returns
+        -------
+        Tensor
+            Scalar noise scale. When ``learnable_sigma`` is ``True``,
+            returns ``exp(log_sigma)`` clamped to a minimum of
+            ``_SIGMA_MIN`` to prevent loss collapse. Otherwise returns
+            the fixed scalar buffer supplied at construction.
+        """
         if self.learnable_sigma:
             return torch.clamp(self.log_sigma.exp(), min=_SIGMA_MIN)
         return self._sigma  # type: ignore[return-value]
@@ -104,6 +130,12 @@ class CensoredRegressionLoss(nn.Module):
         -------
         Tensor
             Scalar weighted loss value.
+
+        Raises
+        ------
+        ValueError
+            If ``rec.censoring_type`` is not a recognised
+            :class:`~moal.types.CensoringType`.
         """
         sigma = self.sigma
         ct = rec.censoring_type
@@ -152,6 +184,15 @@ class CensoredRegressionLoss(nn.Module):
         -------
         Tensor
             Scalar mean loss.
+
+        Raises
+        ------
+        AssertionError
+            If the length of ``records`` does not match the first
+            dimension of ``predictions``.
+        ValueError
+            Propagated from :meth:`_single_loss` if any record carries
+            an unknown :class:`~moal.types.CensoringType`.
         """
         return self.forward_with_breakdown(predictions, records).total
 
@@ -174,6 +215,15 @@ class CensoredRegressionLoss(nn.Module):
             ``drc_loss`` / ``ps_loss`` are ``nan`` when the batch contains no
             samples of that fidelity, so they can be logged without masking
             the aggregated loss.
+
+        Raises
+        ------
+        AssertionError
+            If the length of ``records`` does not match the first
+            dimension of ``predictions``.
+        ValueError
+            Propagated from :meth:`_single_loss` if any record carries
+            an unknown :class:`~moal.types.CensoringType`.
         """
         if predictions.dim() == 2:
             preds = predictions[:, 0]
