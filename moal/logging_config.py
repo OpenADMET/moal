@@ -98,10 +98,18 @@ def _set_level(level: int, names: list[str]) -> None:
 
 @contextmanager
 def temporary_log_level(level: int, names: list[str]) -> Iterator[None]:
-    """Temporarily raise logger thresholds while a progress display is active
+    """Temporarily raise logger thresholds while a progress display is active.
 
-    This keeps informational logs from redrawing into Rich live output while
-    still allowing warnings and errors to surface
+    Keeps informational logs from redrawing into Rich live output while still
+    allowing warnings and errors to surface. Restores original levels on exit,
+    even if an exception is raised.
+
+    Parameters
+    ----------
+    level : int
+        Logging level to set temporarily (e.g., ``logging.WARNING``).
+    names : list[str]
+        Logger names whose levels will be raised for the duration of the block.
     """
     loggers = [logging.getLogger(name) for name in names]
     previous_levels = [logger.level for logger in loggers]

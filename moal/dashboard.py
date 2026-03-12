@@ -209,7 +209,17 @@ class LiveDashboard:
     model_metric : ModelMetric, optional
         Metric to show in the model performance panel. Default is MAE.
     port : int, optional
-        Local port for the Dash server. Default is 8050.
+        Local port for the Dash server (bound to 127.0.0.1 only). Default is 8050.
+    export_width : int, optional
+        Pixel width used when exporting PNG frames and the HTML animation.
+        Default is 1400.
+    export_height : int, optional
+        Pixel height used when exporting PNG frames and the HTML animation.
+        Default is 800.
+    theme : str, optional
+        Plotly template applied to all figure renders. Any valid Plotly template
+        name is accepted (e.g., ``"plotly"``, ``"plotly_white"``, ``"ggplot2"``).
+        Default is ``"plotly_dark"``.
     """
 
     def __init__(
@@ -646,11 +656,23 @@ class LiveDashboard:
 
     @staticmethod
     def _nice_dtick(max_val: float, max_ticks: int = 5) -> int:
-        """Return the smallest integer step from a standard sequence that keeps tick count ≤ max_ticks.
+        """Return the smallest integer step that keeps tick count at or below ``max_ticks``.
 
-        Guarantees non-repeating integer labels on any axis range without requiring
-        the math module — the candidate list covers values from 1 to 10 000 (sufficient
-        for actives counts and $k-scaled cumulative costs on typical campaigns).
+        Guarantees non-repeating integer labels on any axis range. The candidate
+        list covers values from 1 to 10 000, which is sufficient for actives counts
+        and $k-scaled cumulative costs on typical campaigns.
+
+        Parameters
+        ----------
+        max_val : float
+            Maximum axis value to accommodate.
+        max_ticks : int, optional
+            Upper bound on the number of tick marks. Default is 5.
+
+        Returns
+        -------
+        int
+            Tick step size chosen from the standard 1-2-5 sequence.
         """
         if max_val <= 0:
             return 1
@@ -664,19 +686,25 @@ class LiveDashboard:
     def _metric_axis_params(
         metric_vals: list[float],
     ) -> tuple[float, float, float, float]:
-        """Return ``(ymin, ymax, tick0, dtick)`` for the Model Performance y-axis.
+        """Return ``(ymin, ymax, tick0, dtick)`` for the model performance y-axis.
 
-        Guarantees that at least two tick positions (multiples of *dtick* starting
-        from *tick0*) fall within ``[ymin, ymax]``, without requiring labels with
-        more than one decimal place.  The step is chosen from the 1-2-5 sequence
-        based on the *span* of the data so the panel scales sensibly across both
+        Guarantees that at least two tick positions (multiples of ``dtick`` starting
+        from ``tick0``) fall within ``[ymin, ymax]``, without requiring labels with
+        more than one decimal place. The step is chosen from the 1-2-5 sequence
+        based on the span of the data so the panel scales sensibly across both
         narrow early-iteration ranges and large final-iteration ranges.
 
         Parameters
         ----------
-        metric_vals:
-            The metric values collected so far.  An empty list produces a
-            sensible default range ``[0.0, 0.2]`` with ``dtick=0.1``.
+        metric_vals : list[float]
+            Metric values collected so far. An empty list produces a default
+            range of ``[0.0, 0.2]`` with ``dtick=0.1``.
+
+        Returns
+        -------
+        tuple[float, float, float, float]
+            A ``(ymin, ymax, tick0, dtick)`` tuple suitable for configuring a
+            Plotly or matplotlib y-axis.
         """
         _STEPS = [0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0]
         _MAX_TICKS = 6

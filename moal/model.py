@@ -33,11 +33,8 @@ from moal.types import LabelRecord
 logger = logging.getLogger(__name__)
 
 
-def download_chemeleon():
-    """
-    Download CheMeleon checkpoint if not already cached locally.
-
-    """
+def download_chemeleon() -> None:
+    """Download the CheMeleon checkpoint if not already cached locally."""
 
     ckpt_dir = Path().home() / ".chemprop"
     ckpt_dir.mkdir(exist_ok=True)
@@ -146,16 +143,18 @@ class ChemPropLightningModule(L.LightningModule):
         )
         return MPNN(message_passing=mp, agg=agg, predictor=ffn)
 
-    def _get_chemeleon_mp(self) -> None:
-        # Ensure CheMeleon checkpoint is downloaded``
+    def _get_chemeleon_mp(self) -> dict:
+        """Load and return the CheMeleon pretrained message-passing weights.
+
+        Returns
+        -------
+        dict
+            Checkpoint dictionary with ``hyper_parameters`` and ``state_dict`` keys.
+        """
+        # Ensure the CheMeleon checkpoint is downloaded.
         download_chemeleon()
-
-        # Path to checkpoint
         ckpt_path = Path().home() / ".chemprop" / "chemeleon_mp.pt"
-
-        # Load weights
         weights = torch.load(ckpt_path, weights_only=True)
-
         return weights
 
     # ------------------------------------------------------------------
@@ -258,10 +257,9 @@ class ChemPropLightningModule(L.LightningModule):
             ``smiles_list``.
         """
         # Create the full dataset once rather than chunking manually.
-        # Note that if using ChemProp v2 you may also need to pass a featurizer to this class.
         dataset = MoleculeDataset([MoleculeDatapoint.from_smi(s) for s in smiles_list])
 
-        # Let the dataloader handle the batching and graph collation automatically.
+        # Let the dataloader handle batching and graph collation automatically.
         dataloader = build_dataloader(dataset, batch_size=batch_size, shuffle=False)
 
         all_preds = []
@@ -269,13 +267,13 @@ class ChemPropLightningModule(L.LightningModule):
         # Disable gradient tracking for inference.
         with torch.inference_mode():
             for batch in dataloader:
-                # Move bactch to the device
+                # Move batch to device.
                 batch.bmg.to(self.device)
 
-                # Make predictions and detach
+                # Make predictions.
                 preds = self(batch.bmg).cpu().numpy().tolist()
 
-                # Accumulate predictions
+                # Accumulate predictions.
                 all_preds.extend(preds)
 
         return np.array(all_preds, dtype=np.float32)
@@ -435,7 +433,7 @@ class NoisyOracleModel:
         for i, smi in enumerate(smiles_list):
             # KeyError propagates if smi is absent, matching ChemPropLightningModule behaviour
             true_pec50 = self._ground_truth[smi]
-            # Must multiple by 2 to model MAE
+            # Multiply by 2 so that the expected absolute error equals noise_scale.
             noise = self._rng.uniform(-2 * noise_scale, 2 * noise_scale)
             preds[i] = true_pec50 + noise
         return preds

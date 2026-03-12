@@ -127,11 +127,27 @@ class MixedFidelityDataModule(L.LightningDataModule):
         device: torch.device,
         dataloader_idx: int,
     ) -> tuple[Any, list[LabelRecord]]:
-        """Move only the BatchMolGraph to the device; leave LabelRecords on CPU.
+        """Move only the BatchMolGraph to the target device; leave LabelRecords on CPU.
 
-        Lightning's default ``apply_to_collection`` recurses into dataclasses
-        and fails on frozen ones. We bypass that by handling the transfer
-        manually for our (BatchMolGraph, list[LabelRecord]) batch shape.
+        Lightning's default ``apply_to_collection`` recurses into dataclasses and
+        fails on frozen ones. This override handles the transfer manually for the
+        ``(BatchMolGraph, list[LabelRecord])`` batch shape.
+
+        Parameters
+        ----------
+        batch : tuple[Any, list[LabelRecord]]
+            A ``(BatchMolGraph, list[LabelRecord])`` pair produced by
+            ``MixedFidelityDataset.collate_fn``.
+        device : torch.device
+            Target device for the molecular graph tensors.
+        dataloader_idx : int
+            Index of the dataloader (required by the Lightning interface).
+
+        Returns
+        -------
+        tuple[Any, list[LabelRecord]]
+            The same pair with the BatchMolGraph moved to ``device``; the
+            LabelRecord list is returned unchanged.
         """
         mol_graph, records = batch
         mol_graph = super().transfer_batch_to_device(mol_graph, device, dataloader_idx)

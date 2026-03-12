@@ -102,7 +102,7 @@ class CostAwareOracle:
         _PECO50_MIN: float = 0.0
         _PECO50_MAX: float = 14.0
 
-        # Pass 1: validate pEC50 values and collect (smiles, pec50) pairs.
+        # Validate pEC50 values and collect (smiles, pec50) pairs.
         valid_pairs: list[tuple[str, float]] = []
         invalid_pec50: list[tuple[str, object]] = []
 
@@ -124,9 +124,9 @@ class CostAwareOracle:
 
             valid_pairs.append((raw_smiles, pec50))
 
-        # Pass 2: optionally canonicalize all valid SMILES up front, then build
-        # the ground truth dict.  Doing this as a separate pass keeps pEC50
-        # validation and SMILES preprocessing as distinct, auditable stages.
+        # Optionally canonicalize all valid SMILES up front, then build
+        # the ground truth dict.  Separating validation and SMILES preprocessing
+        # keeps them as distinct, auditable stages.
         failed_smiles: list[str] = []
         ground_truth: dict[str, float] = {}
 
