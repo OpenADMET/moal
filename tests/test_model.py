@@ -119,7 +119,8 @@ class TestArchitectureParams:
     @pytest.mark.parametrize("ffn_num_layers", [1, 2, 4])
     def test_ffn_num_layers_sets_predictor_depth(self, ffn_num_layers):
         """The FFN predictor must contain ffn_num_layers + 1 sequential blocks
-        (chemprop adds an extra input projection block)."""
+        (chemprop adds an extra input projection block).
+        """
         m = ChemPropLightningModule(ffn_num_layers=ffn_num_layers)
         assert len(m.model.predictor.ffn) == ffn_num_layers + 1
 
@@ -235,9 +236,7 @@ class TestFreezeUnfreeze:
     def test_encoder_and_head_params_cover_all_model_params(self, model):
         """_encoder_params and _head_params together must account for all model parameters."""
         all_ids = {id(p) for p in model.model.parameters()}
-        covered = {id(p) for p in model._encoder_params()} | {
-            id(p) for p in model._head_params()
-        }
+        covered = {id(p) for p in model._encoder_params()} | {id(p) for p in model._head_params()}
         assert covered == all_ids
 
 
@@ -282,9 +281,7 @@ class TestRefit:
             )
 
         assert returned is model
-        assert not any("transfer_batch_to_device" in str(w.message) for w in caught), (
-            caught
-        )
+        assert not any("transfer_batch_to_device" in str(w.message) for w in caught), caught
 
 
 # ---------------------------------------------------------------------------
@@ -313,7 +310,7 @@ class TestNoisyOracleModel:
         """All predictions must lie within [true - noise_scale, true + noise_scale]."""
         smiles = list(_GT.keys())
         preds = noisy_model.predict_smiles(smiles, noise_scale=0.5)
-        for smi, pred in zip(smiles, preds):
+        for smi, pred in zip(smiles, preds, strict=False):
             true = _GT[smi]
             assert true - 1.0 <= pred <= true + 1.0, (
                 f"Prediction {pred:.4f} out of noise bounds for {smi} (true={true})"
@@ -324,7 +321,7 @@ class TestNoisyOracleModel:
         model = NoisyOracleModel(ground_truth=_GT, seed=0)
         smiles = list(_GT.keys())
         preds = model.predict_smiles(smiles, noise_scale=0.0)
-        for smi, pred in zip(smiles, preds):
+        for smi, pred in zip(smiles, preds, strict=False):
             assert pred == pytest.approx(_GT[smi], abs=1e-6)
 
     def test_predictions_reproducible_with_same_seed(self):

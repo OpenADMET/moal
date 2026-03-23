@@ -54,7 +54,7 @@ def _silence_rdkit() -> None:
     try:
         from rdkit import RDLogger
 
-        RDLogger.DisableLog("rdApp.*")
+        RDLogger.DisableLog("rdApp.*")  # type: ignore[attr-defined]
     except ImportError:
         pass
     # Also silence the Python-side rdkit logger.
@@ -118,5 +118,5 @@ def temporary_log_level(level: int, names: list[str]) -> Iterator[None]:
             logger.setLevel(level)
         yield
     finally:
-        for logger, previous_level in zip(loggers, previous_levels):
+        for logger, previous_level in zip(loggers, previous_levels, strict=True):
             logger.setLevel(previous_level)

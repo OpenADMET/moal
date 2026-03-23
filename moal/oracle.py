@@ -122,8 +122,8 @@ class CostAwareOracle:
         # Values outside this range almost always indicate data entry errors,
         # unit mismatches, or curve-fitting artefacts, and must not be passed
         # to the loss function where NaN/inf would corrupt the entire batch.
-        _PECO50_MIN: float = 0.0
-        _PECO50_MAX: float = 14.0
+        pec50_min: float = 0.0
+        pec50_max: float = 14.0
 
         # Validate pEC50 values and collect (smiles, pec50) pairs.
         valid_pairs: list[tuple[str, float]] = []
@@ -141,7 +141,7 @@ class CostAwareOracle:
             if not math.isfinite(pec50):
                 invalid_pec50.append((raw_smiles, raw_value))
                 continue
-            if not (_PECO50_MIN <= pec50 <= _PECO50_MAX):
+            if not (pec50_min <= pec50 <= pec50_max):
                 invalid_pec50.append((raw_smiles, pec50))
                 continue
 
@@ -167,9 +167,7 @@ class CostAwareOracle:
 
         for key, pec50 in keyed_pairs:
             if key in ground_truth:
-                logger.warning(
-                    "Duplicate SMILES in ground truth, keeping first: %s", key
-                )
+                logger.warning("Duplicate SMILES in ground truth, keeping first: %s", key)
                 continue
             ground_truth[key] = pec50
 
@@ -185,8 +183,8 @@ class CostAwareOracle:
                 "(NaN, inf, or outside [%.1f, %.1f]): first few: %s",
                 len(invalid_pec50),
                 len(df),
-                _PECO50_MIN,
-                _PECO50_MAX,
+                pec50_min,
+                pec50_max,
                 [(s, v) for s, v in invalid_pec50[:3]],
             )
         logger.info("Oracle initialized with %d compounds.", len(ground_truth))
@@ -237,9 +235,10 @@ class CostAwareOracle:
         if is_canonical:
             key = smiles
         else:
-            key = self._preprocessor.canonicalize(smiles)
-            if key is None:
+            canonical = self._preprocessor.canonicalize(smiles)
+            if canonical is None:
                 raise ValueError(f"Cannot parse SMILES: {smiles!r}")
+            key = canonical
 
         if key in self._labeled:
             existing = self._labeled[key]
@@ -256,9 +255,7 @@ class CostAwareOracle:
                 )
             # query_type is DRC and compound has only a PS record: upgrade is allowed
         if key not in self._ground_truth:
-            raise KeyError(
-                f"Compound not found in ground truth dataset (key: {key!r})."
-            )
+            raise KeyError(f"Compound not found in ground truth dataset (key: {key!r}).")
 
         true_pec50 = self._ground_truth[key]
 
@@ -305,10 +302,11 @@ class CostAwareOracle:
             if is_canonical:
                 key = smiles
             else:
-                key = self._preprocessor.canonicalize(smiles)
-                if key is None:
+                canonical = self._preprocessor.canonicalize(smiles)
+                if canonical is None:
                     logger.warning("Skipping invalid SMILES in batch: %s", smiles)
                     continue
+                key = canonical
             if key in seen:
                 logger.warning("Duplicate within acquisition batch, skipping: %s", key)
                 continue
@@ -318,9 +316,7 @@ class CostAwareOracle:
         records: list[LabelRecord] = []
         for smiles, qt in unique_queries:
             try:
-                records.append(
-                    self.query(smiles, qt, iteration, is_canonical=is_canonical)
-                )
+                records.append(self.query(smiles, qt, iteration, is_canonical=is_canonical))
             except (ValueError, KeyError) as exc:
                 logger.warning("Skipping query (%s, %s): %s", smiles, qt, exc)
         return records
@@ -502,8 +498,7 @@ class CostAwareOracle:
             r
             for r in self.labeled_records
             if not (
-                r.fidelity == QueryType.PRIMARY_SCREEN
-                and r.canonical_smiles in upgraded_smiles
+                r.fidelity == QueryType.PRIMARY_SCREEN and r.canonical_smiles in upgraded_smiles
             )
         ]
 

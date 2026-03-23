@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 
-class QueryType(str, Enum):
+class QueryType(StrEnum):
     """Fidelity level of an oracle query.
 
     Attributes
@@ -23,7 +23,7 @@ class QueryType(str, Enum):
     DOSE_RESPONSE = "DRC"
 
 
-class CensoringType(str, Enum):
+class CensoringType(StrEnum):
     """How a label is censored relative to the true continuous pEC50.
 
     Attributes

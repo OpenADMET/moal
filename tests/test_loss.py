@@ -62,8 +62,8 @@ class TestLeftBranch:
     def test_loss_decreases_as_prediction_moves_below_threshold(self):
         """Lower predictions should incur lower LEFT-branch loss."""
         loss_fn = CensoredRegressionLoss(sigma=1.0)
-        T = 5.0
-        rec = _make_record(T, T, CensoringType.LEFT)
+        t = 5.0
+        rec = _make_record(t, t, CensoringType.LEFT)
         loss_above = loss_fn(torch.tensor([6.0]), [rec])
         loss_at = loss_fn(torch.tensor([5.0]), [rec])
         loss_below = loss_fn(torch.tensor([3.0]), [rec])
@@ -72,9 +72,9 @@ class TestLeftBranch:
     def test_gradient_direction(self):
         """Predicting above the threshold should push gradient downward."""
         loss_fn = CensoredRegressionLoss(sigma=1.0)
-        T = 5.0
+        t = 5.0
         pred = torch.tensor([6.0], requires_grad=True)
-        rec = _make_record(T, T, CensoringType.LEFT)
+        rec = _make_record(t, t, CensoringType.LEFT)
         loss = loss_fn(pred, [rec])
         loss.backward()
         assert pred.grad.item() > 0  # gradient > 0 → prediction should decrease
@@ -86,8 +86,8 @@ class TestIntervalBranch:
     def test_loss_minimized_inside_interval(self):
         """Predictions inside [T, U] should incur lower loss than outside."""
         loss_fn = CensoredRegressionLoss(sigma=1.0)
-        T, U = 5.0, 11.0
-        rec = _make_record(T, U, CensoringType.INTERVAL)
+        t, u = 5.0, 11.0
+        rec = _make_record(t, u, CensoringType.INTERVAL)
         loss_inside = loss_fn(torch.tensor([7.0]), [rec])
         loss_below = loss_fn(torch.tensor([3.0]), [rec])
         loss_above = loss_fn(torch.tensor([13.0]), [rec])
@@ -97,9 +97,9 @@ class TestIntervalBranch:
     def test_gradient_direction_below_interval(self):
         """Predicting below T should have gradient pushing prediction upward."""
         loss_fn = CensoredRegressionLoss(sigma=1.0)
-        T, U = 5.0, 11.0
+        t, u = 5.0, 11.0
         pred = torch.tensor([3.0], requires_grad=True)
-        rec = _make_record(T, U, CensoringType.INTERVAL)
+        rec = _make_record(t, u, CensoringType.INTERVAL)
         loss = loss_fn(pred, [rec])
         loss.backward()
         assert pred.grad.item() < 0  # gradient < 0 → prediction should increase
@@ -111,12 +111,12 @@ class TestIntervalBranch:
         right-censored at T would produce increasing loss for ŷ >> T.
         """
         loss_fn = CensoredRegressionLoss(sigma=1.0)
-        T, U = 5.0, 11.0
-        rec = _make_record(T, U, CensoringType.INTERVAL)
-        loss_at_T = loss_fn(torch.tensor([5.0]), [rec])
+        t, u = 5.0, 11.0
+        rec = _make_record(t, u, CensoringType.INTERVAL)
+        loss_at_t = loss_fn(torch.tensor([5.0]), [rec])
         loss_at_8 = loss_fn(torch.tensor([8.0]), [rec])
-        # Loss should be lower (or equal) for a prediction deeper inside [T, U]
-        assert loss_at_8.item() <= loss_at_T.item() + 1e-4
+        # Loss should be lower (or equal) for a prediction deeper inside [t, u]
+        assert loss_at_8.item() <= loss_at_t.item() + 1e-4
 
 
 class TestFidelityWeighting:
@@ -184,20 +184,17 @@ class TestLossBreakdown:
             (QueryType.PRIMARY_SCREEN, "ps_loss", "drc_loss"),
         ],
     )
-    def test_absent_fidelity_loss_is_nan(
-        self, absent_fidelity, nan_field, finite_field
-    ):
+    def test_absent_fidelity_loss_is_nan(self, absent_fidelity, nan_field, finite_field):
         """The per-fidelity loss field must be nan when the batch contains no
-        samples of that fidelity, while the other field and total remain finite."""
+        samples of that fidelity, while the other field and total remain finite.
+        """
         loss_fn = CensoredRegressionLoss(sigma=1.0)
         preds = torch.tensor([5.0, 6.0])
         if absent_fidelity == QueryType.DOSE_RESPONSE:
             # Batch with only PS records
             recs = [
                 _make_record(5.0, 5.0, CensoringType.LEFT, QueryType.PRIMARY_SCREEN),
-                _make_record(
-                    5.0, 11.0, CensoringType.INTERVAL, QueryType.PRIMARY_SCREEN
-                ),
+                _make_record(5.0, 11.0, CensoringType.INTERVAL, QueryType.PRIMARY_SCREEN),
             ]
         else:
             # Batch with only DRC records
@@ -231,11 +228,9 @@ class TestLossBreakdown:
             loss_fn(torch.tensor([]), [])
 
     def test_mismatched_preds_records_length(self):
-        """Mismatched predictions and records lengths must raise AssertionError."""
+        """Mismatched predictions and records lengths must raise ValueError."""
         loss_fn = CensoredRegressionLoss(sigma=1.0)
         preds = torch.tensor([5.0, 6.0, 7.0])  # 3 predictions
-        recs = [
-            _make_record(5.0, 5.0, CensoringType.EXACT, QueryType.DOSE_RESPONSE)
-        ]  # 1 record
-        with pytest.raises(AssertionError):
+        recs = [_make_record(5.0, 5.0, CensoringType.EXACT, QueryType.DOSE_RESPONSE)]  # 1 record
+        with pytest.raises(ValueError):
             loss_fn(preds, recs)

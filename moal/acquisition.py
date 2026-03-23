@@ -82,7 +82,7 @@ def _binary_entropy(p: np.ndarray) -> np.ndarray:
     # Cast to float64 so that the clip bounds (1e-9, 1-1e-9) are representable;
     # float32 rounds 1-1e-9 to exactly 1.0, letting log(0) through despite clipping
     p = np.clip(p.astype(np.float64), _EPS, 1 - _EPS)
-    return -(p * np.log(p) + (1 - p) * np.log(1 - p))
+    return -(p * np.log(p) + (1 - p) * np.log(1 - p))  # type: ignore[no-any-return]
 
 
 class CostAwareGreedyAcquisition:
@@ -233,10 +233,11 @@ class CostAwareGreedyAcquisition:
             return []
 
         predictions = np.asarray(predictions, dtype=np.float32)
-        assert len(unlabeled_smiles) == len(predictions), (
-            f"SMILES list length ({len(unlabeled_smiles)}) must match "
-            f"predictions length ({len(predictions)})."
-        )
+        if len(unlabeled_smiles) != len(predictions):
+            raise ValueError(
+                f"SMILES list length ({len(unlabeled_smiles)}) must match "
+                f"predictions length ({len(predictions)})."
+            )
         if len(predictions) > 0 and not np.all(np.isfinite(predictions)):
             raise ValueError(
                 "predictions must contain only finite values; NaN or inf values "
@@ -257,21 +258,20 @@ class CostAwareGreedyAcquisition:
         # PS-labeled INTERVAL compounds contribute only a DRC-upgrade candidate
         if ps_labeled_smiles:
             psl_preds = np.asarray(ps_labeled_predictions, dtype=np.float32)
-            assert len(ps_labeled_smiles) == len(psl_preds), (
-                f"ps_labeled_smiles length ({len(ps_labeled_smiles)}) must match "
-                f"ps_labeled_predictions length ({len(psl_preds)})."
-            )
+            if len(ps_labeled_smiles) != len(psl_preds):
+                raise ValueError(
+                    f"ps_labeled_smiles length ({len(ps_labeled_smiles)}) must match "
+                    f"ps_labeled_predictions length ({len(psl_preds)})."
+                )
             scores_drc_upgrade = self._score_drc(psl_preds)
             for j, smi in enumerate(ps_labeled_smiles):
-                candidates.append(
-                    (float(scores_drc_upgrade[j]), smi, QueryType.DOSE_RESPONSE)
-                )
+                candidates.append((float(scores_drc_upgrade[j]), smi, QueryType.DOSE_RESPONSE))
 
         candidates.sort(key=lambda x: x[0], reverse=True)
 
         selected: list[tuple[str, QueryType]] = []
         selected_smiles: set[str] = set()
-        for score, smi, qt in candidates:
+        for _score, smi, qt in candidates:
             if smi in selected_smiles:
                 continue
             selected.append((smi, qt))
@@ -294,9 +294,7 @@ class CostAwareGreedyAcquisition:
     # Diagnostics
     # ------------------------------------------------------------------
 
-    def score_summary(
-        self, unlabeled_smiles: list[str], predictions: np.ndarray
-    ) -> list[dict]:
+    def score_summary(self, unlabeled_smiles: list[str], predictions: np.ndarray) -> list[dict]:
         """Return per-compound score breakdown for inspection and logging.
 
         Parameters
@@ -315,13 +313,9 @@ class CostAwareGreedyAcquisition:
         """
         predictions = np.asarray(predictions, dtype=np.float32)
         rows = []
-        for smi, y_hat in zip(unlabeled_smiles, predictions):
-            p_active = float(
-                _sigmoid(np.array([y_hat - self.target_threshold]), self.tau)[0]
-            )
-            p_cross = float(
-                _sigmoid(np.array([y_hat - self.ps_threshold]), self.tau)[0]
-            )
+        for smi, y_hat in zip(unlabeled_smiles, predictions, strict=False):
+            p_active = float(_sigmoid(np.array([y_hat - self.target_threshold]), self.tau)[0])
+            p_cross = float(_sigmoid(np.array([y_hat - self.ps_threshold]), self.tau)[0])
             rows.append(
                 {
                     "smiles": smi,
@@ -329,8 +323,7 @@ class CostAwareGreedyAcquisition:
                     "p_active": p_active,
                     "p_cross_threshold": p_cross,
                     "score_drc": p_active / self.cost_drc,
-                    "score_ps": float(_binary_entropy(np.array([p_cross]))[0])
-                    / self.cost_ps,
+                    "score_ps": float(_binary_entropy(np.array([p_cross]))[0]) / self.cost_ps,
                 }
             )
         return rows

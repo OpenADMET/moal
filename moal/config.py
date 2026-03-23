@@ -405,14 +405,12 @@ class PipelineConfig:
     trainer: TrainerConfig = field(default_factory=TrainerConfig)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
     data: DataConfig = field(default_factory=DataConfig)
-    active_learning_loop: ActiveLearningLoopConfig = field(
-        default_factory=ActiveLearningLoopConfig
-    )
+    active_learning_loop: ActiveLearningLoopConfig = field(default_factory=ActiveLearningLoopConfig)
 
     seed: int = 42
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> "PipelineConfig":
+    def from_yaml(cls, path: str | Path) -> PipelineConfig:
         """Load a ``PipelineConfig`` from a YAML file.
 
         Parameters
@@ -444,9 +442,7 @@ class PipelineConfig:
                 ),
                 plan=PlanDataConfig(**data_raw.get("plan", {})),
             ),
-            active_learning_loop=ActiveLearningLoopConfig(
-                **raw.get("active_learning_loop", {})
-            ),
+            active_learning_loop=ActiveLearningLoopConfig(**raw.get("active_learning_loop", {})),
             seed=raw.get("seed", 42),
         )
 
@@ -461,7 +457,7 @@ class PipelineConfig:
 
         def _to_dict(obj: Any) -> Any:
             if dataclasses.is_dataclass(obj):
-                return {k: _to_dict(v) for k, v in dataclasses.asdict(obj).items()}
+                return {k: _to_dict(v) for k, v in dataclasses.asdict(obj).items()}  # type: ignore[arg-type]
             return obj
 
         with open(path, "w") as f:

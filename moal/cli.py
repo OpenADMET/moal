@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import importlib.metadata
 import logging
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 import click
 import lightning as L
@@ -79,9 +79,9 @@ def _common_cli_options(*, required: bool) -> Callable:
             type=click.Path(file_okay=False, path_type=Path),
             help="Override output directory from config.",
         )(wrapped)
-        wrapped = click.option(
-            "--verbose", "-v", is_flag=True, help="Enable DEBUG logging."
-        )(wrapped)
+        wrapped = click.option("--verbose", "-v", is_flag=True, help="Enable DEBUG logging.")(
+            wrapped
+        )
         return wrapped
 
     return decorator
@@ -89,7 +89,7 @@ def _common_cli_options(*, required: bool) -> Callable:
 
 @click.group()
 def main() -> None:
-    """moal CLI with simulation and one-shot planning subcommands."""
+    """Moal CLI with simulation and one-shot planning subcommands."""
 
 
 @main.command()
@@ -311,9 +311,7 @@ def plan(config: Path, output_dir: Path | None, verbose: bool) -> None:
             progress.advance(task)
 
             if not state.training_records:
-                raise click.ClickException(
-                    "state CSV did not contain any labeled records."
-                )
+                raise click.ClickException("state CSV did not contain any labeled records.")
 
             fit_records = training_records_for_refit(state.training_records)
             acquisition = _build_acquisition(cfg)
@@ -339,22 +337,16 @@ def plan(config: Path, output_dir: Path | None, verbose: bool) -> None:
             else:
                 n_labeled = len(state.training_records)
                 n_labeled_drc = sum(
-                    1
-                    for r in state.training_records
-                    if r.fidelity == QueryType.DOSE_RESPONSE
+                    1 for r in state.training_records if r.fidelity == QueryType.DOSE_RESPONSE
                 )
                 n_labeled_ps = sum(
-                    1
-                    for r in state.training_records
-                    if r.fidelity == QueryType.PRIMARY_SCREEN
+                    1 for r in state.training_records if r.fidelity == QueryType.PRIMARY_SCREEN
                 )
                 # Upgrades are PS-INTERVAL records that also have a DRC record;
                 # training_records_for_refit removes them, so the difference is the count.
                 n_upgrades = n_labeled - len(fit_records)
                 upgrade_suffix = (
-                    f", [magenta]{n_upgrades} upgrades[/magenta]"
-                    if n_upgrades > 0
-                    else ""
+                    f", [magenta]{n_upgrades} upgrades[/magenta]" if n_upgrades > 0 else ""
                 )
                 retraining_description = (
                     f"[yellow]Training model[/yellow] — {n_labeled} records "
@@ -541,17 +533,13 @@ def _print_banner() -> None:
         with open(banner_path) as handle:
             print(handle.read() + "\n")
     except FileNotFoundError:
-        logger.debug(
-            "Banner asset not found at %s; skipping terminal banner.", banner_path
-        )
+        logger.debug("Banner asset not found at %s; skipping terminal banner.", banner_path)
 
 
 def _print_welcome() -> None:
     """Print the versioned welcome message to stdout."""
     version = importlib.metadata.version("moal")
-    print(
-        f"Welcome to moal-v{version}: multi-objective active learning for drug discovery!\n"
-    )
+    print(f"Welcome to moal-v{version}: multi-objective active learning for drug discovery!\n")
 
 
 def _prepare_output_dir(cfg: PipelineConfig, output_dir: Path | None) -> Path:
@@ -676,7 +664,8 @@ def _build_simulation_model(
     """
     if cfg.model.fast:
         logger.info(
-            "Fast mode enabled — using NoisyOracleModel with error ramp %.3f → %.3f over %d iterations",
+            "Fast mode enabled — using NoisyOracleModel with error ramp"
+            " %.3f → %.3f over %d iterations",
             cfg.model.initial_error,
             cfg.model.final_error,
             cfg.active_learning_loop.n_iterations,

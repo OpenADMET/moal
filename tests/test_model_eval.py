@@ -45,9 +45,7 @@ class TestPerfectPredictions:
     def test_perfect_prediction(self, evaluator, metric, true, expected):
         """When predictions equal ground truth, every metric must return its best possible value (0 for MAE/RMSE, 1 for rank/R2)."""
         model = _mock_model(true.copy())
-        result = evaluator.evaluate_model(
-            model, list("ABCDE"[: len(true)]), true, metric
-        )
+        result = evaluator.evaluate_model(model, list("ABCDE"[: len(true)]), true, metric)
         assert result == pytest.approx(expected, abs=1e-6)
 
 
@@ -86,9 +84,7 @@ class TestKnownErrors:
     def test_known_error(self, evaluator, metric, true, preds, expected):
         """Metrics must match hand-calculated values, confirming the underlying formula is implemented correctly."""
         model = _mock_model(preds)
-        result = evaluator.evaluate_model(
-            model, list("ABCD"[: len(true)]), true, metric
-        )
+        result = evaluator.evaluate_model(model, list("ABCD"[: len(true)]), true, metric)
         assert result == pytest.approx(expected, abs=1e-6)
 
 
@@ -108,9 +104,7 @@ class TestEdgeCases:
         # The early-return guard must short-circuit before any model call.
         model.predict_smiles.assert_not_called()
 
-    @pytest.mark.parametrize(
-        "metric", [ModelMetric.KENDALL_TAU, ModelMetric.SPEARMAN_R]
-    )
+    @pytest.mark.parametrize("metric", [ModelMetric.KENDALL_TAU, ModelMetric.SPEARMAN_R])
     def test_single_point_ranking_metric_is_nan(self, evaluator, metric):
         """Single-point ranking is undefined → nan."""
         model = _mock_model(np.array([5.0]))
