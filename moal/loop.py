@@ -384,9 +384,7 @@ class ActiveLearningLoop:
                         self.oracle.training_records,
                         _superseded_tracker,
                     )
-                    n_pretrain_active = len(refit_records) - len(
-                        self.oracle.training_records
-                    )
+                    n_pretrain_active = len(refit_records) - len(self.oracle.training_records)
                     pretrain_suffix = (
                         f" + [dim]{n_pretrain_active} pretrain[/dim]"
                         if n_pretrain_active > 0

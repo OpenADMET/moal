@@ -700,9 +700,7 @@ class TestPretrainRecords:
             pretrain_records=pretrain,
         )
 
-    def test_pretrain_records_included_in_refit_call(
-        self, pretrain_loop, mock_model
-    ):
+    def test_pretrain_records_included_in_refit_call(self, pretrain_loop, mock_model):
         """model.refit must be called with the exact pretrain SMILES in the records list."""
         pretrain_loop.run(n_iterations=self.N_ITER, k_per_iteration=self.K)
         assert mock_model.refit.called
@@ -711,9 +709,7 @@ class TestPretrainRecords:
         pretrain_smiles = {r.canonical_smiles for r in pretrain_loop.pretrain_records}
         refit_smiles = {r.canonical_smiles for r in first_call_records}
         missing = pretrain_smiles - refit_smiles
-        assert not missing, (
-            f"Pretrain SMILES not forwarded to refit: {missing}"
-        )
+        assert not missing, f"Pretrain SMILES not forwarded to refit: {missing}"
 
     def test_empty_pretrain_reproduces_no_pretrain_behaviour(
         self, oracle, mock_model, acquisition, evaluator
@@ -735,9 +731,13 @@ class TestPretrainRecords:
         m1 = create_autospec(ChemPropLightningModule, instance=True)
         m2 = create_autospec(ChemPropLightningModule, instance=True)
         rng = np.random.default_rng(0)
-        m1.predict_smiles.side_effect = lambda s, **k: rng.normal(6.0, 1.5, len(s)).astype(np.float32)
+        m1.predict_smiles.side_effect = lambda s, **k: rng.normal(6.0, 1.5, len(s)).astype(
+            np.float32
+        )
         m1.refit.return_value = m1
-        m2.predict_smiles.side_effect = lambda s, **k: rng.normal(6.0, 1.5, len(s)).astype(np.float32)
+        m2.predict_smiles.side_effect = lambda s, **k: rng.normal(6.0, 1.5, len(s)).astype(
+            np.float32
+        )
         m2.refit.return_value = m2
 
         loop_no_pretrain.model = m1
@@ -773,15 +773,13 @@ class TestPretrainRecords:
             )
         ]
         # Simulate oracle having also acquired a DRC record for target
-        from moal.types import CensoringType as CT
-
         oracle_drc = [
             LabelRecord(
                 smiles=target,
                 canonical_smiles=target,
                 value=7.2,
                 upper_bound=7.2,
-                censoring_type=CT.EXACT,
+                censoring_type=CensoringType.EXACT,
                 fidelity=QueryType.DOSE_RESPONSE,
                 cost=10.0,
                 iteration=1,

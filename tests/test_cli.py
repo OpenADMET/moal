@@ -654,10 +654,7 @@ class TestSimulatePretrain:
     def _full_config(self, gt_path, pretrain_path=None, *, ps_threshold=5.0, test_set_size=0.0):
         """Return a complete simulate YAML config string with optional pretrain sub-section."""
         pretrain_block = (
-            f"    pretrain:\n"
-            f"      input_csv: {pretrain_path}\n"
-            if pretrain_path
-            else ""
+            f"    pretrain:\n      input_csv: {pretrain_path}\n" if pretrain_path else ""
         )
         return (
             "data:\n"
@@ -665,9 +662,7 @@ class TestSimulatePretrain:
             f"    input_csv: {gt_path}\n"
             "    smiles_column: smiles\n"
             "    pec50_column: pec50\n"
-            f"    test_set_size: {test_set_size}\n"
-            + pretrain_block
-            + "model:\n"
+            f"    test_set_size: {test_set_size}\n" + pretrain_block + "model:\n"
             "  fast: true\n"
             "dashboard:\n"
             "  enabled: false\n"
@@ -679,14 +674,7 @@ class TestSimulatePretrain:
         )
 
     def _write_ground_truth(self, path):
-        path.write_text(
-            "smiles,pec50\n"
-            "c1ccccc1,5.5\n"
-            "CCO,7.8\n"
-            "CCN,4.2\n"
-            "CCC,6.1\n"
-            "CCCC,7.1\n"
-        )
+        path.write_text("smiles,pec50\nc1ccccc1,5.5\nCCO,7.8\nCCN,4.2\nCCC,6.1\nCCCC,7.1\n")
 
     def test_pretrain_csv_accepted_and_run_succeeds(self, tmp_path):
         """A valid pretrain CSV must be ingested without error and the simulate run must complete."""
@@ -744,9 +732,7 @@ class TestSimulatePretrain:
 
         gt = tmp_path / "gt.csv"
         # Use a longer list so scaffold split can hold out a meaningful test set
-        rows = "\n".join(
-            f"c1ccc(CC{'C' * i})cc1,{5.0 + i * 0.3}" for i in range(15)
-        )
+        rows = "\n".join(f"c1ccc(CC{'C' * i})cc1,{5.0 + i * 0.3}" for i in range(15))
         gt.write_text(f"smiles,pec50\n{rows}\n")
 
         # Use one of the ground-truth SMILES as a pretrain record
@@ -774,9 +760,6 @@ class TestSimulatePretrain:
         assert result.exit_code == 0, _result_text(result)
         # Overlap warning must have been emitted
         overlap_messages = [
-            m for m in warning_calls
-            if "test set" in m.lower() and "overlap" in m.lower()
+            m for m in warning_calls if "test set" in m.lower() and "overlap" in m.lower()
         ]
-        assert overlap_messages, (
-            "Expected a test-set overlap warning, got: " + str(warning_calls)
-        )
+        assert overlap_messages, "Expected a test-set overlap warning, got: " + str(warning_calls)

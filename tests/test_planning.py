@@ -565,11 +565,13 @@ class TestParsePretrainRecords:
 
     def test_labeled_rows_returned_as_training_records(self, preprocessor):
         """All three labeled relation types must be returned as LabelRecord objects."""
-        df = pd.DataFrame([
-            {"smiles": "CCO", "relation": "<", "value": 5.0},
-            {"smiles": "CCN", "relation": ">=", "value": 5.0},
-            {"smiles": "CCC", "relation": "==", "value": 7.2},
-        ])
+        df = pd.DataFrame(
+            [
+                {"smiles": "CCO", "relation": "<", "value": 5.0},
+                {"smiles": "CCN", "relation": ">=", "value": 5.0},
+                {"smiles": "CCC", "relation": "==", "value": 7.2},
+            ]
+        )
         records = parse_pretrain_records(
             df,
             cost_ps=1.0,
@@ -585,11 +587,13 @@ class TestParsePretrainRecords:
 
     def test_unqueried_rows_are_excluded(self, preprocessor):
         """Unqueried rows (empty relation/value) must be excluded from the returned training records."""
-        df = pd.DataFrame([
-            {"smiles": "CCO", "relation": "==", "value": 7.5},
-            {"smiles": "CCN", "relation": "", "value": ""},
-            {"smiles": "CCC", "relation": "", "value": ""},
-        ])
+        df = pd.DataFrame(
+            [
+                {"smiles": "CCO", "relation": "==", "value": 7.5},
+                {"smiles": "CCN", "relation": "", "value": ""},
+                {"smiles": "CCC", "relation": "", "value": ""},
+            ]
+        )
         records = parse_pretrain_records(
             df,
             cost_ps=1.0,
@@ -603,11 +607,14 @@ class TestParsePretrainRecords:
 
     def test_unqueried_rows_trigger_logger_warning(self, preprocessor, caplog):
         """A logger.warning must be emitted when unqueried rows are found in the pretrain CSV."""
-        df = pd.DataFrame([
-            {"smiles": "CCO", "relation": "==", "value": 7.5},
-            {"smiles": "CCN", "relation": "", "value": ""},
-        ])
+        df = pd.DataFrame(
+            [
+                {"smiles": "CCO", "relation": "==", "value": 7.5},
+                {"smiles": "CCN", "relation": "", "value": ""},
+            ]
+        )
         import logging
+
         with caplog.at_level(logging.WARNING, logger="moal.planning"):
             parse_pretrain_records(
                 df,
@@ -622,9 +629,11 @@ class TestParsePretrainRecords:
 
     def test_ps_threshold_mismatch_raises(self, preprocessor):
         """A PS value that doesn't match expected_ps_threshold must raise ValueError."""
-        df = pd.DataFrame([
-            {"smiles": "CCO", "relation": "<", "value": 6.0},  # wrong threshold
-        ])
+        df = pd.DataFrame(
+            [
+                {"smiles": "CCO", "relation": "<", "value": 6.0},  # wrong threshold
+            ]
+        )
         with pytest.raises(ValueError, match="PS threshold"):
             parse_pretrain_records(
                 df,
@@ -637,9 +646,11 @@ class TestParsePretrainRecords:
 
     def test_invalid_smiles_raises(self, preprocessor):
         """An unparseable SMILES string must raise ValueError."""
-        df = pd.DataFrame([
-            {"smiles": "not_a_smiles", "relation": "==", "value": 7.0},
-        ])
+        df = pd.DataFrame(
+            [
+                {"smiles": "not_a_smiles", "relation": "==", "value": 7.0},
+            ]
+        )
         with pytest.raises(ValueError, match="invalid SMILES"):
             parse_pretrain_records(
                 df,
@@ -663,9 +674,11 @@ class TestParsePretrainRecords:
 
     def test_returns_only_training_records_not_upgrade_rows(self, preprocessor):
         """ps_upgrade_rows from parse_campaign_state must not be exposed — only training records."""
-        df = pd.DataFrame([
-            {"smiles": "CCO", "relation": ">=", "value": 5.0},
-        ])
+        df = pd.DataFrame(
+            [
+                {"smiles": "CCO", "relation": ">=", "value": 5.0},
+            ]
+        )
         records = parse_pretrain_records(
             df,
             cost_ps=1.0,
