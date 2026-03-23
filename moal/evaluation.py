@@ -440,9 +440,7 @@ class PipelineEvaluator:
 
         if isinstance(model, NoisyOracleModel):
             if noise_scale is None:
-                raise ValueError(
-                    "noise_scale must be provided when evaluating a NoisyOracleModel"
-                )
+                raise ValueError("noise_scale must be provided when evaluating a NoisyOracleModel")
             preds = model.predict_smiles(test_smiles, noise_scale)
         else:
             preds = model.predict_smiles(test_smiles)

@@ -181,9 +181,7 @@ class ActiveLearningLoop:
         # linspace(a, a, n) naturally handles the constant-error case.
         noise_schedule: np.ndarray | None = None
         if isinstance(self.model, NoisyOracleModel):
-            noise_schedule = np.linspace(
-                self.initial_error, self.final_error, n_iterations
-            )
+            noise_schedule = np.linspace(self.initial_error, self.final_error, n_iterations)
 
         _console.print(
             f"[bold]moal[/bold] campaign starting — "
@@ -273,14 +271,10 @@ class ActiveLearningLoop:
                     # oracle — not from the pre-query candidate list, which may
                     # differ if the oracle skips invalid or already-labeled compounds.
                     iter_drc_cost = sum(
-                        r.cost
-                        for r in new_records
-                        if r.fidelity == QueryType.DOSE_RESPONSE
+                        r.cost for r in new_records if r.fidelity == QueryType.DOSE_RESPONSE
                     )
                     iter_ps_cost = sum(
-                        r.cost
-                        for r in new_records
-                        if r.fidelity == QueryType.PRIMARY_SCREEN
+                        r.cost for r in new_records if r.fidelity == QueryType.PRIMARY_SCREEN
                     )
                     # Upgrades are DRC queries for compounds already in the PS pool;
                     # ps_labeled_before was captured before this iteration's queries.
@@ -304,9 +298,7 @@ class ActiveLearningLoop:
                     # Count cumulative upgrades from the evaluator breakdown so the
                     # refit message is consistent with the metrics that get logged.
                     n_cumulative_upgrades = int(
-                        self.evaluator.fidelity_breakdown(all_labeled).get(
-                            "upgrades", 0
-                        )
+                        self.evaluator.fidelity_breakdown(all_labeled).get("upgrades", 0)
                     )
                     upgrade_suffix = (
                         f", [magenta]{n_cumulative_upgrades} upgrades[/magenta]"
@@ -364,9 +356,7 @@ class ActiveLearningLoop:
                     if all_remaining:
                         all_preds = self._predict(
                             all_remaining,
-                            noise_schedule[iteration]
-                            if noise_schedule is not None
-                            else None,
+                            noise_schedule[iteration] if noise_schedule is not None else None,
                         )
                         unlabeled_preds = all_preds[: len(remaining_unlabeled)]
                         ps_labeled_preds = all_preds[len(remaining_unlabeled) :]
@@ -433,8 +423,7 @@ class ActiveLearningLoop:
         n_final_drc = int(results.final_metrics.get("n_drc_queries", 0))
         n_final_ps = int(results.final_metrics.get("n_ps_queries", 0))
         drc_label = (
-            f"[orange1]{n_final_drc} DRC[/orange1] "
-            f"([magenta]{n_final_upgrades} upgrades[/magenta])"
+            f"[orange1]{n_final_drc} DRC[/orange1] ([magenta]{n_final_upgrades} upgrades[/magenta])"
             if n_final_upgrades > 0
             else f"[orange1]{n_final_drc} DRC[/orange1]"
         )
@@ -452,9 +441,7 @@ class ActiveLearningLoop:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _predict(
-        self, smiles_list: list[str], noise_scale: float | None = None
-    ) -> np.ndarray:
+    def _predict(self, smiles_list: list[str], noise_scale: float | None = None) -> np.ndarray:
         """Route inference to the appropriate model backend.
 
         Dispatches to :meth:`~moal.model.NoisyOracleModel.predict_smiles` or

@@ -320,9 +320,7 @@ class LiveDashboard:
         self._server_active = False
         try:
             self._werkzeug_server = make_server("127.0.0.1", port, self._app.server)
-            self._thread = threading.Thread(
-                target=self._werkzeug_server.serve_forever, daemon=True
-            )
+            self._thread = threading.Thread(target=self._werkzeug_server.serve_forever, daemon=True)
             self._thread.start()
             self._server_active = True
             url = f"http://127.0.0.1:{port}"
@@ -367,14 +365,10 @@ class LiveDashboard:
             Held-out test-set metric for this iteration, or None if unavailable.
         """
         ps_smiles = {
-            r.canonical_smiles
-            for r in labeled_records
-            if r.fidelity == QueryType.PRIMARY_SCREEN
+            r.canonical_smiles for r in labeled_records if r.fidelity == QueryType.PRIMARY_SCREEN
         }
         drc_smiles = {
-            r.canonical_smiles
-            for r in labeled_records
-            if r.fidelity == QueryType.DOSE_RESPONSE
+            r.canonical_smiles for r in labeled_records if r.fidelity == QueryType.DOSE_RESPONSE
         }
 
         n_upgrades = len(ps_smiles & drc_smiles)
@@ -459,9 +453,7 @@ class LiveDashboard:
 
         try:
             pil_frames = [Image.open(io.BytesIO(b)).convert("RGB") for b in frames]
-            palette_frames = [
-                f.convert("P", dither=Image.Dither.NONE) for f in pil_frames
-            ]
+            palette_frames = [f.convert("P", dither=Image.Dither.NONE) for f in pil_frames]
             durations = [frame_duration_ms] * len(palette_frames)
             durations[-1] = last_frame_duration_ms
             palette_frames[0].save(
@@ -559,35 +551,25 @@ class LiveDashboard:
         w = self._export_width / _GIF_RENDER_DPI
         h = self._export_height / _GIF_RENDER_DPI
         fig = Figure(figsize=(w, h), dpi=_GIF_RENDER_DPI)
-        FigureCanvasAgg(
-            fig
-        )  # attaches the Agg backend so fig.savefig() works headlessly
+        FigureCanvasAgg(fig)  # attaches the Agg backend so fig.savefig() works headlessly
 
         ax1, ax2, ax3, ax4 = fig.subplots(2, 2).flatten()
 
         cum_costs = [0.0, *[it["cum_cost"] for it in iterations]]
         cum_actives = [0, *[it["cum_actives"] for it in iterations]]
         iter_nums = list(range(1, len(iterations) + 1))
-        iter_drc_new = [
-            it["iter_drc_cost"] - it["iter_upgrade_cost"] for it in iterations
-        ]
+        iter_drc_new = [it["iter_drc_cost"] - it["iter_upgrade_cost"] for it in iterations]
         iter_upgrades = [it["iter_upgrade_cost"] for it in iterations]
         iter_ps = [it["iter_ps_cost"] for it in iterations]
         cum_total_costs = list(
-            itertools.accumulate(
-                it["iter_drc_cost"] + it["iter_ps_cost"] for it in iterations
-            )
+            itertools.accumulate(it["iter_drc_cost"] + it["iter_ps_cost"] for it in iterations)
         )
         cum_total_costs_k = [c / 1000 for c in cum_total_costs]
         metric_iters = [
-            i + 1
-            for i, it in enumerate(iterations)
-            if it["model_metric_value"] is not None
+            i + 1 for i, it in enumerate(iterations) if it["model_metric_value"] is not None
         ]
         metric_vals = [
-            it["model_metric_value"]
-            for it in iterations
-            if it["model_metric_value"] is not None
+            it["model_metric_value"] for it in iterations if it["model_metric_value"] is not None
         ]
         last = (
             iterations[-1]
@@ -601,9 +583,7 @@ class LiveDashboard:
         )
         # Floor at 1.05 guarantees 0 and 1 are labelled even before any data arrives
         actives_y_max = max(1.05, max(cum_actives) * 1.05) if cum_actives else 1.05
-        cost_k_y_max = (
-            max(1.05, max(cum_total_costs_k) * 1.05) if cum_total_costs_k else 1.05
-        )
+        cost_k_y_max = max(1.05, max(cum_total_costs_k) * 1.05) if cum_total_costs_k else 1.05
 
         # Panel 1: Cumulative Actives
         ax1.plot(
@@ -714,9 +694,7 @@ class LiveDashboard:
 
         ax4.legend(loc="upper right", fontsize=7)
 
-        fig.suptitle(
-            "Active Learning Campaign Dashboard", fontsize=11, fontweight="bold"
-        )
+        fig.suptitle("Active Learning Campaign Dashboard", fontsize=11, fontweight="bold")
         fig.tight_layout(pad=2.0)
 
         buf = io.BytesIO()
@@ -858,9 +836,7 @@ class LiveDashboard:
         cum_costs = [0.0, *[it["cum_cost"] for it in iterations]]
         cum_actives = [0, *[it["cum_actives"] for it in iterations]]
         iter_nums = list(range(1, len(iterations) + 1))
-        iter_drc_new = [
-            it["iter_drc_cost"] - it["iter_upgrade_cost"] for it in iterations
-        ]
+        iter_drc_new = [it["iter_drc_cost"] - it["iter_upgrade_cost"] for it in iterations]
         iter_upgrades = [it["iter_upgrade_cost"] for it in iterations]
         iter_ps = [it["iter_ps_cost"] for it in iterations]
         # Scale to thousands so secondary y-axis ticks stay compact whole-number integers
@@ -872,14 +848,10 @@ class LiveDashboard:
         ]
 
         metric_iters = [
-            i + 1
-            for i, it in enumerate(iterations)
-            if it["model_metric_value"] is not None
+            i + 1 for i, it in enumerate(iterations) if it["model_metric_value"] is not None
         ]
         metric_vals = [
-            it["model_metric_value"]
-            for it in iterations
-            if it["model_metric_value"] is not None
+            it["model_metric_value"] for it in iterations if it["model_metric_value"] is not None
         ]
 
         last = iterations[-1]
@@ -1018,9 +990,7 @@ class LiveDashboard:
         cost_k_y_max = max(1.05, max_cost_k * 1.05)
         # Metric axis: explicit range + tick0/dtick computed from data span so at
         # least two tick labels are always visible even on narrow early-iteration ranges.
-        metric_ymin, metric_ymax, metric_tick0, metric_dtick = self._metric_axis_params(
-            metric_vals
-        )
+        metric_ymin, metric_ymax, metric_tick0, metric_dtick = self._metric_axis_params(metric_vals)
 
         fig.update_layout(
             title_text="Active Learning Campaign Dashboard",
@@ -1053,9 +1023,7 @@ class LiveDashboard:
             tick0=0,
             dtick=self._nice_dtick(max_actives),
         )
-        fig.update_yaxes(
-            title_text="Iteration Cost ($)", secondary_y=False, row=1, col=2
-        )
+        fig.update_yaxes(title_text="Iteration Cost ($)", secondary_y=False, row=1, col=2)
         fig.update_yaxes(
             title_text="Cumulative Cost ($k)",
             secondary_y=True,
@@ -1146,13 +1114,10 @@ class LiveDashboard:
 
         # Build one frame per iteration so the slider steps through cumulative history
         frames = [
-            self._build_animation_frame(iterations[: i + 1], i + 1)
-            for i in range(len(iterations))
+            self._build_animation_frame(iterations[: i + 1], i + 1) for i in range(len(iterations))
         ]
 
-        animated_fig = go.Figure(
-            data=initial_fig.data, layout=initial_fig.layout, frames=frames
-        )
+        animated_fig = go.Figure(data=initial_fig.data, layout=initial_fig.layout, frames=frames)
 
         steps = [
             {
@@ -1206,9 +1171,7 @@ class LiveDashboard:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _build_animation_frame(
-        self, iterations: list[dict], iteration_index: int
-    ) -> go.Frame:
+    def _build_animation_frame(self, iterations: list[dict], iteration_index: int) -> go.Frame:
         """Build a Plotly animation frame with both data and per-frame axis layout.
 
         Parameters

@@ -236,9 +236,7 @@ class TestFreezeUnfreeze:
     def test_encoder_and_head_params_cover_all_model_params(self, model):
         """_encoder_params and _head_params together must account for all model parameters."""
         all_ids = {id(p) for p in model.model.parameters()}
-        covered = {id(p) for p in model._encoder_params()} | {
-            id(p) for p in model._head_params()
-        }
+        covered = {id(p) for p in model._encoder_params()} | {id(p) for p in model._head_params()}
         assert covered == all_ids
 
 
@@ -283,9 +281,7 @@ class TestRefit:
             )
 
         assert returned is model
-        assert not any("transfer_batch_to_device" in str(w.message) for w in caught), (
-            caught
-        )
+        assert not any("transfer_batch_to_device" in str(w.message) for w in caught), caught
 
 
 # ---------------------------------------------------------------------------

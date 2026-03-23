@@ -119,9 +119,7 @@ class TestDashboardInit:
         """When the port is already in use, construction must warn and succeed without a server."""
         monkeypatch.setattr(
             "moal.dashboard.make_server",
-            lambda *a, **kw: (_ for _ in ()).throw(
-                OSError(48, "Address already in use")
-            ),
+            lambda *a, **kw: (_ for _ in ()).throw(OSError(48, "Address already in use")),
         )
         with caplog.at_level(logging.WARNING, logger="moal.dashboard"):
             db = LiveDashboard(n_iterations=3, n_compounds=20, port=8050)
@@ -313,13 +311,9 @@ class TestCompoundStatusPanel:
 
         snap = db._iterations[-1]
         assert snap["n_ps_only"] == 1, f"Expected n_ps_only=1, got {snap['n_ps_only']}"
-        assert snap["n_upgrades"] == 1, (
-            f"Expected n_upgrades=1, got {snap['n_upgrades']}"
-        )
+        assert snap["n_upgrades"] == 1, f"Expected n_upgrades=1, got {snap['n_upgrades']}"
         assert snap["n_drc_new"] == 1, f"Expected n_drc_new=1, got {snap['n_drc_new']}"
-        assert snap["n_unqueried"] == 7, (
-            f"Expected n_unqueried=7, got {snap['n_unqueried']}"
-        )
+        assert snap["n_unqueried"] == 7, f"Expected n_unqueried=7, got {snap['n_unqueried']}"
         db.close()
 
     def test_empty_records_does_not_raise(self):
@@ -351,9 +345,7 @@ class TestFrameCapture:
         db = LiveDashboard(n_iterations=3, n_compounds=20)
         records = _make_records(4)
         for i in range(3):
-            db.update(
-                records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0
-            )
+            db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
             assert len(db._frames) == i + 1
         db.close()
 
@@ -377,9 +369,7 @@ class TestFrameCapture:
         db = LiveDashboard(n_iterations=2, n_compounds=20)
         records = _make_records(4)
         with caplog.at_level(logging.WARNING, logger="moal.dashboard"):
-            db.update(
-                records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0
-            )
+            db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
 
         assert db._frames == []
         assert "Could not capture dashboard frame" in caplog.text
@@ -417,9 +407,7 @@ class TestSaveGif:
         db = LiveDashboard(n_iterations=3, n_compounds=20)
         records = _make_records(4)
         for _ in range(3):
-            db.update(
-                records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0
-            )
+            db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
 
         gif_path = tmp_path / "animation.gif"
         db.save_gif(gif_path)
@@ -450,9 +438,7 @@ class TestSaveGif:
         db = LiveDashboard(n_iterations=3, n_compounds=20)
         records = _make_records(4)
         for _ in range(3):
-            db.update(
-                records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0
-            )
+            db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
 
         gif_path = tmp_path / "animation.gif"
         db.save_gif(gif_path, frame_duration_ms=500, last_frame_duration_ms=5000)
@@ -515,9 +501,7 @@ class TestSaveHtml:
         db = LiveDashboard(n_iterations=2, n_compounds=20)
         records = _make_records(4)
         for _ in range(2):
-            db.update(
-                records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0
-            )
+            db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
 
         html_path = tmp_path / "dashboard.html"
         db.save_html(html_path)
@@ -544,9 +528,7 @@ class TestSaveHtml:
         db = LiveDashboard(n_iterations=n, n_compounds=20)
         records = _make_records(4)
         for _i in range(n):
-            db.update(
-                records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0
-            )
+            db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
 
         html_path = tmp_path / "dashboard.html"
         db.save_html(html_path)
@@ -561,18 +543,14 @@ class TestSaveHtml:
         db = LiveDashboard(n_iterations=2, n_compounds=20)
         records = _make_records(4)
         for _ in range(2):
-            db.update(
-                records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0
-            )
+            db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
 
         html_path = tmp_path / "dashboard.html"
         db.save_html(html_path)
         db.close()
 
         content = html_path.read_text()
-        assert re.search(
-            r"Plotly\.animate\(gd,\s*\[frameNames\[startIndex\]\]", content
-        )
+        assert re.search(r"Plotly\.animate\(gd,\s*\[frameNames\[startIndex\]\]", content)
         assert re.search(r"Plotly\.animate\('[^']+', null\);", content) is None
         assert "redraw: false" in content
 
@@ -626,49 +604,32 @@ class TestSaveHtml:
             assert list(frame.layout.yaxis.range) == pytest.approx(
                 list(frame_fig.layout.yaxis.range)
             )
-            assert frame.layout.yaxis.dtick == pytest.approx(
-                frame_fig.layout.yaxis.dtick
-            )
+            assert frame.layout.yaxis.dtick == pytest.approx(frame_fig.layout.yaxis.dtick)
 
             assert list(frame.layout.yaxis3.range) == pytest.approx(
                 list(frame_fig.layout.yaxis3.range)
             )
-            assert frame.layout.yaxis3.dtick == pytest.approx(
-                frame_fig.layout.yaxis3.dtick
-            )
+            assert frame.layout.yaxis3.dtick == pytest.approx(frame_fig.layout.yaxis3.dtick)
 
             assert list(frame.layout.yaxis4.range) == pytest.approx(
                 list(frame_fig.layout.yaxis4.range)
             )
-            assert frame.layout.yaxis4.tick0 == pytest.approx(
-                frame_fig.layout.yaxis4.tick0
-            )
-            assert frame.layout.yaxis4.dtick == pytest.approx(
-                frame_fig.layout.yaxis4.dtick
-            )
-            assert (
-                frame.layout.xaxis4.categoryarray
-                == frame_fig.layout.xaxis4.categoryarray
-            )
+            assert frame.layout.yaxis4.tick0 == pytest.approx(frame_fig.layout.yaxis4.tick0)
+            assert frame.layout.yaxis4.dtick == pytest.approx(frame_fig.layout.yaxis4.dtick)
+            assert frame.layout.xaxis4.categoryarray == frame_fig.layout.xaxis4.categoryarray
             assert frame.layout.yaxis2.title.text == frame_fig.layout.yaxis2.title.text
             assert list(frame.layout.yaxis5.range) == pytest.approx(
                 list(frame_fig.layout.yaxis5.range)
             )
 
-            assert list(frame.layout.xaxis2.range) == pytest.approx(
-                [0.5, float(i) + 0.5]
-            )
-            assert list(frame.layout.xaxis3.range) == pytest.approx(
-                [0.75, float(i) + 0.25]
-            )
+            assert list(frame.layout.xaxis2.range) == pytest.approx([0.5, float(i) + 0.5])
+            assert list(frame.layout.xaxis3.range) == pytest.approx([0.75, float(i) + 0.25])
             assert list(frame.traces) == list(range(len(frame_fig.data)))
 
             expected_cum_cost_upper = max(
                 1.0, max(it["cum_cost"] for it in frame_iterations) * 1.05
             )
-            assert list(frame.layout.xaxis.range) == pytest.approx(
-                [0.0, expected_cum_cost_upper]
-            )
+            assert list(frame.layout.xaxis.range) == pytest.approx([0.0, expected_cum_cost_upper])
 
         db.close()
 
@@ -797,9 +758,7 @@ class TestBuildFigure:
 
     def test_export_dimensions_used_in_render(self, tmp_path):
         """export_width and export_height must control the PNG dimensions produced by save()."""
-        db = LiveDashboard(
-            n_iterations=2, n_compounds=10, export_width=400, export_height=300
-        )
+        db = LiveDashboard(n_iterations=2, n_compounds=10, export_width=400, export_height=300)
         records = _make_records(2)
         db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
         png_path = tmp_path / "out.png"

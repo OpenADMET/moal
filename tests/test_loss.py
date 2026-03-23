@@ -184,9 +184,7 @@ class TestLossBreakdown:
             (QueryType.PRIMARY_SCREEN, "ps_loss", "drc_loss"),
         ],
     )
-    def test_absent_fidelity_loss_is_nan(
-        self, absent_fidelity, nan_field, finite_field
-    ):
+    def test_absent_fidelity_loss_is_nan(self, absent_fidelity, nan_field, finite_field):
         """The per-fidelity loss field must be nan when the batch contains no
         samples of that fidelity, while the other field and total remain finite.
         """
@@ -196,9 +194,7 @@ class TestLossBreakdown:
             # Batch with only PS records
             recs = [
                 _make_record(5.0, 5.0, CensoringType.LEFT, QueryType.PRIMARY_SCREEN),
-                _make_record(
-                    5.0, 11.0, CensoringType.INTERVAL, QueryType.PRIMARY_SCREEN
-                ),
+                _make_record(5.0, 11.0, CensoringType.INTERVAL, QueryType.PRIMARY_SCREEN),
             ]
         else:
             # Batch with only DRC records
@@ -235,8 +231,6 @@ class TestLossBreakdown:
         """Mismatched predictions and records lengths must raise ValueError."""
         loss_fn = CensoredRegressionLoss(sigma=1.0)
         preds = torch.tensor([5.0, 6.0, 7.0])  # 3 predictions
-        recs = [
-            _make_record(5.0, 5.0, CensoringType.EXACT, QueryType.DOSE_RESPONSE)
-        ]  # 1 record
+        recs = [_make_record(5.0, 5.0, CensoringType.EXACT, QueryType.DOSE_RESPONSE)]  # 1 record
         with pytest.raises(ValueError):
             loss_fn(preds, recs)

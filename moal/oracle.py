@@ -167,9 +167,7 @@ class CostAwareOracle:
 
         for key, pec50 in keyed_pairs:
             if key in ground_truth:
-                logger.warning(
-                    "Duplicate SMILES in ground truth, keeping first: %s", key
-                )
+                logger.warning("Duplicate SMILES in ground truth, keeping first: %s", key)
                 continue
             ground_truth[key] = pec50
 
@@ -256,9 +254,7 @@ class CostAwareOracle:
                 )
             # query_type is DRC and compound has only a PS record: upgrade is allowed
         if key not in self._ground_truth:
-            raise KeyError(
-                f"Compound not found in ground truth dataset (key: {key!r})."
-            )
+            raise KeyError(f"Compound not found in ground truth dataset (key: {key!r}).")
 
         true_pec50 = self._ground_truth[key]
 
@@ -318,9 +314,7 @@ class CostAwareOracle:
         records: list[LabelRecord] = []
         for smiles, qt in unique_queries:
             try:
-                records.append(
-                    self.query(smiles, qt, iteration, is_canonical=is_canonical)
-                )
+                records.append(self.query(smiles, qt, iteration, is_canonical=is_canonical))
             except (ValueError, KeyError) as exc:
                 logger.warning("Skipping query (%s, %s): %s", smiles, qt, exc)
         return records
@@ -502,8 +496,7 @@ class CostAwareOracle:
             r
             for r in self.labeled_records
             if not (
-                r.fidelity == QueryType.PRIMARY_SCREEN
-                and r.canonical_smiles in upgraded_smiles
+                r.fidelity == QueryType.PRIMARY_SCREEN and r.canonical_smiles in upgraded_smiles
             )
         ]
 

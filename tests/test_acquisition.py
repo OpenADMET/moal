@@ -55,9 +55,7 @@ class TestDRCScore:
         """DRC score must equal the sigmoid output divided by cost_drc so that costly assays are appropriately penalized."""
         preds = np.array([7.5])
         score = acq._score_drc(preds)[0]
-        assert score == pytest.approx(
-            _sigmoid(np.array([7.5 - 7.0]), 0.5)[0] / 10.0, rel=1e-4
-        )
+        assert score == pytest.approx(_sigmoid(np.array([7.5 - 7.0]), 0.5)[0] / 10.0, rel=1e-4)
 
 
 class TestPSScore:

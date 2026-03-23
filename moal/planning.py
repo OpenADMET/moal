@@ -113,13 +113,10 @@ def parse_campaign_state(
         # Partial population is an inconsistent state
         if relation_empty != value_empty:
             raise ValueError(
-                f"Row {csv_row}: relation and value must both be populated or "
-                "both be empty."
+                f"Row {csv_row}: relation and value must both be populated or both be empty."
             )
 
-        canonical = (
-            raw_smiles if is_canonical else preprocessor.canonicalize(raw_smiles)
-        )
+        canonical = raw_smiles if is_canonical else preprocessor.canonicalize(raw_smiles)
         if canonical is None:
             raise ValueError(f"Row {csv_row}: invalid SMILES {raw_smiles!r}.")
 
@@ -136,16 +133,13 @@ def parse_campaign_state(
         relation = str(relation_raw).strip()
         if relation not in {"<", ">=", "=="}:
             raise ValueError(
-                f"Row {csv_row}: relation must be one of '<', '>=', or '==', "
-                f"got {relation!r}."
+                f"Row {csv_row}: relation must be one of '<', '>=', or '==', got {relation!r}."
             )
 
         try:
             value = float(value_raw)
         except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"Row {csv_row}: value must be a finite numeric pEC50 datum."
-            ) from exc
+            raise ValueError(f"Row {csv_row}: value must be a finite numeric pEC50 datum.") from exc
 
         if not math.isfinite(value):
             raise ValueError(f"Row {csv_row}: value must be finite, got {value_raw!r}.")
@@ -179,9 +173,7 @@ def parse_campaign_state(
                 canonical_smiles=canonical,
                 value=value,
                 upper_bound=value if relation == "<" else upper_bound,
-                censoring_type=(
-                    CensoringType.LEFT if relation == "<" else CensoringType.INTERVAL
-                ),
+                censoring_type=(CensoringType.LEFT if relation == "<" else CensoringType.INTERVAL),
                 fidelity=QueryType.PRIMARY_SCREEN,
                 cost=cost_ps,
                 iteration=_PLAN_MODE_ITERATION,
@@ -238,9 +230,7 @@ def training_records_for_refit(records: list[LabelRecord]) -> list[LabelRecord]:
         are retained for compounds that have only a PS miss.
     """
     upgraded_smiles = {
-        rec.canonical_smiles
-        for rec in records
-        if rec.fidelity == QueryType.DOSE_RESPONSE
+        rec.canonical_smiles for rec in records if rec.fidelity == QueryType.DOSE_RESPONSE
     }
     return [
         rec
@@ -368,12 +358,8 @@ def _validate_training_records(records: list[LabelRecord]) -> None:
         by_smiles.setdefault(record.canonical_smiles, []).append(record)
 
     for canonical_smiles, grouped_records in by_smiles.items():
-        drc_records = [
-            rec for rec in grouped_records if rec.fidelity == QueryType.DOSE_RESPONSE
-        ]
-        ps_records = [
-            rec for rec in grouped_records if rec.fidelity == QueryType.PRIMARY_SCREEN
-        ]
+        drc_records = [rec for rec in grouped_records if rec.fidelity == QueryType.DOSE_RESPONSE]
+        ps_records = [rec for rec in grouped_records if rec.fidelity == QueryType.PRIMARY_SCREEN]
 
         if len(drc_records) > 1:
             raise ValueError(
@@ -385,11 +371,7 @@ def _validate_training_records(records: list[LabelRecord]) -> None:
                 f"Compound {canonical_smiles!r} has multiple PS rows; "
                 "expected at most one PS label per compound."
             )
-        if (
-            drc_records
-            and ps_records
-            and ps_records[0].censoring_type == CensoringType.LEFT
-        ):
+        if drc_records and ps_records and ps_records[0].censoring_type == CensoringType.LEFT:
             raise ValueError(
                 f"Compound {canonical_smiles!r} has both a PS '<' row and a DRC row. "
                 "This mixed-fidelity combination is unsupported in plan mode."

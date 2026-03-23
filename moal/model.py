@@ -61,9 +61,7 @@ def download_chemeleon() -> None:
     else:
         logger.info(f"Loading cached CheMeleon from {model_path}")
 
-    logger.info(
-        "Please cite DOI: 10.48550/arXiv.2506.15792 when using CheMeleon in published work"
-    )
+    logger.info("Please cite DOI: 10.48550/arXiv.2506.15792 when using CheMeleon in published work")
 
 
 class ChemPropLightningModule(L.LightningModule):
@@ -210,9 +208,7 @@ class ChemPropLightningModule(L.LightningModule):
             Parameters belonging to ``self.model.agg`` and
             ``self.model.predictor``, concatenated in that order.
         """
-        return list(self.model.agg.parameters()) + list(
-            self.model.predictor.parameters()
-        )
+        return list(self.model.agg.parameters()) + list(self.model.predictor.parameters())
 
     def _freeze_encoder(self) -> None:
         """Freeze all message-passing encoder parameters.
@@ -280,9 +276,7 @@ class ChemPropLightningModule(L.LightningModule):
         """
         return self.model(batch_mol_graph).squeeze(-1)
 
-    def training_step(
-        self, batch: tuple[Any, list[LabelRecord]], batch_idx: int
-    ) -> Tensor:
+    def training_step(self, batch: tuple[Any, list[LabelRecord]], batch_idx: int) -> Tensor:
         """Compute and log the training loss for one batch.
 
         Parameters
@@ -317,9 +311,7 @@ class ChemPropLightningModule(L.LightningModule):
             self.log("train_ps_loss", breakdown.ps_loss, batch_size=len(records))
         return breakdown.total
 
-    def validation_step(
-        self, batch: tuple[Any, list[LabelRecord]], batch_idx: int
-    ) -> None:
+    def validation_step(self, batch: tuple[Any, list[LabelRecord]], batch_idx: int) -> None:
         """Compute and log the validation loss for one batch.
 
         Parameters
@@ -362,9 +354,7 @@ class ChemPropLightningModule(L.LightningModule):
         """
         param_groups = [{"params": self._head_params(), "lr": self.lr_head}]
         if not self._encoder_frozen:
-            param_groups.append(
-                {"params": self._encoder_params(), "lr": self.lr_encoder}
-            )
+            param_groups.append({"params": self._encoder_params(), "lr": self.lr_encoder})
         return Adam(param_groups)
 
     # ------------------------------------------------------------------
@@ -372,9 +362,7 @@ class ChemPropLightningModule(L.LightningModule):
     # ------------------------------------------------------------------
 
     @torch.no_grad()
-    def predict_smiles(
-        self, smiles_list: list[str], batch_size: int = 256
-    ) -> np.ndarray:
+    def predict_smiles(self, smiles_list: list[str], batch_size: int = 256) -> np.ndarray:
         """Run batch inference over a list of canonical SMILES.
 
         Parameters

@@ -199,10 +199,7 @@ class TestLoopExecution:
         loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
 
         assert mock_model.refit.call_count == N_ITERATIONS
-        assert all(
-            call.kwargs["reset_weights"] is True
-            for call in mock_model.refit.call_args_list
-        )
+        assert all(call.kwargs["reset_weights"] is True for call in mock_model.refit.call_args_list)
 
     def test_predict_smiles_pool_never_grows(self, loop, mock_model):
         """The combined unlabeled + ps-labeled pool sent to predict_smiles must
@@ -271,16 +268,14 @@ class TestEarlyStop:
         rng = np.random.default_rng(99)
 
         mock = create_autospec(ChemPropLightningModule, instance=True)
-        mock.predict_smiles.side_effect = lambda s, **kw: rng.normal(
-            6.0, 1.0, len(s)
-        ).astype(np.float32)
+        mock.predict_smiles.side_effect = lambda s, **kw: rng.normal(6.0, 1.0, len(s)).astype(
+            np.float32
+        )
         mock.refit.return_value = mock
 
         acq = CostAwareGreedyAcquisition(cost_ps=1.0, cost_drc=10.0)
         ev = PipelineEvaluator()
-        loop = ActiveLearningLoop(
-            oracle=oracle, model=mock, acquisition=acq, evaluator=ev
-        )
+        loop = ActiveLearningLoop(oracle=oracle, model=mock, acquisition=acq, evaluator=ev)
 
         results = loop.run(n_iterations=100, k_per_iteration=5)
         # At most 10 unique compounds could be queried; each may contribute 2 records
@@ -328,9 +323,7 @@ class TestDashboardIntegration:
 class TestTestSetIntegration:
     """Tests that the per-iteration model evaluation against a held-out test set works correctly."""
 
-    def test_model_metric_value_stored(
-        self, oracle, mock_model, acquisition, evaluator
-    ):
+    def test_model_metric_value_stored(self, oracle, mock_model, acquisition, evaluator):
         """model_metric_value should be present and finite when test_set is provided."""
         rng = np.random.default_rng(42)
         test_smiles = oracle.get_unlabeled_smiles()[:5]
@@ -349,9 +342,7 @@ class TestTestSetIntegration:
             assert ir.model_metric_value is not None
             assert np.isfinite(ir.model_metric_value)
 
-    def test_no_test_set_metric_value_none(
-        self, oracle, mock_model, acquisition, evaluator
-    ):
+    def test_no_test_set_metric_value_none(self, oracle, mock_model, acquisition, evaluator):
         """model_metric_value should be None when no test_set is provided."""
         loop = ActiveLearningLoop(
             oracle=oracle,
@@ -424,14 +415,10 @@ class TestIsCanonicalForwarding:
 
         # The oracle must have labeled compounds — if the bug were present,
         # every query would have been silently skipped and the pool would be empty.
-        assert oracle.labeled_records, (
-            "No compounds were labeled — query_batch likely skipped all"
-        )
+        assert oracle.labeled_records, "No compounds were labeled — query_batch likely skipped all"
         # Each (SMILES, fidelity) pair must be unique — a compound may have both
         # PS and DRC records after an upgrade, but never two of the same fidelity.
-        key_fidelity_pairs = [
-            (r.canonical_smiles, r.fidelity) for r in oracle.labeled_records
-        ]
+        key_fidelity_pairs = [(r.canonical_smiles, r.fidelity) for r in oracle.labeled_records]
         assert len(key_fidelity_pairs) == len(set(key_fidelity_pairs))
         # Total cost must be positive (at least one successful query).
         assert results.total_cost > 0
@@ -502,16 +489,12 @@ class TestPSUpgradeInLoop:
             for smi, fids in by_smiles.items()
             if QueryType.PRIMARY_SCREEN in fids and QueryType.DOSE_RESPONSE in fids
         }
-        assert upgraded, (
-            "Expected at least one compound to have both PS and DRC records"
-        )
+        assert upgraded, "Expected at least one compound to have both PS and DRC records"
 
     def test_no_duplicate_fidelity_pairs(self, upgrade_loop, upgrade_oracle):
         """Each (smiles, fidelity) pair must appear at most once in labeled_records."""
         upgrade_loop.run(n_iterations=4, k_per_iteration=2)
-        pairs = [
-            (r.canonical_smiles, r.fidelity) for r in upgrade_oracle.labeled_records
-        ]
+        pairs = [(r.canonical_smiles, r.fidelity) for r in upgrade_oracle.labeled_records]
         assert len(pairs) == len(set(pairs))
 
     def test_cost_includes_both_ps_and_drc(self, upgrade_loop, upgrade_oracle):
@@ -520,9 +503,7 @@ class TestPSUpgradeInLoop:
         manual_cost = sum(r.cost for r in upgrade_oracle.labeled_records)
         assert upgrade_oracle.total_cost == pytest.approx(manual_cost)
 
-    def test_ps_labeled_pool_shrinks_as_upgrades_happen(
-        self, upgrade_loop, upgrade_oracle
-    ):
+    def test_ps_labeled_pool_shrinks_as_upgrades_happen(self, upgrade_loop, upgrade_oracle):
         """After enough iterations, the PS-labeled pool should shrink to zero
         as all INTERVAL-censored hits are upgraded to DRC.
         """

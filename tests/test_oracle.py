@@ -201,12 +201,8 @@ class TestPSUpgrade:
         # Query three distinct compounds across two iterations.
         oracle.query("CCO", QueryType.PRIMARY_SCREEN, iteration=0)  # iter 0 PS
         oracle.query("c1ccc(O)cc1", QueryType.PRIMARY_SCREEN, iteration=0)  # iter 0 PS
-        oracle.query(
-            "CCO", QueryType.DOSE_RESPONSE, iteration=1
-        )  # iter 1 DRC (upgrade)
-        oracle.query(
-            "c1ccc(O)cc1", QueryType.DOSE_RESPONSE, iteration=1
-        )  # iter 1 DRC (upgrade)
+        oracle.query("CCO", QueryType.DOSE_RESPONSE, iteration=1)  # iter 1 DRC (upgrade)
+        oracle.query("c1ccc(O)cc1", QueryType.DOSE_RESPONSE, iteration=1)  # iter 1 DRC (upgrade)
         oracle.query("c1ccccc1", QueryType.PRIMARY_SCREEN, iteration=2)  # iter 2 PS
 
         records = oracle.labeled_records
@@ -289,15 +285,9 @@ class TestPSUpgrade:
         """get_ps_labeled_smiles must not include compounds with no label at all."""
         oracle = _make_oracle()
         assert oracle.get_ps_labeled_smiles() == []
-        oracle.query(
-            "c1ccccc1", QueryType.PRIMARY_SCREEN, iteration=0
-        )  # LEFT — excluded
-        oracle.query(
-            "c1ccc(O)cc1", QueryType.PRIMARY_SCREEN, iteration=0
-        )  # INTERVAL — included
-        oracle.query(
-            "CCO", QueryType.PRIMARY_SCREEN, iteration=0
-        )  # ethanol pEC50=6.0 → INTERVAL
+        oracle.query("c1ccccc1", QueryType.PRIMARY_SCREEN, iteration=0)  # LEFT — excluded
+        oracle.query("c1ccc(O)cc1", QueryType.PRIMARY_SCREEN, iteration=0)  # INTERVAL — included
+        oracle.query("CCO", QueryType.PRIMARY_SCREEN, iteration=0)  # ethanol pEC50=6.0 → INTERVAL
         assert len(oracle.get_ps_labeled_smiles()) == 2
 
 
@@ -470,9 +460,7 @@ class TestIsCanonical:
         calling canonicalize().
         """
         oracle = self._make_canonical_oracle()
-        rec = oracle.query(
-            self._REWRITTEN, QueryType.DOSE_RESPONSE, iteration=0, is_canonical=True
-        )
+        rec = oracle.query(self._REWRITTEN, QueryType.DOSE_RESPONSE, iteration=0, is_canonical=True)
         assert rec.value == pytest.approx(6.0)
 
     def test_query_batch_with_is_canonical_true_works(self):
@@ -534,9 +522,7 @@ class TestPec50Validation:
         """Compounds with invalid pEC50 values must be excluded from the oracle."""
         smiles = ["c1ccccc1", "CCO", "c1ccc(N)cc1"][: len(bad_values)]
         df = pd.DataFrame({"smiles": smiles, "pec50": bad_values})
-        oracle = CostAwareOracle(
-            ground_truth_df=df, cost_ps=1.0, cost_drc=10.0, ps_threshold=5.0
-        )
+        oracle = CostAwareOracle(ground_truth_df=df, cost_ps=1.0, cost_drc=10.0, ps_threshold=5.0)
         assert len(oracle) == n_valid
         assert all(math.isfinite(v) for v in oracle._ground_truth.values())
 
@@ -548,7 +534,5 @@ class TestPec50Validation:
                 "pec50": [0.0, 14.0],
             }
         )
-        oracle = CostAwareOracle(
-            ground_truth_df=df, cost_ps=1.0, cost_drc=10.0, ps_threshold=5.0
-        )
+        oracle = CostAwareOracle(ground_truth_df=df, cost_ps=1.0, cost_drc=10.0, ps_threshold=5.0)
         assert len(oracle) == 2
