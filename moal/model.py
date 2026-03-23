@@ -24,6 +24,7 @@ from chemprop.data import MoleculeDatapoint, MoleculeDataset
 from chemprop.data.dataloader import build_dataloader
 from chemprop.models import MPNN
 from chemprop.nn import BondMessagePassing, MeanAggregation, RegressionFFN
+from lightning.pytorch.loggers import CSVLogger
 from torch import Tensor
 from torch.optim import Adam
 
@@ -475,6 +476,7 @@ class ChemPropLightningModule(L.LightningModule):
         if output_dir is not None and "default_root_dir" not in kwargs:
             kwargs["default_root_dir"] = str(output_dir)
 
+        kwargs["logger"] = CSVLogger(save_dir=kwargs["default_root_dir"])
         trainer = L.Trainer(**kwargs)
         trainer.fit(self, datamodule=dm)
         return self
