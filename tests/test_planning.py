@@ -193,9 +193,7 @@ class TestParseCampaignState:
         """A PS row whose value differs from expected_ps_threshold must raise ValueError to prevent silent misconfiguration."""
         df = _state_df({"smiles": "CCO", "relation": ">=", "value": 4.5})
 
-        with pytest.raises(
-            ValueError, match="does not match config oracle.ps_threshold"
-        ):
+        with pytest.raises(ValueError, match="does not match config oracle.ps_threshold"):
             parse_campaign_state(
                 df,
                 cost_ps=1.0,
@@ -238,9 +236,7 @@ class TestParseCampaignState:
             {"smiles": "CCO", "relation": "==", "value": 6.8},
         )
 
-        with pytest.raises(
-            ValueError, match="mixed-fidelity combination is unsupported"
-        ):
+        with pytest.raises(ValueError, match="mixed-fidelity combination is unsupported"):
             parse_campaign_state(
                 df,
                 cost_ps=1.0,
@@ -299,9 +295,7 @@ class TestParseCampaignState:
                 preprocessor=preprocessor,
             )
 
-    def test_duplicate_unqueried_rows_are_skipped_with_warning(
-        self, preprocessor, caplog
-    ):
+    def test_duplicate_unqueried_rows_are_skipped_with_warning(self, preprocessor, caplog):
         """Duplicate unqueried SMILES after canonicalization must emit a WARNING and keep only the first occurrence."""
         df = _state_df(
             {
@@ -439,17 +433,13 @@ class TestAnnotateCampaignState:
             expected_ps_threshold=5.0,
         )
 
-        result = annotate_campaign_state(
-            df, state, np.empty(0, dtype=np.float32), acquisition
-        )
+        result = annotate_campaign_state(df, state, np.empty(0, dtype=np.float32), acquisition)
 
         for col in ("ps_score", "drc_score", "overall_score", "recommendation"):
             assert pd.isna(result.at[0, col])
             assert pd.isna(result.at[1, col])
 
-    def test_recommendation_is_ps_when_ps_score_dominates(
-        self, preprocessor, acquisition
-    ):
+    def test_recommendation_is_ps_when_ps_score_dominates(self, preprocessor, acquisition):
         """A prediction at the PS threshold maximizes entropy, so recommendation must be 'ps'."""
         df = _state_df({"smiles": "CCO", "relation": "", "value": ""})
         state = parse_campaign_state(
@@ -462,9 +452,7 @@ class TestAnnotateCampaignState:
 
         assert result.at[0, "recommendation"] == "ps"
 
-    def test_recommendation_is_drc_when_drc_score_dominates(
-        self, preprocessor, acquisition
-    ):
+    def test_recommendation_is_drc_when_drc_score_dominates(self, preprocessor, acquisition):
         """A high prediction makes DRC exploitation outweigh PS exploration, so recommendation must be 'drc'."""
         df = _state_df({"smiles": "CCO", "relation": "", "value": ""})
         state = parse_campaign_state(
@@ -509,12 +497,8 @@ class TestAnnotateCampaignState:
             df, cost_ps=1.0, cost_drc=10.0, upper_bound=11.0, preprocessor=preprocessor
         )
 
-        with pytest.raises(
-            ValueError, match="must match the number of inference targets"
-        ):
-            annotate_campaign_state(
-                df, state, np.array([5.0], dtype=np.float32), acquisition
-            )
+        with pytest.raises(ValueError, match="must match the number of inference targets"):
+            annotate_campaign_state(df, state, np.array([5.0], dtype=np.float32), acquisition)
 
     def test_rejects_non_finite_predictions(self, preprocessor, acquisition):
         """NaN or inf in predictions must raise ValueError before scoring to prevent silently writing invalid scores."""
@@ -524,22 +508,16 @@ class TestAnnotateCampaignState:
         )
 
         with pytest.raises(ValueError, match="must contain only finite values"):
-            annotate_campaign_state(
-                df, state, np.array([np.nan], dtype=np.float32), acquisition
-            )
+            annotate_campaign_state(df, state, np.array([np.nan], dtype=np.float32), acquisition)
 
-    def test_empty_inference_targets_returns_all_nan_score_columns(
-        self, preprocessor, acquisition
-    ):
+    def test_empty_inference_targets_returns_all_nan_score_columns(self, preprocessor, acquisition):
         """When no inference targets exist, all four score columns must be present in the result but filled with NaN."""
         df = _state_df({"smiles": "CCO", "relation": "==", "value": 7.2})
         state = parse_campaign_state(
             df, cost_ps=1.0, cost_drc=10.0, upper_bound=11.0, preprocessor=preprocessor
         )
 
-        result = annotate_campaign_state(
-            df, state, np.empty(0, dtype=np.float32), acquisition
-        )
+        result = annotate_campaign_state(df, state, np.empty(0, dtype=np.float32), acquisition)
 
         assert all(
             c in result.columns
@@ -554,9 +532,7 @@ class TestAnnotateCampaignState:
             df, cost_ps=1.0, cost_drc=10.0, upper_bound=11.0, preprocessor=preprocessor
         )
 
-        annotate_campaign_state(
-            df, state, np.array([5.0], dtype=np.float32), acquisition
-        )
+        annotate_campaign_state(df, state, np.array([5.0], dtype=np.float32), acquisition)
 
         assert "ps_score" not in df.columns
 
@@ -575,9 +551,7 @@ class TestAnnotateCampaignState:
             preprocessor=preprocessor,
         )
 
-        result = annotate_campaign_state(
-            df, state, np.array([5.0], dtype=np.float32), acquisition
-        )
+        result = annotate_campaign_state(df, state, np.array([5.0], dtype=np.float32), acquisition)
 
         assert result.at[0, "ps_score"] == pytest.approx(0.7)
         assert result.at[0, "drc_score"] == pytest.approx(0.3)

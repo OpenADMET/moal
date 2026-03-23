@@ -26,7 +26,7 @@ def _cli_output(result) -> str:
 
 
 class _ProgressRecorder:
-    instances: list["_ProgressRecorder"] = []
+    instances: list[_ProgressRecorder] = []
 
     def __init__(self, *args, **kwargs):
         self.added_tasks: list[dict[str, object]] = []
@@ -240,9 +240,7 @@ class TestSimulateCommand:
         csv_file = tmp_path / "data.csv"
         csv_file.write_text("smiles,pec50\nc1ccccc1,5.0\n")
         cfg = tmp_path / "config.yaml"
-        cfg.write_text(
-            _simulate_config(input_csv=str(csv_file), smiles_column="nonexistent_col")
-        )
+        cfg.write_text(_simulate_config(input_csv=str(csv_file), smiles_column="nonexistent_col"))
         runner = CliRunner()
         result = runner.invoke(
             main,
@@ -272,9 +270,7 @@ class TestPlanCommand:
     def test_plan_writes_annotated_state_csv(self, tmp_path, monkeypatch):
         """End-to-end plan command must produce an annotated CSV with ps_score, drc_score, and recommendation columns."""
         state_csv = tmp_path / "state.csv"
-        state_csv.write_text(
-            "smiles,relation,value\nCCO,>=,5.0\nc1ccccc1,==,8.1\nCCN,,\nCCCC,,\n"
-        )
+        state_csv.write_text("smiles,relation,value\nCCO,>=,5.0\nc1ccccc1,==,8.1\nCCN,,\nCCCC,,\n")
         output_csv = tmp_path / "state_out.csv"
         cfg = tmp_path / "config.yaml"
         cfg.write_text(
@@ -317,9 +313,7 @@ class TestPlanCommand:
             {"description": "[cyan]Parsing campaign state[/cyan]", "total": 3}
         ]
         descriptions = [
-            update["description"]
-            for update in progress.updated_tasks
-            if "description" in update
+            update["description"] for update in progress.updated_tasks if "description" in update
         ]
         assert (
             "[yellow]Training model[/yellow] — 2 records ([orange1]1 DRC[/orange1], [steel_blue1]1 PS[/steel_blue1])"
@@ -399,10 +393,8 @@ class TestPlanCommand:
         assert result.exit_code == 0, _result_text(result)
         suppress_mock.assert_called_once_with()
 
-    def test_plan_suppresses_info_logs_while_progress_is_active(
-        self, tmp_path, monkeypatch
-    ):
-        """moal INFO logs must not bleed into Rich progress output during a plan run."""
+    def test_plan_suppresses_info_logs_while_progress_is_active(self, tmp_path, monkeypatch):
+        """Moal INFO logs must not bleed into Rich progress output during a plan run."""
         state_csv = tmp_path / "state.csv"
         state_csv.write_text("smiles,relation,value\nCCO,==,6.0\nCCN,,\n")
         cfg = tmp_path / "config.yaml"
@@ -438,9 +430,7 @@ class TestPlanCommand:
         state_csv = tmp_path / "state.csv"
         state_csv.write_text("smiles,relation,value\nCCO,,\n")
         cfg = tmp_path / "config.yaml"
-        cfg.write_text(
-            _plan_config(input_csv=str(state_csv)) + "model:\n  fast: false\n"
-        )
+        cfg.write_text(_plan_config(input_csv=str(state_csv)) + "model:\n  fast: false\n")
 
         runner = CliRunner()
         result = runner.invoke(
@@ -456,9 +446,7 @@ class TestPlanCommand:
         state_csv = tmp_path / "state.csv"
         state_csv.write_text("smiles,relation,value\nCCO,==,6.0\nCCN,,\n")
         cfg = tmp_path / "config.yaml"
-        cfg.write_text(
-            _plan_config(input_csv=str(state_csv)) + "model:\n  fast: true\n"
-        )
+        cfg.write_text(_plan_config(input_csv=str(state_csv)) + "model:\n  fast: true\n")
 
         runner = CliRunner()
         result = runner.invoke(
@@ -474,9 +462,7 @@ class TestPlanCommand:
         state_csv = tmp_path / "state.csv"
         state_csv.write_text("smiles,relation,value\nCCO,??,6.0\n")
         cfg = tmp_path / "config.yaml"
-        cfg.write_text(
-            _plan_config(input_csv=str(state_csv)) + "dashboard:\n  enabled: false\n"
-        )
+        cfg.write_text(_plan_config(input_csv=str(state_csv)) + "dashboard:\n  enabled: false\n")
 
         runner = CliRunner()
         result = runner.invoke(
@@ -492,9 +478,7 @@ class TestPlanCommand:
         state_csv = tmp_path / "state.csv"
         state_csv.write_text("smiles,relation,value\nCCO,==,6.0\nnot-a-smiles,,\n")
         cfg = tmp_path / "config.yaml"
-        cfg.write_text(
-            _plan_config(input_csv=str(state_csv)) + "model:\n  fast: false\n"
-        )
+        cfg.write_text(_plan_config(input_csv=str(state_csv)) + "model:\n  fast: false\n")
 
         runner = CliRunner()
         result = runner.invoke(
@@ -510,9 +494,7 @@ class TestPlanCommand:
         state_csv = tmp_path / "state.csv"
         state_csv.write_text("smiles,relation,value\nCCO,<,5.0\nCCO,==,6.0\n")
         cfg = tmp_path / "config.yaml"
-        cfg.write_text(
-            _plan_config(input_csv=str(state_csv)) + "model:\n  fast: false\n"
-        )
+        cfg.write_text(_plan_config(input_csv=str(state_csv)) + "model:\n  fast: false\n")
 
         runner = CliRunner()
         result = runner.invoke(
@@ -528,9 +510,7 @@ class TestPlanCommand:
         state_csv = tmp_path / "state.csv"
         state_csv.write_text("smiles,relation,value\nCCO,==,6.0\nCCN,,\n")
         cfg = tmp_path / "config.yaml"
-        cfg.write_text(
-            _plan_config(input_csv=str(state_csv)) + "model:\n  fast: false\n"
-        )
+        cfg.write_text(_plan_config(input_csv=str(state_csv)) + "model:\n  fast: false\n")
 
         model = Mock(spec_set=["refit", "predict_smiles"])
         model.predict_smiles.return_value = np.array([np.nan], dtype=np.float32)
@@ -548,9 +528,7 @@ class TestPlanCommand:
     def test_plan_accepts_custom_column_names(self, tmp_path, monkeypatch):
         """Non-default smiles, relation, and value column names must be read correctly throughout the plan pipeline."""
         state_csv = tmp_path / "state.csv"
-        state_csv.write_text(
-            "compound,kind,potency\nCCO,>=,5.0\nc1ccccc1,==,8.1\nCCN,,\n"
-        )
+        state_csv.write_text("compound,kind,potency\nCCO,>=,5.0\nc1ccccc1,==,8.1\nCCN,,\n")
         cfg = tmp_path / "config.yaml"
         cfg.write_text(
             "oracle:\n"
@@ -590,9 +568,7 @@ class TestPlanCommand:
         # inference_smiles = [CCN (unqueried)] + [CCO (ps upgrade)]
         model.predict_smiles.assert_called_once_with(["CCN", "CCO"])
 
-    def test_plan_handles_all_terminal_compounds_writes_nan_scores(
-        self, tmp_path, monkeypatch
-    ):
+    def test_plan_handles_all_terminal_compounds_writes_nan_scores(self, tmp_path, monkeypatch):
         """When all compounds are terminal, the plan command must write NaN score columns without invoking the model."""
         state_csv = tmp_path / "state.csv"
         state_csv.write_text("smiles,relation,value\nCCO,==,7.2\nCCN,<,5.0\n")
@@ -617,9 +593,7 @@ class TestPlanCommand:
         assert output_csv.exists()
         progress = _latest_progress()
         descriptions = [
-            update["description"]
-            for update in progress.updated_tasks
-            if "description" in update
+            update["description"] for update in progress.updated_tasks if "description" in update
         ]
         assert (
             "[green]Scoring compounds[/green] - [white]0 unqueried[/white], "
@@ -644,9 +618,7 @@ class TestExampleConfig:
     def test_example_config_is_valid_yaml_with_required_sections(self):
         """The bundled default config must be valid YAML that contains every top-level section required by PipelineConfig."""
         config_path = Path(__file__).parent.parent / "examples" / "default_config.yaml"
-        assert config_path.exists(), (
-            f"examples/default_config.yaml not found at {config_path}"
-        )
+        assert config_path.exists(), f"examples/default_config.yaml not found at {config_path}"
         with open(config_path) as handle:
             data = yaml.safe_load(handle)
         assert isinstance(data, dict)
@@ -659,9 +631,7 @@ class TestExampleConfig:
             "data",
             "active_learning_loop",
         ):
-            assert section in data, (
-                f"Missing section '{section}' in default_config.yaml"
-            )
+            assert section in data, f"Missing section '{section}' in default_config.yaml"
 
     def test_example_config_loads_as_pipeline_config(self):
         """The bundled default config must deserialize into a PipelineConfig with the expected cost and iteration values."""

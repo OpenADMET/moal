@@ -47,7 +47,6 @@ class TestDRCScore:
 
     def test_higher_prediction_higher_drc_score(self, acq):
         """A compound with a higher predicted pEC50 must receive a higher DRC score, reflecting stronger exploitation incentive."""
-        smiles = ["A", "B"]
         preds = np.array([4.0, 8.0])  # B is far more likely active
         scores_drc = acq._score_drc(preds)
         assert scores_drc[1] > scores_drc[0]
@@ -56,9 +55,7 @@ class TestDRCScore:
         """DRC score must equal the sigmoid output divided by cost_drc so that costly assays are appropriately penalized."""
         preds = np.array([7.5])
         score = acq._score_drc(preds)[0]
-        assert score == pytest.approx(
-            _sigmoid(np.array([7.5 - 7.0]), 0.5)[0] / 10.0, rel=1e-4
-        )
+        assert score == pytest.approx(_sigmoid(np.array([7.5 - 7.0]), 0.5)[0] / 10.0, rel=1e-4)
 
 
 class TestPSScore:
@@ -85,7 +82,7 @@ class TestSelect:
     """Integration tests for CostAwareGreedyAcquisition.select()."""
 
     def test_returns_k_unique_queries(self, acq):
-        """select must return exactly k pairs with no repeated SMILES, since a compound should only be queried once."""
+        """Select must return exactly k pairs with no repeated SMILES, since a compound should only be queried once."""
         smiles = [f"C{i}" for i in range(20)]
         preds = np.random.default_rng(0).normal(6.0, 1.5, 20).astype(np.float32)
         selected = acq.select(smiles, preds, k=5)
@@ -140,7 +137,8 @@ class TestSelect:
 
     def test_degenerate_thresholds_still_selects(self, acq):
         """When ps_threshold == target_threshold both scoring functions compete at the same
-        point; the acquisition must still return valid (smiles, query_type) pairs."""
+        point; the acquisition must still return valid (smiles, query_type) pairs.
+        """
         degenerate = CostAwareGreedyAcquisition(
             cost_ps=1.0,
             cost_drc=10.0,
@@ -221,8 +219,8 @@ class TestPSUpgradeCandidates:
         assert without_pool == with_empty_pool
 
     def test_no_smiles_length_mismatch_assertion(self, acq):
-        """Mismatched ps_labeled_smiles and ps_labeled_predictions must raise AssertionError."""
-        with pytest.raises(AssertionError):
+        """Mismatched ps_labeled_smiles and ps_labeled_predictions must raise ValueError."""
+        with pytest.raises(ValueError):
             acq.select(
                 [],
                 np.array([]),

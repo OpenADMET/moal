@@ -56,9 +56,7 @@ class SMILESPreprocessor:
         if self._remove_salts:
             mol = _REMOVER.StripMol(mol, dontRemoveEverything=True)
         if mol is None or mol.GetNumAtoms() == 0:
-            logger.warning(
-                "SMILES reduced to empty molecule after salt stripping: %s", smiles
-            )
+            logger.warning("SMILES reduced to empty molecule after salt stripping: %s", smiles)
             return None
         return Chem.MolToSmiles(mol, isomericSmiles=True)
 
@@ -88,7 +86,5 @@ class SMILESPreprocessor:
             else:
                 canonical.append(result)
         if failed:
-            logger.warning(
-                "%d / %d SMILES failed preprocessing.", len(failed), len(smiles_list)
-            )
+            logger.warning("%d / %d SMILES failed preprocessing.", len(failed), len(smiles_list))
         return canonical, failed

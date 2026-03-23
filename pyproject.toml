@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "moal"
 version = "0.1.0"
 description = "Cost-aware synthetic active learning pipeline for cheminformatics"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "chemprop>=2.0,<3.0",
     "lightning>=2.0",
@@ -28,6 +28,12 @@ dependencies = [
 dev = [
     "pytest>=7.4",
     "pytest-cov>=4.1",
+    "ruff",
+    "mypy",
+    "types-PyYAML",
+    "pandas-stubs",
+    "scipy-stubs",
+    "pre-commit",
 ]
 
 [project.scripts]
@@ -45,3 +51,34 @@ filterwarnings = [
     # Remove once Lightning ships a fix upstream.
     "ignore:`isinstance\\(treespec, LeafSpec\\)` is deprecated:FutureWarning:lightning\\.pytorch\\.utilities\\._pytree",
 ]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "N", "UP", "B", "S", "D"]
+ignore = ["D205", "D401", "S603", "S607", "N812"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "D100", "D101", "D102", "D103", "D104", "E501", "N806"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.mypy]
+python_version = "3.12"
+disallow_untyped_defs = true
+check_untyped_defs = true
+warn_return_any = true
+warn_unused_ignores = true
+warn_unused_configs = true
+no_implicit_reexport = true
+
+[[tool.mypy.overrides]]
+module = ["chemprop.*", "plotly.*", "dash.*"]
+ignore_missing_imports = true

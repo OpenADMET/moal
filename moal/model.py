@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.request import urlretrieve
 
 import lightning as L
@@ -45,13 +45,14 @@ def download_chemeleon() -> None:
     Please cite DOI: 10.48550/arXiv.2506.15792 when using CheMeleon in
     published work.
     """
-
     ckpt_dir = Path().home() / ".chemprop"
     ckpt_dir.mkdir(exist_ok=True)
     model_path = ckpt_dir / "chemeleon_mp.pt"
     if not model_path.exists():
         logger.info(
-            f"Downloading CheMeleon Foundation model from Zenodo (https://zenodo.org/records/15460715) to {model_path}"
+            "Downloading CheMeleon Foundation model from Zenodo"
+            " (https://zenodo.org/records/15460715) to %s",
+            model_path,
         )
         urlretrieve(
             r"https://zenodo.org/records/15460715/files/chemeleon_mp.pt",
@@ -60,9 +61,7 @@ def download_chemeleon() -> None:
     else:
         logger.info(f"Loading cached CheMeleon from {model_path}")
 
-    logger.info(
-        "Please cite DOI: 10.48550/arXiv.2506.15792 when using CheMeleon in published work"
-    )
+    logger.info("Please cite DOI: 10.48550/arXiv.2506.15792 when using CheMeleon in published work")
 
 
 class ChemPropLightningModule(L.LightningModule):
@@ -165,7 +164,7 @@ class ChemPropLightningModule(L.LightningModule):
             hidden_dim=ffn_hidden_size,
             n_layers=ffn_num_layers,
         )
-        return MPNN(message_passing=mp, agg=agg, predictor=ffn)
+        return cast(nn.Module, MPNN(message_passing=mp, agg=agg, predictor=ffn))
 
     def _get_chemeleon_mp(self) -> dict:
         """Load and return the CheMeleon pretrained message-passing weights.
@@ -183,8 +182,7 @@ class ChemPropLightningModule(L.LightningModule):
         # Ensure the CheMeleon checkpoint is downloaded.
         download_chemeleon()
         ckpt_path = Path().home() / ".chemprop" / "chemeleon_mp.pt"
-        weights = torch.load(ckpt_path, weights_only=True)
-        return weights
+        return cast(dict[str, Any], torch.load(ckpt_path, weights_only=True))
 
     # ------------------------------------------------------------------
     # Freeze / unfreeze schedule
@@ -198,7 +196,7 @@ class ChemPropLightningModule(L.LightningModule):
         list[nn.Parameter]
             Parameters belonging to ``self.model.message_passing``.
         """
-        return list(self.model.message_passing.parameters())
+        return list(cast(nn.Module, self.model.message_passing).parameters())
 
     def _head_params(self) -> list[nn.Parameter]:
         """Return the trainable parameters of the aggregation layer and FFN head.
@@ -209,8 +207,8 @@ class ChemPropLightningModule(L.LightningModule):
             Parameters belonging to ``self.model.agg`` and
             ``self.model.predictor``, concatenated in that order.
         """
-        return list(self.model.agg.parameters()) + list(
-            self.model.predictor.parameters()
+        return list(cast(nn.Module, self.model.agg).parameters()) + list(
+            cast(nn.Module, self.model.predictor).parameters()
         )
 
     def _freeze_encoder(self) -> None:
@@ -277,11 +275,9 @@ class ChemPropLightningModule(L.LightningModule):
         Tensor
             1-D tensor of shape ``(N,)`` with predicted pEC50 values.
         """
-        return self.model(batch_mol_graph).squeeze(-1)
+        return cast(Tensor, self.model(batch_mol_graph).squeeze(-1))
 
-    def training_step(
-        self, batch: tuple[Any, list[LabelRecord]], batch_idx: int
-    ) -> Tensor:
+    def training_step(self, batch: tuple[Any, list[LabelRecord]], batch_idx: int) -> Tensor:
         """Compute and log the training loss for one batch.
 
         Parameters
@@ -316,9 +312,7 @@ class ChemPropLightningModule(L.LightningModule):
             self.log("train_ps_loss", breakdown.ps_loss, batch_size=len(records))
         return breakdown.total
 
-    def validation_step(
-        self, batch: tuple[Any, list[LabelRecord]], batch_idx: int
-    ) -> None:
+    def validation_step(self, batch: tuple[Any, list[LabelRecord]], batch_idx: int) -> None:
         """Compute and log the validation loss for one batch.
 
         Parameters
@@ -361,9 +355,7 @@ class ChemPropLightningModule(L.LightningModule):
         """
         param_groups = [{"params": self._head_params(), "lr": self.lr_head}]
         if not self._encoder_frozen:
-            param_groups.append(
-                {"params": self._encoder_params(), "lr": self.lr_encoder}
-            )
+            param_groups.append({"params": self._encoder_params(), "lr": self.lr_encoder})
         return Adam(param_groups)
 
     # ------------------------------------------------------------------
@@ -371,9 +363,7 @@ class ChemPropLightningModule(L.LightningModule):
     # ------------------------------------------------------------------
 
     @torch.no_grad()
-    def predict_smiles(
-        self, smiles_list: list[str], batch_size: int = 256
-    ) -> np.ndarray:
+    def predict_smiles(self, smiles_list: list[str], batch_size: int = 256) -> np.ndarray:
         """Run batch inference over a list of canonical SMILES.
 
         Parameters
@@ -427,7 +417,7 @@ class ChemPropLightningModule(L.LightningModule):
         datamodule_kwargs: dict[str, Any] | None = None,
         reset_weights: bool = False,
         output_dir: str | Path | None = None,
-    ) -> "ChemPropLightningModule":
+    ) -> ChemPropLightningModule:
         """Refit the model on a (growing) labeled pool.
 
         Parameters
@@ -469,7 +459,10 @@ class ChemPropLightningModule(L.LightningModule):
             self (for chaining).
         """
         if reset_weights:
-            self._build_model()
+            self.model = self._build_model(
+                ffn_hidden_size=self.hparams["ffn_hidden_size"],
+                ffn_num_layers=self.hparams["ffn_num_layers"],
+            )
             self._freeze_encoder()
 
         dm = MixedFidelityDataModule(records, **(datamodule_kwargs or {}))
@@ -587,7 +580,7 @@ class NoisyOracleModel:
         datamodule_kwargs: dict[str, Any] | None = None,
         reset_weights: bool = False,
         output_dir: str | Path | None = None,
-    ) -> "NoisyOracleModel":
+    ) -> NoisyOracleModel:
         """No-op refit — fast mode has no learnable parameters to update.
 
         All arguments are accepted for interface compatibility with

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 import numpy as np
@@ -19,7 +19,7 @@ from moal.types import CensoringType, LabelRecord, QueryType
 logger = logging.getLogger(__name__)
 
 
-class ModelMetric(str, Enum):
+class ModelMetric(StrEnum):
     """Metric for evaluating model predictive performance on a held-out test set."""
 
     MAE = "mae"
@@ -440,9 +440,7 @@ class PipelineEvaluator:
 
         if isinstance(model, NoisyOracleModel):
             if noise_scale is None:
-                raise ValueError(
-                    "noise_scale must be provided when evaluating a NoisyOracleModel"
-                )
+                raise ValueError("noise_scale must be provided when evaluating a NoisyOracleModel")
             preds = model.predict_smiles(test_smiles, noise_scale)
         else:
             preds = model.predict_smiles(test_smiles)
@@ -463,8 +461,8 @@ class PipelineEvaluator:
         if metric == ModelMetric.SPEARMAN_R:
             if len(preds) < 2:
                 return float("nan")
-            result = stats.spearmanr(preds, true)
-            return float(result.statistic)
+            spearman_result = stats.spearmanr(preds, true)
+            return float(spearman_result.statistic)
 
         if metric == ModelMetric.R2:
             ss_res = np.sum((true - preds) ** 2)

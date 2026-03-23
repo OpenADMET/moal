@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 import lightning as L
 import torch
@@ -80,7 +80,7 @@ class MixedFidelityDataset(Dataset):
             Batched molecular graph and corresponding label records.
         """
         # Unzip the batch into separate tuples.
-        datapoints, records = zip(*batch)
+        datapoints, records = zip(*batch, strict=False)
 
         # Extract the underlying MolGraph from each datapoint to build the batch.
         bmg = BatchMolGraph([dp.mg for dp in datapoints])
@@ -120,8 +120,8 @@ class MixedFidelityDataModule(L.LightningDataModule):
         self.num_workers = num_workers
         self.seed = seed
 
-        self._train_dataset: MixedFidelityDataset | None = None
-        self._val_dataset: MixedFidelityDataset | None = None
+        self._train_dataset: MixedFidelityDataset | _SubsetWrapper | None = None
+        self._val_dataset: MixedFidelityDataset | _SubsetWrapper | None = None
 
     def setup(self, stage: str | None = None) -> None:
         """Create the train and validation dataset splits.
@@ -203,6 +203,8 @@ class MixedFidelityDataModule(L.LightningDataModule):
             Shuffled DataLoader over the training split using
             :meth:`MixedFidelityDataset.collate_fn`.
         """
+        if self._train_dataset is None:
+            raise RuntimeError("setup() must be called before train_dataloader()")
         return DataLoader(
             self._train_dataset,
             batch_size=self.batch_size,
@@ -275,4 +277,4 @@ class _SubsetWrapper(Dataset):
             A ``(MoleculeDatapoint, LabelRecord)`` pair delegated to the
             underlying :class:`~torch.utils.data.Subset`.
         """
-        return self._subset[idx]
+        return cast(tuple[Any, LabelRecord], self._subset[idx])

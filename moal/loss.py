@@ -139,29 +139,27 @@ class CensoredRegressionLoss(nn.Module):
         """
         sigma = self.sigma
         ct = rec.censoring_type
-        T = torch.tensor(rec.value, dtype=pred.dtype, device=pred.device)
-        U = torch.tensor(rec.upper_bound, dtype=pred.dtype, device=pred.device)
+        t = torch.tensor(rec.value, dtype=pred.dtype, device=pred.device)
+        u = torch.tensor(rec.upper_bound, dtype=pred.dtype, device=pred.device)
         w = self.w_drc if rec.fidelity == QueryType.DOSE_RESPONSE else self.w_ps
 
         if ct == CensoringType.EXACT:
-            return w * ((pred - T) / sigma) ** 2
+            return w * ((pred - t) / sigma) ** 2
 
         if ct == CensoringType.LEFT:
-            # True value < T; penalise if model predicts above T.
-            log_p = _normal_log_cdf((T - pred) / sigma)
+            # True value < t; penalise if model predicts above t.
+            log_p = _normal_log_cdf((t - pred) / sigma)
             return w * (-log_p)
 
         if ct == CensoringType.INTERVAL:
-            # True value in [T, U]; use log probability mass in the interval.
-            log_p_upper = _normal_log_cdf((U - pred) / sigma)
-            log_p_lower = _normal_log_cdf((T - pred) / sigma)
+            # True value in [t, u]; use log probability mass in the interval.
+            log_p_upper = _normal_log_cdf((u - pred) / sigma)
+            log_p_lower = _normal_log_cdf((t - pred) / sigma)
             # Direct subtraction of CDF values clamped to a minimum probability
             # mass to avoid log(0).  This is not a log-sum-exp technique; for
             # typical pEC50 predictions in [0, 14] catastrophic cancellation is
             # unlikely, but the clamp ensures a finite gradient in edge cases.
-            log_prob = torch.log(
-                torch.clamp(log_p_upper.exp() - log_p_lower.exp(), min=1e-12)
-            )
+            log_prob = torch.log(torch.clamp(log_p_upper.exp() - log_p_lower.exp(), min=1e-12))
             return w * (-log_prob)
 
         raise ValueError(f"Unknown CensoringType: {ct}")
@@ -230,19 +228,20 @@ class CensoredRegressionLoss(nn.Module):
         else:
             preds = predictions
 
-        assert len(records) == preds.shape[0], (
-            f"predictions has {preds.shape[0]} rows but {len(records)} records were provided."
-        )
+        if len(records) != preds.shape[0]:
+            raise ValueError(
+                f"predictions has {preds.shape[0]} rows but {len(records)} records were provided."
+            )
 
         drc_losses: list[Tensor] = []
         ps_losses: list[Tensor] = []
 
-        for pred, rec in zip(preds, records):
-            l = self._single_loss(pred, rec)
+        for pred, rec in zip(preds, records, strict=False):
+            loss_val = self._single_loss(pred, rec)
             if rec.fidelity == QueryType.DOSE_RESPONSE:
-                drc_losses.append(l)
+                drc_losses.append(loss_val)
             else:
-                ps_losses.append(l)
+                ps_losses.append(loss_val)
 
         _nan = torch.tensor(float("nan"))
         drc_mean = torch.stack(drc_losses).mean() if drc_losses else _nan
