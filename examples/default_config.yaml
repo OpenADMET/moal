@@ -21,6 +21,17 @@ data:
     is_canonical: false               # Set to true to skip RDKit canonicalization for simulate input
     test_set_size: 0.15               # Fraction held out as scaffold-split test set for model tracking
 
+    pretrain:
+      input_csv: ""                   # Optional: path to a pretrain CSV in campaign state format
+                                      # (same format as data.plan.input_csv — columns: smiles, relation, value)
+                                      # Rows with labeled relation/value are used as training records at every
+                                      # model.refit() call. Rows with empty relation/value are skipped.
+                                      # Leave empty (default) to disable pretraining.
+      smiles_column: smiles           # SMILES column in the pretrain CSV
+      relation_column: relation       # Relation column (<, >=, ==, or empty)
+      value_column: value             # pEC50 / threshold value column
+      is_canonical: false             # Set to true to skip RDKit canonicalization for pretrain input
+
   plan:
     input_csv: ""                     # REQUIRED for `moal plan`: path to the unified campaign state CSV
                                       # Expected columns: smiles, relation (`<`, `>=`, `==`, or empty), value

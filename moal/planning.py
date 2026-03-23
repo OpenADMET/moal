@@ -201,12 +201,81 @@ def parse_campaign_state(
             f"first few: {example}"
         )
 
-    _validate_training_records(training_records)
+    validate_training_records(training_records)
     return CampaignState(
         training_records=training_records,
         unqueried_rows=unqueried_rows,
         ps_upgrade_rows=ps_upgrade_rows,
     )
+
+
+def parse_pretrain_records(
+    df: pd.DataFrame,
+    *,
+    cost_ps: float,
+    cost_drc: float,
+    upper_bound: float,
+    preprocessor: SMILESPreprocessor,
+    smiles_column: str = "smiles",
+    relation_column: str = "relation",
+    value_column: str = "value",
+    is_canonical: bool = False,
+    expected_ps_threshold: float | None = None,
+) -> list[LabelRecord]:
+    """Parse a pretrain CSV and return its labeled training records.
+
+    Thin wrapper around :func:`parse_campaign_state` for use with
+    ``moal simulate``.  The pretrain CSV uses the same mixed-fidelity
+    format as the ``moal plan`` campaign state CSV:
+
+    - ``<`` / ``>=`` / ``==`` rows → :class:`~moal.types.LabelRecord` objects
+      returned as training records.
+    - Rows with empty relation/value fields → unqueried entries; these provide
+      no training signal and are skipped with a warning.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame loaded from the pretrain CSV.
+    cost_ps, cost_drc : float
+        Assay costs forwarded to each ``LabelRecord``.
+    upper_bound : float
+        pEC50 ceiling for INTERVAL labels.
+    preprocessor : SMILESPreprocessor
+        Used to canonicalize SMILES when ``is_canonical`` is False.
+    smiles_column, relation_column, value_column : str
+        Column names in ``df``.
+    is_canonical : bool
+        When True, skip RDKit canonicalization.
+    expected_ps_threshold : float or None
+        When set, every PS row's value must match this threshold exactly.
+        Should be wired to ``oracle.ps_threshold`` from the campaign config.
+
+    Returns
+    -------
+    list[LabelRecord]
+        Labeled training records suitable for combining with oracle-acquired
+        records before calling ``model.refit()``.
+    """
+    state = parse_campaign_state(
+        df,
+        cost_ps=cost_ps,
+        cost_drc=cost_drc,
+        upper_bound=upper_bound,
+        preprocessor=preprocessor,
+        smiles_column=smiles_column,
+        relation_column=relation_column,
+        value_column=value_column,
+        is_canonical=is_canonical,
+        expected_ps_threshold=expected_ps_threshold,
+    )
+    if state.unqueried_rows:
+        logger.warning(
+            "Pretrain CSV contains %d unqueried row(s) (empty relation/value); "
+            "these provide no training signal and will be ignored.",
+            len(state.unqueried_rows),
+        )
+    return state.training_records
 
 
 def training_records_for_refit(records: list[LabelRecord]) -> list[LabelRecord]:
@@ -331,7 +400,7 @@ def annotate_campaign_state(
     return result
 
 
-def _validate_training_records(records: list[LabelRecord]) -> None:
+def validate_training_records(records: list[LabelRecord]) -> None:
     """Validate per-compound label consistency across training records.
 
     Each canonical SMILES may appear at most once per fidelity tier.  A
@@ -339,10 +408,14 @@ def _validate_training_records(records: list[LabelRecord]) -> None:
     is rejected because the active/inactive disagreement between the two
     labels cannot be resolved during Tobit-loss training.
 
+    Called by :func:`parse_campaign_state` and by
+    :func:`~moal.loop._merge_pretrain_with_oracle` to enforce this invariant
+    across both the ``moal plan`` and ``moal simulate`` (pretrain) workflows.
+
     Parameters
     ----------
     records : list[LabelRecord]
-        Labeled records to validate, as returned by ``parse_campaign_state``.
+        Labeled records to validate.
 
     Raises
     ------
@@ -374,6 +447,6 @@ def _validate_training_records(records: list[LabelRecord]) -> None:
             )
         if drc_records and ps_records and ps_records[0].censoring_type == CensoringType.LEFT:
             raise ValueError(
-                f"Compound {canonical_smiles!r} has both a PS '<' row and a DRC row. "
-                "This mixed-fidelity combination is unsupported in plan mode."
+                f"Compound {canonical_smiles!r} has both a PS '<' (inactive) row and "
+                "a DRC row. This mixed-fidelity combination is unsupported."
             )

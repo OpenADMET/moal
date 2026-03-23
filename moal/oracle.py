@@ -79,7 +79,7 @@ class CostAwareOracle:
         self._preprocessor = preprocessor or SMILESPreprocessor()
         self._total_cost: float = 0.0
         # Each value is a list of records ordered chronologically.  A compound
-        # may have at most one PS record followed by at most one DRC record.
+        # may have at most one PS record followed by at most one DRC record
         self._labeled: dict[str, list[LabelRecord]] = {}
 
         self._ground_truth = self._build_ground_truth(ground_truth_df)
@@ -121,11 +121,11 @@ class CostAwareOracle:
         # Physically plausible pEC50 range: 0 (1 M IC50) to 14 (100 fM IC50).
         # Values outside this range almost always indicate data entry errors,
         # unit mismatches, or curve-fitting artefacts, and must not be passed
-        # to the loss function where NaN/inf would corrupt the entire batch.
+        # to the loss function where NaN/inf would corrupt the entire batch
         pec50_min: float = 0.0
         pec50_max: float = 14.0
 
-        # Validate pEC50 values and collect (smiles, pec50) pairs.
+        # Validate pEC50 values and collect (smiles, pec50) pairs
         valid_pairs: list[tuple[str, float]] = []
         invalid_pec50: list[tuple[str, object]] = []
 
@@ -149,12 +149,12 @@ class CostAwareOracle:
 
         # Optionally canonicalize all valid SMILES up front, then build
         # the ground truth dict.  Separating validation and SMILES preprocessing
-        # keeps them as distinct, auditable stages.
+        # keeps them as distinct, auditable stages
         failed_smiles: list[str] = []
         ground_truth: dict[str, float] = {}
 
         if self.is_canonical:
-            # Trust the caller's assertion that SMILES are already canonical.
+            # Trust the caller's assertion that SMILES are already canonical
             keyed_pairs: list[tuple[str, float]] = valid_pairs
         else:
             keyed_pairs = []
@@ -458,7 +458,7 @@ class CostAwareOracle:
         """
         flat = [r for records in self._labeled.values() for r in records]
         # Sort key: (iteration, fidelity rank) where PS=0 < DRC=1 so that
-        # within the same iteration the PS record precedes the DRC upgrade.
+        # within the same iteration the PS record precedes the DRC upgrade
         return sorted(
             flat,
             key=lambda r: (

@@ -232,6 +232,41 @@ class DashboardConfig:
 
 
 @dataclass(frozen=True)
+class PretrainDataConfig:
+    """Settings for an optional pretraining dataset supplied to ``moal simulate``.
+
+    The pretraining CSV uses the same mixed-fidelity campaign state format as
+    ``moal plan``: each row carries a SMILES string, a relation symbol
+    (``<``, ``>=``, or ``==``), and a numeric pEC50 value.  Rows with empty
+    relation/value fields are skipped with a warning — they provide no
+    training signal.
+
+    When ``input_csv`` is empty (the default), pretraining is disabled and
+    the simulation workflow is identical to its previous behaviour.
+
+    Attributes
+    ----------
+    input_csv : str
+        Path to the pretrain CSV.  Leave empty to disable pretraining.
+    smiles_column : str
+        Name of the SMILES column in ``input_csv``.
+    relation_column : str
+        Name of the relation column (``<``, ``>=``, ``==``, or empty).
+    value_column : str
+        Name of the pEC50 / threshold value column.
+    is_canonical : bool
+        When False (default), SMILES are canonicalized via RDKit during
+        parsing.
+    """
+
+    input_csv: str = ""
+    smiles_column: str = "smiles"
+    relation_column: str = "relation"
+    value_column: str = "value"
+    is_canonical: bool = False
+
+
+@dataclass(frozen=True)
 class SimulationDataConfig:
     """Dataset settings for the synthetic active-learning simulation workflow.
 
@@ -251,6 +286,11 @@ class SimulationDataConfig:
         Fraction of the compound pool held out as a scaffold-split test set
         for model performance tracking. Set to 0.0 to disable test-set
         evaluation.
+    pretrain : PretrainDataConfig
+        Optional pretraining dataset in campaign state CSV format.  Pretrain
+        records are combined with oracle-acquired records at every
+        ``model.refit()`` call.  When ``pretrain.input_csv`` is empty
+        (default), behaviour is unchanged from the no-pretrain workflow.
     """
 
     input_csv: str = ""
@@ -258,6 +298,7 @@ class SimulationDataConfig:
     pec50_column: str = "pec50"
     is_canonical: bool = False
     test_set_size: float = 0.15
+    pretrain: PretrainDataConfig = field(default_factory=PretrainDataConfig)
 
 
 @dataclass(frozen=True)
@@ -385,6 +426,8 @@ class PipelineConfig:
         with open(path) as f:
             raw = yaml.safe_load(f)
         data_raw = raw.get("data", {})
+        simulate_raw = data_raw.get("simulate", {})
+        pretrain_raw = simulate_raw.pop("pretrain", {}) if isinstance(simulate_raw, dict) else {}
         return cls(
             oracle=OracleConfig(**raw.get("oracle", {})),
             model=ModelConfig(**raw.get("model", {})),
@@ -393,7 +436,10 @@ class PipelineConfig:
             dashboard=DashboardConfig(**raw.get("dashboard", {})),
             data=DataConfig(
                 output_dir=data_raw.get("output_dir", "results"),
-                simulate=SimulationDataConfig(**data_raw.get("simulate", {})),
+                simulate=SimulationDataConfig(
+                    **simulate_raw,
+                    pretrain=PretrainDataConfig(**pretrain_raw),
+                ),
                 plan=PlanDataConfig(**data_raw.get("plan", {})),
             ),
             active_learning_loop=ActiveLearningLoopConfig(**raw.get("active_learning_loop", {})),

@@ -57,7 +57,7 @@ def _silence_rdkit() -> None:
         RDLogger.DisableLog("rdApp.*")  # type: ignore[attr-defined]
     except ImportError:
         pass
-    # Also silence the Python-side rdkit logger.
+    # Also silence the Python-side rdkit logger
     logging.getLogger("rdkit").setLevel(logging.WARNING)
 
 

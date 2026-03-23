@@ -79,10 +79,10 @@ class MixedFidelityDataset(Dataset):
         tuple[BatchMolGraph, list[LabelRecord]]
             Batched molecular graph and corresponding label records.
         """
-        # Unzip the batch into separate tuples.
+        # Unzip the batch into separate tuples
         datapoints, records = zip(*batch, strict=False)
 
-        # Extract the underlying MolGraph from each datapoint to build the batch.
+        # Extract the underlying MolGraph from each datapoint to build the batch
         bmg = BatchMolGraph([dp.mg for dp in datapoints])
 
         return bmg, list(records)
