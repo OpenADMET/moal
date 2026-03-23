@@ -45,13 +45,14 @@ def download_chemeleon() -> None:
     Please cite DOI: 10.48550/arXiv.2506.15792 when using CheMeleon in
     published work.
     """
-
     ckpt_dir = Path().home() / ".chemprop"
     ckpt_dir.mkdir(exist_ok=True)
     model_path = ckpt_dir / "chemeleon_mp.pt"
     if not model_path.exists():
         logger.info(
-            f"Downloading CheMeleon Foundation model from Zenodo (https://zenodo.org/records/15460715) to {model_path}"
+            "Downloading CheMeleon Foundation model from Zenodo"
+            " (https://zenodo.org/records/15460715) to %s",
+            model_path,
         )
         urlretrieve(
             r"https://zenodo.org/records/15460715/files/chemeleon_mp.pt",
@@ -427,7 +428,7 @@ class ChemPropLightningModule(L.LightningModule):
         datamodule_kwargs: dict[str, Any] | None = None,
         reset_weights: bool = False,
         output_dir: str | Path | None = None,
-    ) -> "ChemPropLightningModule":
+    ) -> ChemPropLightningModule:
         """Refit the model on a (growing) labeled pool.
 
         Parameters
@@ -587,7 +588,7 @@ class NoisyOracleModel:
         datamodule_kwargs: dict[str, Any] | None = None,
         reset_weights: bool = False,
         output_dir: str | Path | None = None,
-    ) -> "NoisyOracleModel":
+    ) -> NoisyOracleModel:
         """No-op refit — fast mode has no learnable parameters to update.
 
         All arguments are accepted for interface compatibility with

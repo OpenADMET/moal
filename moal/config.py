@@ -371,7 +371,7 @@ class PipelineConfig:
     seed: int = 42
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> "PipelineConfig":
+    def from_yaml(cls, path: str | Path) -> PipelineConfig:
         """Load a ``PipelineConfig`` from a YAML file.
 
         Parameters

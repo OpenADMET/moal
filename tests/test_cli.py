@@ -26,7 +26,7 @@ def _cli_output(result) -> str:
 
 
 class _ProgressRecorder:
-    instances: list["_ProgressRecorder"] = []
+    instances: list[_ProgressRecorder] = []
 
     def __init__(self, *args, **kwargs):
         self.added_tasks: list[dict[str, object]] = []
@@ -402,7 +402,7 @@ class TestPlanCommand:
     def test_plan_suppresses_info_logs_while_progress_is_active(
         self, tmp_path, monkeypatch
     ):
-        """moal INFO logs must not bleed into Rich progress output during a plan run."""
+        """Moal INFO logs must not bleed into Rich progress output during a plan run."""
         state_csv = tmp_path / "state.csv"
         state_csv.write_text("smiles,relation,value\nCCO,==,6.0\nCCN,,\n")
         cfg = tmp_path / "config.yaml"

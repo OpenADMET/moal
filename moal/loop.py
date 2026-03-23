@@ -103,7 +103,7 @@ class ActiveLearningLoop:
         preprocessor: SMILESPreprocessor | None = None,
         trainer_kwargs: dict[str, Any] | None = None,
         datamodule_kwargs: dict[str, Any] | None = None,
-        dashboard: "LiveDashboard | None" = None,
+        dashboard: LiveDashboard | None = None,
         test_set: tuple[list[str], np.ndarray] | None = None,
         model_metric: ModelMetric = ModelMetric.MAE,
         initial_error: float = 0.7,
@@ -357,7 +357,8 @@ class ActiveLearningLoop:
                             f"[green]Iter {iteration + 1}/{n_iterations}[/green]  "
                             f"Selecting next {k_per_iteration} — "
                             f"[white]{len(remaining_unlabeled)} unqueried[/white], "
-                            f"[magenta]{len(remaining_ps_labeled)} PS hits[/magenta] eligible for upgrade"
+                            f"[magenta]{len(remaining_ps_labeled)} PS hits[/magenta]"
+                            " eligible for upgrade"
                         ),
                     )
                     if all_remaining:
@@ -442,8 +443,8 @@ class ActiveLearningLoop:
             f"[bold]Total cost:[/bold] [bold]${results.total_cost:.2f}[/bold]  |  "
             f"[steel_blue1]{n_final_ps} PS[/steel_blue1]  |  "
             f"{drc_label}  |  "
-            f"Confirmed actives: [green]{int(results.final_metrics.get('n_confirmed_actives', 0))}[/green]"
-            f" [dim](of {n_true_actives})[/dim]"
+            f"Confirmed actives: [green]{int(results.final_metrics.get('n_confirmed_actives', 0))}"
+            f"[/green] [dim](of {n_true_actives})[/dim]"
         )
         return results
 

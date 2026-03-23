@@ -233,10 +233,11 @@ class CostAwareGreedyAcquisition:
             return []
 
         predictions = np.asarray(predictions, dtype=np.float32)
-        assert len(unlabeled_smiles) == len(predictions), (
-            f"SMILES list length ({len(unlabeled_smiles)}) must match "
-            f"predictions length ({len(predictions)})."
-        )
+        if len(unlabeled_smiles) != len(predictions):
+            raise ValueError(
+                f"SMILES list length ({len(unlabeled_smiles)}) must match "
+                f"predictions length ({len(predictions)})."
+            )
         if len(predictions) > 0 and not np.all(np.isfinite(predictions)):
             raise ValueError(
                 "predictions must contain only finite values; NaN or inf values "
@@ -257,10 +258,11 @@ class CostAwareGreedyAcquisition:
         # PS-labeled INTERVAL compounds contribute only a DRC-upgrade candidate
         if ps_labeled_smiles:
             psl_preds = np.asarray(ps_labeled_predictions, dtype=np.float32)
-            assert len(ps_labeled_smiles) == len(psl_preds), (
-                f"ps_labeled_smiles length ({len(ps_labeled_smiles)}) must match "
-                f"ps_labeled_predictions length ({len(psl_preds)})."
-            )
+            if len(ps_labeled_smiles) != len(psl_preds):
+                raise ValueError(
+                    f"ps_labeled_smiles length ({len(ps_labeled_smiles)}) must match "
+                    f"ps_labeled_predictions length ({len(psl_preds)})."
+                )
             scores_drc_upgrade = self._score_drc(psl_preds)
             for j, smi in enumerate(ps_labeled_smiles):
                 candidates.append(
@@ -271,7 +273,7 @@ class CostAwareGreedyAcquisition:
 
         selected: list[tuple[str, QueryType]] = []
         selected_smiles: set[str] = set()
-        for score, smi, qt in candidates:
+        for _score, smi, qt in candidates:
             if smi in selected_smiles:
                 continue
             selected.append((smi, qt))
@@ -315,7 +317,7 @@ class CostAwareGreedyAcquisition:
         """
         predictions = np.asarray(predictions, dtype=np.float32)
         rows = []
-        for smi, y_hat in zip(unlabeled_smiles, predictions):
+        for smi, y_hat in zip(unlabeled_smiles, predictions, strict=False):
             p_active = float(
                 _sigmoid(np.array([y_hat - self.target_threshold]), self.tau)[0]
             )

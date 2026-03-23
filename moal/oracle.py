@@ -122,8 +122,8 @@ class CostAwareOracle:
         # Values outside this range almost always indicate data entry errors,
         # unit mismatches, or curve-fitting artefacts, and must not be passed
         # to the loss function where NaN/inf would corrupt the entire batch.
-        _PECO50_MIN: float = 0.0
-        _PECO50_MAX: float = 14.0
+        pec50_min: float = 0.0
+        pec50_max: float = 14.0
 
         # Validate pEC50 values and collect (smiles, pec50) pairs.
         valid_pairs: list[tuple[str, float]] = []
@@ -141,7 +141,7 @@ class CostAwareOracle:
             if not math.isfinite(pec50):
                 invalid_pec50.append((raw_smiles, raw_value))
                 continue
-            if not (_PECO50_MIN <= pec50 <= _PECO50_MAX):
+            if not (pec50_min <= pec50 <= pec50_max):
                 invalid_pec50.append((raw_smiles, pec50))
                 continue
 
@@ -185,8 +185,8 @@ class CostAwareOracle:
                 "(NaN, inf, or outside [%.1f, %.1f]): first few: %s",
                 len(invalid_pec50),
                 len(df),
-                _PECO50_MIN,
-                _PECO50_MAX,
+                pec50_min,
+                pec50_max,
                 [(s, v) for s, v in invalid_pec50[:3]],
             )
         logger.info("Oracle initialized with %d compounds.", len(ground_truth))

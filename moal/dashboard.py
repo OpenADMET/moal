@@ -75,7 +75,8 @@ _PLAY_PAUSE_SCRIPT = r"""
   toolbar.style.cssText = 'margin:4px 0;padding-left:4px;';
   var btn = document.createElement('button');
   btn.innerHTML = '\u25B6 Play';
-  btn.style.cssText = 'padding:5px 14px;font-size:13px;cursor:pointer;background:#555;color:#fff;border:1px solid #888;border-radius:4px;';
+  btn.style.cssText = 'padding:5px 14px;font-size:13px;cursor:pointer;'
+    + 'background:#555;color:#fff;border:1px solid #888;border-radius:4px;';
   toolbar.appendChild(btn);
   gd.insertAdjacentElement('beforebegin', toolbar);
 
@@ -642,7 +643,7 @@ class LiveDashboard:
                 color=_COLOUR_UPGRADE,
                 label="PS→DRC",
             )
-            ps_bottoms = [d + u for d, u in zip(iter_drc_new, iter_upgrades)]
+            ps_bottoms = [d + u for d, u in zip(iter_drc_new, iter_upgrades, strict=False)]
             ax2.bar(iter_nums, iter_ps, bottom=ps_bottoms, color=_COLOUR_PS, label="PS")
             # Scale to thousands so tick values stay compact whole-number integers
             ax2_r.plot(
@@ -774,8 +775,8 @@ class LiveDashboard:
             A ``(ymin, ymax, tick0, dtick)`` tuple suitable for configuring a
             Plotly or matplotlib y-axis.
         """
-        _STEPS = [0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0]
-        _MAX_TICKS = 6
+        _steps = [0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0]
+        _max_ticks = 6
 
         if not metric_vals:
             return (0.0, 0.2, 0.0, 0.1)
@@ -784,9 +785,9 @@ class LiveDashboard:
         vmax_data = max(metric_vals)
         span = vmax_data - vmin_data
 
-        step = _STEPS[-1]
-        for s in _STEPS:
-            if span < 1e-12 or span / s <= _MAX_TICKS - 1:
+        step = _steps[-1]
+        for s in _steps:
+            if span < 1e-12 or span / s <= _max_ticks - 1:
                 step = s
                 break
 
@@ -964,7 +965,8 @@ class LiveDashboard:
             col=1,
         )
 
-        # Panel 4: Compound status — source of truth for the unified legend (canonical order via legendrank)
+        # Panel 4: Compound status — source of truth for the unified legend
+        # (canonical order via legendrank)
         for cat_name, y_val, color, rank in [
             ("Unqueried", last["n_unqueried"], _COLOUR_UNQUERIED, 4),
             ("PS", last["n_ps_only"], _COLOUR_PS, 3),

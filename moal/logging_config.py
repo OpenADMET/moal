@@ -118,5 +118,5 @@ def temporary_log_level(level: int, names: list[str]) -> Iterator[None]:
             logger.setLevel(level)
         yield
     finally:
-        for logger, previous_level in zip(loggers, previous_levels):
+        for logger, previous_level in zip(loggers, previous_levels, strict=True):
             logger.setLevel(previous_level)

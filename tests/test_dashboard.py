@@ -24,7 +24,8 @@ from moal.types import CensoringType, LabelRecord, QueryType
 @pytest.fixture(autouse=True)
 def mock_werkzeug_server(monkeypatch):
     """Prevent real Werkzeug server from binding a port in every test,
-    and suppress browser auto-open calls."""
+    and suppress browser auto-open calls.
+    """
     server = MagicMock()
     monkeypatch.setattr("moal.dashboard.make_server", lambda *a, **kw: server)
     monkeypatch.setattr("moal.dashboard.webbrowser.open", lambda *a, **kw: None)
@@ -539,11 +540,10 @@ class TestSaveHtml:
 
     def test_html_slider_steps_match_iteration_count(self, tmp_path):
         """The slider step count embedded in the HTML must match the update count."""
-
         n = 4
         db = LiveDashboard(n_iterations=n, n_compounds=20)
         records = _make_records(4)
-        for i in range(n):
+        for _i in range(n):
             db.update(
                 records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0
             )
@@ -860,7 +860,7 @@ class TestMetricAxisParams:
         assert n <= 6
 
     def test_step_always_at_least_0_1(self):
-        """dtick must never be smaller than 0.1 regardless of data span."""
+        """Dtick must never be smaller than 0.1 regardless of data span."""
         for vals in [[], [0.6], [0.60, 0.61], [0.0, 100.0]]:
             _, _, _, dtick = LiveDashboard._metric_axis_params(vals)
             assert dtick >= 0.1 - 1e-12, f"dtick={dtick} for vals={vals}"

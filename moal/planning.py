@@ -317,7 +317,7 @@ def annotate_campaign_state(
     if state.unqueried_rows:
         unqueried_canonical = [smi for _, smi in state.unqueried_rows]
         summaries = acquisition.score_summary(unqueried_canonical, unqueried_preds)
-        for (row_idx, _), summary in zip(state.unqueried_rows, summaries):
+        for (row_idx, _), summary in zip(state.unqueried_rows, summaries, strict=False):
             drc = float(summary["score_drc"])
             ps = float(summary["score_ps"])
             overall = max(drc, ps)
@@ -331,7 +331,7 @@ def annotate_campaign_state(
     if state.ps_upgrade_rows:
         upgrade_canonical = [smi for _, smi in state.ps_upgrade_rows]
         summaries = acquisition.score_summary(upgrade_canonical, upgrade_preds)
-        for (row_idx, _), summary in zip(state.ps_upgrade_rows, summaries):
+        for (row_idx, _), summary in zip(state.ps_upgrade_rows, summaries, strict=False):
             drc = float(summary["score_drc"])
             result.at[row_idx, "drc_score"] = drc
             result.at[row_idx, "overall_score"] = drc

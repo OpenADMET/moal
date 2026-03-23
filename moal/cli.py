@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import importlib.metadata
 import logging
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 import click
 import lightning as L
@@ -88,7 +88,7 @@ def _common_cli_options(*, required: bool) -> Callable:
 
 @click.group()
 def main() -> None:
-    """moal CLI with simulation and one-shot planning subcommands."""
+    """Moal CLI with simulation and one-shot planning subcommands."""
 
 
 @main.command()
@@ -592,7 +592,8 @@ def _build_simulation_model(
     """
     if cfg.model.fast:
         logger.info(
-            "Fast mode enabled — using NoisyOracleModel with error ramp %.3f → %.3f over %d iterations",
+            "Fast mode enabled — using NoisyOracleModel with error ramp"
+            " %.3f → %.3f over %d iterations",
             cfg.model.initial_error,
             cfg.model.final_error,
             cfg.active_learning_loop.n_iterations,

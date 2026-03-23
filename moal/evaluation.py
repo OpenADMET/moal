@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 import numpy as np
@@ -19,7 +19,7 @@ from moal.types import CensoringType, LabelRecord, QueryType
 logger = logging.getLogger(__name__)
 
 
-class ModelMetric(str, Enum):
+class ModelMetric(StrEnum):
     """Metric for evaluating model predictive performance on a held-out test set."""
 
     MAE = "mae"

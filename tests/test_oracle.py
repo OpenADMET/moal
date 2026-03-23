@@ -328,7 +328,8 @@ class TestUnknownCompound:
 
     def test_query_batch_unknown_smiles_skipped(self):
         """query_batch silently skips compounds that are not in the ground truth,
-        consistent with the documented (ValueError, KeyError) catch block."""
+        consistent with the documented (ValueError, KeyError) catch block.
+        """
         oracle = _make_oracle()
         queries = [
             ("c1ccccc1", QueryType.PRIMARY_SCREEN),  # valid
@@ -450,7 +451,8 @@ class TestIsCanonical:
 
     def test_is_canonical_false_rewrites_smiles(self):
         """When is_canonical=False, a non-canonical SMILES must be rewritten to its
-        canonical form before storage."""
+        canonical form before storage.
+        """
         df = pd.DataFrame({"smiles": [self._REWRITABLE], "pec50": [6.0]})
         oracle = CostAwareOracle(
             ground_truth_df=df,
@@ -465,7 +467,8 @@ class TestIsCanonical:
 
     def test_query_with_is_canonical_true_returns_correct_label(self):
         """query() with is_canonical=True must return the correct label without
-        calling canonicalize()."""
+        calling canonicalize().
+        """
         oracle = self._make_canonical_oracle()
         rec = oracle.query(
             self._REWRITTEN, QueryType.DOSE_RESPONSE, iteration=0, is_canonical=True
@@ -494,7 +497,8 @@ class TestIsCanonical:
 
     def test_mismatched_canonical_flag_raises_key_error(self):
         """Querying with is_canonical=False against an oracle built with
-        is_canonical=True produces a KeyError when RDKit rewrites the key."""
+        is_canonical=True produces a KeyError when RDKit rewrites the key.
+        """
         # Build oracle with raw "OCC" key (is_canonical=True, no rewrite).
         df = pd.DataFrame({"smiles": [self._REWRITABLE], "pec50": [6.0]})
         oracle = CostAwareOracle(
