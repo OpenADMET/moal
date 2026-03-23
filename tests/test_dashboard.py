@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import io
+import logging
+import math
 import re
 from unittest.mock import MagicMock
 
+import plotly.graph_objects as go
 import pytest
+from PIL import Image
 
 from moal.dashboard import LiveDashboard
 from moal.evaluation import ModelMetric
@@ -112,8 +116,6 @@ class TestDashboardInit:
 
     def test_port_conflict_logs_warning_not_raises(self, monkeypatch, caplog):
         """When the port is already in use, construction must warn and succeed without a server."""
-        import logging
-
         monkeypatch.setattr(
             "moal.dashboard.make_server",
             lambda *a, **kw: (_ for _ in ()).throw(
@@ -356,8 +358,6 @@ class TestFrameCapture:
 
     def test_frames_are_valid_png_bytes(self):
         """Pre-captured frames must be valid PNG byte payloads."""
-        from PIL import Image
-
         db = LiveDashboard(n_iterations=2, n_compounds=20)
         records = _make_records(4)
         db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
@@ -369,8 +369,6 @@ class TestFrameCapture:
 
     def test_capture_failure_is_silent(self, monkeypatch, caplog):
         """A matplotlib render error in _capture_frame() must warn and not raise."""
-        import logging
-
         monkeypatch.setattr(
             "moal.dashboard.LiveDashboard._render_matplotlib_frame",
             lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("render error")),
@@ -388,8 +386,6 @@ class TestFrameCapture:
 
     def test_gif_skipped_when_no_frames_captured(self, monkeypatch, tmp_path, caplog):
         """If all _capture_frame() calls silently fail, save_gif() must warn and skip."""
-        import logging
-
         monkeypatch.setattr(
             "moal.dashboard.LiveDashboard._render_matplotlib_frame",
             lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("render error")),
@@ -417,8 +413,6 @@ class TestSaveGif:
 
     def test_gif_created_with_correct_frame_count(self, tmp_path):
         """A GIF produced from N updates must contain N frames."""
-        from PIL import Image
-
         db = LiveDashboard(n_iterations=3, n_compounds=20)
         records = _make_records(4)
         for _ in range(3):
@@ -452,8 +446,6 @@ class TestSaveGif:
 
     def test_last_frame_held_longer(self, tmp_path):
         """The final frame must carry last_frame_duration_ms, not frame_duration_ms."""
-        from PIL import Image
-
         db = LiveDashboard(n_iterations=3, n_compounds=20)
         records = _make_records(4)
         for _ in range(3):
@@ -479,8 +471,6 @@ class TestSaveGif:
 
     def test_single_frame_gif_uses_last_frame_duration(self, tmp_path):
         """A single-frame GIF should apply last_frame_duration_ms to that only frame."""
-        from PIL import Image
-
         db = LiveDashboard(n_iterations=1, n_compounds=20)
         records = _make_records(2)
         db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
@@ -755,8 +745,6 @@ class TestBuildFigure:
 
     def test_empty_iterations_returns_figure(self):
         """_build_figure([]) must return a go.Figure without raising."""
-        import plotly.graph_objects as go
-
         db = LiveDashboard(n_iterations=5, n_compounds=20)
         fig = db._build_figure([])
         assert isinstance(fig, go.Figure)
@@ -809,8 +797,6 @@ class TestBuildFigure:
 
     def test_export_dimensions_used_in_render(self, tmp_path):
         """export_width and export_height must control the PNG dimensions produced by save()."""
-        from PIL import Image
-
         db = LiveDashboard(
             n_iterations=2, n_compounds=10, export_width=400, export_height=300
         )
@@ -845,8 +831,6 @@ class TestMetricAxisParams:
     @staticmethod
     def _count_ticks_in_range(ymin, ymax, tick0, dtick):
         """Count how many tick positions tick0 + k*dtick lie within [ymin, ymax]."""
-        import math
-
         if dtick <= 0:
             return 0
         k_start = math.ceil((ymin - tick0) / dtick)

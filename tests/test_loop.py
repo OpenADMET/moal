@@ -11,6 +11,7 @@ pEC50 predictions) to verify that:
 
 from __future__ import annotations
 
+from collections import defaultdict
 from unittest.mock import create_autospec, patch
 
 import numpy as np
@@ -19,9 +20,9 @@ import pytest
 
 from moal.acquisition import CostAwareGreedyAcquisition
 from moal.dashboard import LiveDashboard
-from moal.evaluation import PipelineEvaluator
+from moal.evaluation import ModelMetric, PipelineEvaluator
 from moal.loop import ActiveLearningLoop
-from moal.model import ChemPropLightningModule
+from moal.model import ChemPropLightningModule, NoisyOracleModel
 from moal.oracle import CostAwareOracle
 from moal.types import QueryType
 
@@ -330,8 +331,6 @@ class TestTestSetIntegration:
         self, oracle, mock_model, acquisition, evaluator
     ):
         """model_metric_value should be present and finite when test_set is provided."""
-        from moal.evaluation import ModelMetric
-
         rng = np.random.default_rng(42)
         test_smiles = oracle.get_unlabeled_smiles()[:5]
         test_pec50 = rng.normal(6.0, 1.0, len(test_smiles)).astype(np.float32)
@@ -378,8 +377,6 @@ class TestIsCanonicalForwarding:
     def test_queries_succeed_with_kekule_smiles_and_is_canonical_true(self):
         """Every compound selected by the acquisition must be successfully queried
         when the oracle holds Kekulé SMILES keys and is_canonical=True."""
-        from moal.model import NoisyOracleModel
-
         # Kekulé SMILES that RDKit would canonicalize to lowercase aromatic
         # equivalents — these are the raw CSV keys when is_canonical=True.
         kekule_smiles = [
@@ -470,8 +467,6 @@ class TestPSUpgradeInLoop:
     @pytest.fixture
     def upgrade_loop(self, upgrade_oracle):
         """ActiveLearningLoop wired to upgrade_oracle using NoisyOracleModel with zero noise for deterministic upgrades."""
-        from moal.model import NoisyOracleModel
-
         model = NoisyOracleModel(upgrade_oracle._ground_truth, seed=0)
         acquisition = CostAwareGreedyAcquisition(
             cost_ps=1.0,
@@ -496,8 +491,6 @@ class TestPSUpgradeInLoop:
         upgrade_loop.run(n_iterations=6, k_per_iteration=2)
         records = upgrade_oracle.labeled_records
         # Group by canonical SMILES
-        from collections import defaultdict
-
         by_smiles: dict = defaultdict(list)
         for r in records:
             by_smiles[r.canonical_smiles].append(r.fidelity)
@@ -576,8 +569,6 @@ class TestNoisyOracleErrorRamp:
     K = 2
 
     def _make_loop(self, oracle, initial_error, final_error):
-        from moal.model import NoisyOracleModel
-
         model = NoisyOracleModel(oracle._ground_truth, seed=0)
         acq = CostAwareGreedyAcquisition(
             cost_ps=1.0,

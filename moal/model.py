@@ -19,19 +19,31 @@ import lightning as L
 import numpy as np
 import torch
 import torch.nn as nn
+from chemprop.data import MoleculeDatapoint, MoleculeDataset
+from chemprop.data.dataloader import build_dataloader
+from chemprop.models import MPNN
+from chemprop.nn import BondMessagePassing, MeanAggregation, RegressionFFN
 from torch import Tensor
 from torch.optim import Adam
 
+from moal.dataset import MixedFidelityDataModule
 from moal.loss import CensoredRegressionLoss
 from moal.types import LabelRecord
 
 logger = logging.getLogger(__name__)
 
 
-def download_chemeleon():
-    """
-    Download CheMeleon checkpoint if not already cached locally.
+def download_chemeleon() -> None:
+    """Download the CheMeleon checkpoint if not already cached locally.
 
+    The file is stored at ``~/.chemprop/chemeleon_mp.pt``.  If the file
+    already exists the download is skipped and the cached copy is used.
+
+    Notes
+    -----
+    Checkpoint source: https://zenodo.org/records/15460715.
+    Please cite DOI: 10.48550/arXiv.2506.15792 when using CheMeleon in
+    published work.
     """
 
     ckpt_dir = Path().home() / ".chemprop"
@@ -123,15 +135,21 @@ class ChemPropLightningModule(L.LightningModule):
         ffn_hidden_size: int,
         ffn_num_layers: int,
     ) -> nn.Module:
-        try:
-            from chemprop.models import MPNN
-            from chemprop.nn import BondMessagePassing, MeanAggregation, RegressionFFN
-        except ImportError as exc:  # pragma: no cover
-            raise ImportError(
-                "chemprop>=2.0 is required. Install with: pip install chemprop"
-            ) from exc
+        """Construct the MPNN with CheMeleon message-passing weights.
 
-        # Load message passing from CheMeleon
+        Parameters
+        ----------
+        ffn_hidden_size : int
+            Hidden dimension of the FFN predictor head.
+        ffn_num_layers : int
+            Number of layers in the FFN predictor head.
+
+        Returns
+        -------
+        nn.Module
+            Fully assembled ``chemprop.models.MPNN`` with pretrained
+            message-passing weights and a freshly initialised FFN head.
+        """
         chemeleon_weights = self._get_chemeleon_mp()
 
         # Mean aggregation
@@ -149,16 +167,23 @@ class ChemPropLightningModule(L.LightningModule):
         )
         return MPNN(message_passing=mp, agg=agg, predictor=ffn)
 
-    def _get_chemeleon_mp(self) -> None:
-        # Ensure CheMeleon checkpoint is downloaded``
+    def _get_chemeleon_mp(self) -> dict:
+        """Load and return the CheMeleon pretrained message-passing weights.
+
+        Calls :func:`download_chemeleon` to ensure the checkpoint exists at
+        ``~/.chemprop/chemeleon_mp.pt``, then loads it with
+        ``weights_only=True``.
+
+        Returns
+        -------
+        dict
+            Checkpoint dictionary with ``hyper_parameters`` and
+            ``state_dict`` keys.
+        """
+        # Ensure the CheMeleon checkpoint is downloaded.
         download_chemeleon()
-
-        # Path to checkpoint
         ckpt_path = Path().home() / ".chemprop" / "chemeleon_mp.pt"
-
-        # Load weights
         weights = torch.load(ckpt_path, weights_only=True)
-
         return weights
 
     # ------------------------------------------------------------------
@@ -166,26 +191,69 @@ class ChemPropLightningModule(L.LightningModule):
     # ------------------------------------------------------------------
 
     def _encoder_params(self) -> list[nn.Parameter]:
+        """Return the trainable parameters of the message-passing encoder.
+
+        Returns
+        -------
+        list[nn.Parameter]
+            Parameters belonging to ``self.model.message_passing``.
+        """
         return list(self.model.message_passing.parameters())
 
     def _head_params(self) -> list[nn.Parameter]:
+        """Return the trainable parameters of the aggregation layer and FFN head.
+
+        Returns
+        -------
+        list[nn.Parameter]
+            Parameters belonging to ``self.model.agg`` and
+            ``self.model.predictor``, concatenated in that order.
+        """
         return list(self.model.agg.parameters()) + list(
             self.model.predictor.parameters()
         )
 
     def _freeze_encoder(self) -> None:
+        """Freeze all message-passing encoder parameters.
+
+        Sets ``requires_grad=False`` on every encoder parameter and marks
+        ``_encoder_frozen`` as ``True``.  Called once at construction and
+        implicitly again whenever ``reset_weights=True`` is passed to
+        :meth:`refit`.
+        """
         for p in self._encoder_params():
             p.requires_grad_(False)
         self._encoder_frozen = True
         logger.debug("Encoder frozen.")
 
     def _unfreeze_encoder(self) -> None:
+        """Unfreeze the message-passing encoder after the warm-up phase.
+
+        Sets ``requires_grad=True`` on every encoder parameter and marks
+        ``_encoder_frozen`` as ``False``.  Invoked automatically by
+        :meth:`on_train_epoch_start` once ``current_epoch`` reaches
+        ``freeze_epochs``.
+        """
         for p in self._encoder_params():
             p.requires_grad_(True)
         self._encoder_frozen = False
         logger.debug("Encoder unfrozen after warm-up.")
 
     def on_train_epoch_start(self) -> None:
+        """Lightning hook: unfreeze the encoder when warm-up is complete.
+
+        When ``current_epoch`` first reaches ``freeze_epochs`` and the encoder
+        is still frozen, :meth:`_unfreeze_encoder` is called and the
+        optimizers are rebuilt so that the newly unfrozen parameters receive
+        ``lr_encoder``.
+
+        Notes
+        -----
+        The epoch counter resets to zero on every :meth:`refit` call because
+        a new ``L.Trainer`` is created each time.  This ensures the warm-up
+        phase applies at the start of every active-learning iteration,
+        regardless of how many training epochs elapsed in previous iterations.
+        """
         if self._encoder_frozen and self.current_epoch >= self.freeze_epochs:
             self._unfreeze_encoder()
             # Rebuild optimizers so the newly unfrozen params get lr_encoder.
@@ -196,11 +264,48 @@ class ChemPropLightningModule(L.LightningModule):
     # ------------------------------------------------------------------
 
     def forward(self, batch_mol_graph: Any) -> Tensor:
+        """Run a forward pass and return scalar pEC50 predictions.
+
+        Parameters
+        ----------
+        batch_mol_graph : Any
+            A batched molecular graph (``chemprop.data.BatchMolGraph``)
+            produced by the chemprop dataloader collate function.
+
+        Returns
+        -------
+        Tensor
+            1-D tensor of shape ``(N,)`` with predicted pEC50 values.
+        """
         return self.model(batch_mol_graph).squeeze(-1)
 
     def training_step(
         self, batch: tuple[Any, list[LabelRecord]], batch_idx: int
     ) -> Tensor:
+        """Compute and log the training loss for one batch.
+
+        Parameters
+        ----------
+        batch : tuple[Any, list[LabelRecord]]
+            A ``(mol_graph, records)`` pair returned by the training
+            dataloader.  ``mol_graph`` is a batched ``BatchMolGraph``;
+            ``records`` is the corresponding list of
+            :class:`~moal.types.LabelRecord` objects carrying censoring
+            metadata.
+        batch_idx : int
+            Index of the batch within the current epoch (unused).
+
+        Returns
+        -------
+        Tensor
+            Scalar total training loss used for the backward pass.
+
+        Notes
+        -----
+        ``drc_loss`` and ``ps_loss`` are logged only when the batch
+        contains at least one sample of the respective fidelity; ``nan``
+        values are silently skipped by Lightning's logging machinery.
+        """
         mol_graph, records = batch
         predictions = self(mol_graph)
         breakdown = self.loss_fn.forward_with_breakdown(predictions, records)
@@ -214,6 +319,21 @@ class ChemPropLightningModule(L.LightningModule):
     def validation_step(
         self, batch: tuple[Any, list[LabelRecord]], batch_idx: int
     ) -> None:
+        """Compute and log the validation loss for one batch.
+
+        Parameters
+        ----------
+        batch : tuple[Any, list[LabelRecord]]
+            A ``(mol_graph, records)`` pair returned by the validation
+            dataloader.
+        batch_idx : int
+            Index of the batch within the current validation epoch (unused).
+
+        Notes
+        -----
+        ``drc_loss`` and ``ps_loss`` are logged only when the batch
+        contains at least one sample of the respective fidelity.
+        """
         mol_graph, records = batch
         predictions = self(mol_graph)
         breakdown = self.loss_fn.forward_with_breakdown(predictions, records)
@@ -224,6 +344,21 @@ class ChemPropLightningModule(L.LightningModule):
             self.log("val_ps_loss", breakdown.ps_loss, batch_size=len(records))
 
     def configure_optimizers(self) -> Adam:
+        """Build and return the Adam optimizer for the current freeze state.
+
+        Returns
+        -------
+        Adam
+            When the encoder is frozen, a single-group Adam optimizer for
+            the FFN head at ``lr_head``.  After the encoder is unfrozen, a
+            two-group Adam with an additional encoder group at ``lr_encoder``.
+
+        Notes
+        -----
+        This method is re-invoked by Lightning after :meth:`on_train_epoch_start`
+        calls ``setup_optimizers`` so that newly unfrozen encoder parameters
+        are registered at the correct learning rate.
+        """
         param_groups = [{"params": self._head_params(), "lr": self.lr_head}]
         if not self._encoder_frozen:
             param_groups.append(
@@ -260,14 +395,10 @@ class ChemPropLightningModule(L.LightningModule):
             Array of shape ``(N,)`` with pEC50 point estimates, aligned with
             ``smiles_list``.
         """
-        from chemprop.data import MoleculeDatapoint, MoleculeDataset
-        from chemprop.data.dataloader import build_dataloader
-
         # Create the full dataset once rather than chunking manually.
-        # Note that if using ChemProp v2 you may also need to pass a featurizer to this class.
         dataset = MoleculeDataset([MoleculeDatapoint.from_smi(s) for s in smiles_list])
 
-        # Let the dataloader handle the batching and graph collation automatically.
+        # Let the dataloader handle batching and graph collation automatically.
         dataloader = build_dataloader(dataset, batch_size=batch_size, shuffle=False)
 
         all_preds = []
@@ -275,13 +406,13 @@ class ChemPropLightningModule(L.LightningModule):
         # Disable gradient tracking for inference.
         with torch.inference_mode():
             for batch in dataloader:
-                # Move bactch to the device
+                # Move batch to device.
                 batch.bmg.to(self.device)
 
-                # Make predictions and detach
+                # Make predictions.
                 preds = self(batch.bmg).cpu().numpy().tolist()
 
-                # Accumulate predictions
+                # Accumulate predictions.
                 all_preds.extend(preds)
 
         return np.array(all_preds, dtype=np.float32)
@@ -337,8 +468,6 @@ class ChemPropLightningModule(L.LightningModule):
         ChemPropLightningModule
             self (for chaining).
         """
-        from moal.dataset import MixedFidelityDataModule
-
         if reset_weights:
             self._build_model()
             self._freeze_encoder()
@@ -443,7 +572,7 @@ class NoisyOracleModel:
         for i, smi in enumerate(smiles_list):
             # KeyError propagates if smi is absent, matching ChemPropLightningModule behaviour
             true_pec50 = self._ground_truth[smi]
-            # Must multiple by 2 to model MAE
+            # Multiply by 2 so that the expected absolute error equals noise_scale.
             noise = self._rng.uniform(-2 * noise_scale, 2 * noise_scale)
             preds[i] = true_pec50 + noise
         return preds
@@ -464,9 +593,28 @@ class NoisyOracleModel:
         All arguments are accepted for interface compatibility with
         :class:`ChemPropLightningModule` and silently ignored.
 
+        Parameters
+        ----------
+        records : list[LabelRecord]
+            Labeled records accumulated so far (ignored).
+        max_epochs : int, optional
+            Ignored. Default is 30.
+        enable_progress_bar : bool, optional
+            Ignored. Default is False.
+        enable_model_summary : bool, optional
+            Ignored. Default is False.
+        trainer_kwargs : dict[str, Any], optional
+            Ignored. Default is None.
+        datamodule_kwargs : dict[str, Any], optional
+            Ignored. Default is None.
+        reset_weights : bool, optional
+            Ignored. Default is False.
+        output_dir : str or Path, optional
+            Ignored. Default is None.
+
         Returns
         -------
         NoisyOracleModel
-            self
+            self (unchanged).
         """
         return self

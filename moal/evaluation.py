@@ -9,6 +9,8 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from rdkit import Chem
+from rdkit.Chem.Scaffolds.MurckoScaffold import MurckoScaffoldSmiles
 from scipy import stats
 
 from moal.model import NoisyOracleModel
@@ -33,15 +35,26 @@ class ModelMetric(str, Enum):
 
 
 def _murcko_scaffold(smiles: str) -> str:
-    """Return the Bemis-Murcko scaffold SMILES for a compound, or the original
-    SMILES if the scaffold is empty (e.g., acyclic compounds)."""
-    try:
-        from rdkit import Chem
-        from rdkit.Chem.Scaffolds.MurckoScaffold import MurckoScaffoldSmiles
+    """Return the Bemis-Murcko scaffold SMILES for a compound.
 
+    Falls back to the original SMILES when the scaffold is empty (e.g., for
+    acyclic compounds) or when RDKit raises an exception during parsing.
+
+    Parameters
+    ----------
+    smiles : str
+        Canonical SMILES string of the compound.
+
+    Returns
+    -------
+    str
+        Bemis-Murcko scaffold SMILES, or the original ``smiles`` if the
+        scaffold cannot be computed.
+    """
+    try:
         scaffold = MurckoScaffoldSmiles(mol=Chem.MolFromSmiles(smiles))
         return scaffold if scaffold else smiles
-    except (ImportError, ValueError, AttributeError) as exc:
+    except (ValueError, AttributeError) as exc:
         logger.warning("Could not compute Murcko scaffold for %r: %s", smiles, exc)
         return smiles
 
@@ -135,9 +148,26 @@ class PipelineEvaluator:
     def _is_confirmed_active(self, record: LabelRecord) -> bool:
         """Return True if the label definitively confirms activity.
 
-        - EXACT: pEC50 >= threshold.
-        - INTERVAL: lower bound >= threshold (certainly active).
-        - LEFT: never active (pEC50 < threshold by definition).
+        Parameters
+        ----------
+        record : LabelRecord
+            A single labeled record with censoring type and value.
+
+        Returns
+        -------
+        bool
+            True when the record is confirmed active, False otherwise.
+
+        Notes
+        -----
+        Classification rules by censoring type:
+
+        - ``EXACT``: active when ``record.value >= activity_threshold``.
+        - ``INTERVAL``: active when ``record.value >= activity_threshold``
+          (the lower bound is at or above the threshold, so the compound
+          is certainly active).
+        - ``LEFT``: always False — the compound is below the PS threshold,
+          which must be at or below the activity threshold.
         """
         if record.censoring_type == CensoringType.EXACT:
             return record.value >= self.activity_threshold
@@ -235,6 +265,12 @@ class PipelineEvaluator:
         -------
         float
             Enrichment factor. Returns 0.0 when the pool or active count is 0.
+
+        Notes
+        -----
+        The top-N subset is taken as the first ``int(n_total * fraction)``
+        records in ``labeled`` (i.e., those acquired earliest). At least one
+        compound is always included regardless of rounding.
         """
         if n_true_actives == 0 or n_total == 0:
             return 0.0
@@ -388,7 +424,16 @@ class PipelineEvaluator:
         Returns
         -------
         float
-            Scalar metric value.
+            Scalar metric value. Returns ``nan`` when ``test_smiles`` is empty
+            or when fewer than two samples are available for rank-correlation
+            metrics.
+
+        Raises
+        ------
+        ValueError
+            If ``model`` is a ``NoisyOracleModel`` and ``noise_scale`` is None.
+        ValueError
+            If ``metric`` is not a recognised ``ModelMetric`` member.
         """
         if len(test_smiles) == 0:
             return float("nan")

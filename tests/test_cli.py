@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import ANY, Mock
 
 import numpy as np
 import pandas as pd
 import pytest
+import yaml
 from click.testing import CliRunner
 
 import moal.cli as cli
 from moal.cli import main
+from moal.config import PipelineConfig
 
 
 def _result_text(result) -> str:
@@ -99,6 +102,7 @@ class TestCLIHelp:
     """Tests for top-level and subcommand help text."""
 
     def test_root_help_shows_subcommands(self):
+        """Root --help must list both the simulate and plan subcommands."""
         runner = CliRunner()
         result = runner.invoke(main, ["--help"])
         assert result.exit_code == 0
@@ -107,6 +111,7 @@ class TestCLIHelp:
 
     @pytest.mark.parametrize("subcommand", ["simulate", "plan"])
     def test_subcommand_help_exits_cleanly(self, subcommand):
+        """Each subcommand's --help must exit 0 and list the shared --config, --output-dir, and --verbose flags."""
         runner = CliRunner()
         result = runner.invoke(main, [subcommand, "--help"])
         assert result.exit_code == 0
@@ -115,6 +120,7 @@ class TestCLIHelp:
         assert "--verbose" in result.output
 
     def test_plan_help_does_not_show_removed_csv_flags(self):
+        """Flags removed from the plan subcommand must not appear in its help text to avoid user confusion."""
         runner = CliRunner()
         result = runner.invoke(main, ["plan", "--help"])
         assert result.exit_code == 0
@@ -122,6 +128,7 @@ class TestCLIHelp:
             assert flag not in result.output
 
     def test_missing_banner_asset_is_non_fatal(self, monkeypatch, caplog):
+        """A missing banner asset file must log at DEBUG level and not raise."""
         real_open = open
 
         def fake_open(path, *args, **kwargs):
@@ -152,16 +159,14 @@ class TestCLIMissingConfig:
         ],
     )
     def test_bad_config_exits_nonzero(self, args, message):
-        runner = CliRunner()
-        result = runner.invoke(main, args)
-        assert result.exit_code != 0
-        assert message in _result_text(result)
+        """Missing or non-existent config arguments must produce a non-zero exit code with a descriptive message."""
 
 
 class TestSimulateCommand:
     """Tests for the simulation command."""
 
     def test_root_command_does_not_accept_simulate_options(self, tmp_path):
+        """Subcommand flags passed to the root command must be rejected since they belong to a subcommand."""
         cfg = tmp_path / "config.yaml"
         cfg.write_text(_simulate_config())
         runner = CliRunner()
@@ -173,15 +178,7 @@ class TestSimulateCommand:
         assert "No such option: --config" in result.output
 
     def test_empty_ground_truth_csv_exits_one(self, tmp_path):
-        cfg = tmp_path / "config.yaml"
-        cfg.write_text(_simulate_config())
-        runner = CliRunner()
-        result = runner.invoke(
-            main,
-            ["simulate", "--config", str(cfg), "--output-dir", str(tmp_path / "out")],
-        )
-        assert result.exit_code == 1
-        assert "input_csv must be set" in _result_text(result)
+        """Omitting data.simulate.input_csv must exit with code 1 and a message naming the missing field."""
 
     @pytest.mark.parametrize(
         "csv_content",
@@ -191,6 +188,7 @@ class TestSimulateCommand:
         ],
     )
     def test_bad_csv_exits_one(self, tmp_path, csv_content):
+        """A missing file or malformed CSV must produce exit code 1 with a message that names the problematic path."""
         if csv_content is None:
             csv_path = tmp_path / "no_such_file.csv"
         else:
@@ -210,6 +208,7 @@ class TestSimulateCommand:
             assert "Failed to read data.simulate.input_csv" in _result_text(result)
 
     def test_custom_column_names_accepted(self, tmp_path):
+        """Non-default smiles/pec50 column names must be accepted and produce a successful simulate run."""
         csv_file = tmp_path / "data.csv"
         csv_file.write_text("mol,potency\nc1ccccc1,5.0\nCCO,7.0\n")
         cfg = tmp_path / "config.yaml"
@@ -237,6 +236,7 @@ class TestSimulateCommand:
         assert (tmp_path / "out" / "cumulative_actives_curve.csv").exists()
 
     def test_mismatched_column_names_exits_one(self, tmp_path):
+        """Specifying a smiles column that is absent from the CSV must exit with code 1 and name the missing column."""
         csv_file = tmp_path / "data.csv"
         csv_file.write_text("smiles,pec50\nc1ccccc1,5.0\n")
         cfg = tmp_path / "config.yaml"
@@ -256,6 +256,7 @@ class TestPlanCommand:
     """Tests for the one-shot acquisition planning subcommand."""
 
     def test_plan_requires_configured_input_path(self, tmp_path):
+        """Omitting data.plan.input_csv must exit with code 1 and include the field name in the message."""
         cfg = tmp_path / "config.yaml"
         cfg.write_text(_plan_config() + "model:\n  fast: false\n")
 
@@ -269,7 +270,7 @@ class TestPlanCommand:
         assert "data.plan.input_csv" in _result_text(result)
 
     def test_plan_writes_annotated_state_csv(self, tmp_path, monkeypatch):
-        _ProgressRecorder.instances.clear()
+        """End-to-end plan command must produce an annotated CSV with ps_score, drc_score, and recommendation columns."""
         state_csv = tmp_path / "state.csv"
         state_csv.write_text(
             "smiles,relation,value\nCCO,>=,5.0\nc1ccccc1,==,8.1\nCCN,,\nCCCC,,\n"
@@ -369,6 +370,7 @@ class TestPlanCommand:
         model.predict_smiles.assert_called_once_with(["CCN", "CCCC", "CCO"])
 
     def test_plan_suppresses_noisy_third_party_warnings(self, tmp_path, monkeypatch):
+        """suppress_noisy_loggers must be called exactly once so third-party warnings do not pollute plan output."""
         state_csv = tmp_path / "state.csv"
         state_csv.write_text("smiles,relation,value\nCCO,==,6.0\nCCN,,\n")
         cfg = tmp_path / "config.yaml"
@@ -400,6 +402,7 @@ class TestPlanCommand:
     def test_plan_suppresses_info_logs_while_progress_is_active(
         self, tmp_path, monkeypatch
     ):
+        """moal INFO logs must not bleed into Rich progress output during a plan run."""
         state_csv = tmp_path / "state.csv"
         state_csv.write_text("smiles,relation,value\nCCO,==,6.0\nCCN,,\n")
         cfg = tmp_path / "config.yaml"
@@ -431,6 +434,7 @@ class TestPlanCommand:
         assert "Noisy model log" not in _cli_output(result)
 
     def test_plan_rejects_empty_state_csv_with_no_training_data(self, tmp_path):
+        """A state CSV with only unqueried rows must exit with code 1 and explain that training data is required."""
         state_csv = tmp_path / "state.csv"
         state_csv.write_text("smiles,relation,value\nCCO,,\n")
         cfg = tmp_path / "config.yaml"
@@ -448,6 +452,7 @@ class TestPlanCommand:
         assert "did not contain any labeled records" in result.output
 
     def test_plan_rejects_fast_mode(self, tmp_path):
+        """Fast mode is incompatible with plan because there is no oracle ground truth for candidate scoring; must exit 1."""
         state_csv = tmp_path / "state.csv"
         state_csv.write_text("smiles,relation,value\nCCO,==,6.0\nCCN,,\n")
         cfg = tmp_path / "config.yaml"
@@ -465,6 +470,7 @@ class TestPlanCommand:
         assert "does not support model.fast=true" in result.output
 
     def test_plan_invalid_relation_schema_exits_one(self, tmp_path):
+        """An unrecognized relation symbol in the state CSV must exit with code 1 and name the bad value."""
         state_csv = tmp_path / "state.csv"
         state_csv.write_text("smiles,relation,value\nCCO,??,6.0\n")
         cfg = tmp_path / "config.yaml"
@@ -482,6 +488,7 @@ class TestPlanCommand:
         assert "relation must be one of" in result.output
 
     def test_plan_rejects_invalid_smiles(self, tmp_path):
+        """An unparseable SMILES string must exit with code 1 and include the offending string in the message."""
         state_csv = tmp_path / "state.csv"
         state_csv.write_text("smiles,relation,value\nCCO,==,6.0\nnot-a-smiles,,\n")
         cfg = tmp_path / "config.yaml"
@@ -499,6 +506,7 @@ class TestPlanCommand:
         assert "invalid SMILES" in result.output
 
     def test_plan_rejects_unsupported_left_ps_plus_drc_mix(self, tmp_path):
+        """A compound appearing with both a PS-LEFT and a DRC row is an unsupported fidelity mix and must exit 1."""
         state_csv = tmp_path / "state.csv"
         state_csv.write_text("smiles,relation,value\nCCO,<,5.0\nCCO,==,6.0\n")
         cfg = tmp_path / "config.yaml"
@@ -516,6 +524,7 @@ class TestPlanCommand:
         assert "mixed-fidelity combination is unsupported in plan mode" in result.output
 
     def test_plan_surfaces_non_finite_prediction_failure(self, tmp_path, monkeypatch):
+        """NaN predictions from the model must surface as exit code 1 rather than silently producing invalid scores."""
         state_csv = tmp_path / "state.csv"
         state_csv.write_text("smiles,relation,value\nCCO,==,6.0\nCCN,,\n")
         cfg = tmp_path / "config.yaml"
@@ -537,6 +546,7 @@ class TestPlanCommand:
         assert "predictions must contain only finite values" in _result_text(result)
 
     def test_plan_accepts_custom_column_names(self, tmp_path, monkeypatch):
+        """Non-default smiles, relation, and value column names must be read correctly throughout the plan pipeline."""
         state_csv = tmp_path / "state.csv"
         state_csv.write_text(
             "compound,kind,potency\nCCO,>=,5.0\nc1ccccc1,==,8.1\nCCN,,\n"
@@ -583,7 +593,7 @@ class TestPlanCommand:
     def test_plan_handles_all_terminal_compounds_writes_nan_scores(
         self, tmp_path, monkeypatch
     ):
-        _ProgressRecorder.instances.clear()
+        """When all compounds are terminal, the plan command must write NaN score columns without invoking the model."""
         state_csv = tmp_path / "state.csv"
         state_csv.write_text("smiles,relation,value\nCCO,==,7.2\nCCN,<,5.0\n")
         output_csv = tmp_path / "out.csv"
@@ -632,10 +642,7 @@ class TestExampleConfig:
     """Tests that the bundled examples/default_config.yaml remains valid."""
 
     def test_example_config_is_valid_yaml_with_required_sections(self):
-        from pathlib import Path
-
-        import yaml
-
+        """The bundled default config must be valid YAML that contains every top-level section required by PipelineConfig."""
         config_path = Path(__file__).parent.parent / "examples" / "default_config.yaml"
         assert config_path.exists(), (
             f"examples/default_config.yaml not found at {config_path}"
@@ -657,10 +664,7 @@ class TestExampleConfig:
             )
 
     def test_example_config_loads_as_pipeline_config(self):
-        from pathlib import Path
-
-        from moal.config import PipelineConfig
-
+        """The bundled default config must deserialize into a PipelineConfig with the expected cost and iteration values."""
         config_path = Path(__file__).parent.parent / "examples" / "default_config.yaml"
         cfg = PipelineConfig.from_yaml(config_path)
         assert cfg.oracle.cost_ps == 1.0

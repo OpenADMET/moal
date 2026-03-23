@@ -43,12 +43,42 @@ _EPS = 1e-9
 
 
 def _sigmoid(x: np.ndarray, tau: float) -> np.ndarray:
-    """Sigmoid with temperature τ."""
+    """Sigmoid function with temperature scaling.
+
+    Computes ``1 / (1 + exp(-x / tau))``.
+
+    Parameters
+    ----------
+    x : np.ndarray
+        Input array.
+    tau : float
+        Temperature parameter. Smaller values produce sharper transitions.
+
+    Returns
+    -------
+    np.ndarray
+        Sigmoid-transformed values, same shape as ``x``, in the range (0, 1).
+    """
     return 1.0 / (1.0 + np.exp(-x / tau))
 
 
 def _binary_entropy(p: np.ndarray) -> np.ndarray:
-    """Binary entropy H(p) in nats."""
+    """Binary entropy in nats.
+
+    Computes ``H(p) = -p·log(p) - (1-p)·log(1-p)``.  Input values are
+    clipped to ``[_EPS, 1 - _EPS]`` after casting to float64 to avoid
+    ``log(0)`` even when the input is float32.
+
+    Parameters
+    ----------
+    p : np.ndarray
+        Probability values.  Values outside ``[0, 1]`` are silently clipped.
+
+    Returns
+    -------
+    np.ndarray
+        Binary entropy in nats, same shape as ``p``, non-negative.
+    """
     # Cast to float64 so that the clip bounds (1e-9, 1-1e-9) are representable;
     # float32 rounds 1-1e-9 to exactly 1.0, letting log(0) through despite clipping
     p = np.clip(p.astype(np.float64), _EPS, 1 - _EPS)
@@ -74,6 +104,11 @@ class CostAwareGreedyAcquisition:
     tau : float, optional
         Sigmoid temperature controlling exploitation sharpness. Smaller τ
         means more sharply exploit the highest-scoring compounds. Default is 0.5.
+
+    Raises
+    ------
+    ValueError
+        If ``cost_ps`` or ``cost_drc`` is not strictly positive.
     """
 
     def __init__(
@@ -97,12 +132,43 @@ class CostAwareGreedyAcquisition:
     # ------------------------------------------------------------------
 
     def _score_drc(self, predictions: np.ndarray) -> np.ndarray:
-        """Exploitation score for DRC fidelity: p_active / cost_DRC."""
+        """Compute the DRC exploitation score for an array of predictions.
+
+        Score is ``p_active(ŷ) / cost_DRC``, where
+        ``p_active = sigmoid((ŷ - target_threshold) / τ)``.
+
+        Parameters
+        ----------
+        predictions : np.ndarray
+            Model pEC50 point estimates, shape ``(N,)``.
+
+        Returns
+        -------
+        np.ndarray
+            DRC acquisition scores, shape ``(N,)``, in the range
+            ``(0, 1 / cost_DRC)``.
+        """
         p_active = _sigmoid(predictions - self.target_threshold, self.tau)
         return p_active / self.cost_drc
 
     def _score_ps(self, predictions: np.ndarray) -> np.ndarray:
-        """Exploration score for PS fidelity: H_binary(p_cross) / cost_PS."""
+        """Compute the PS exploration score for an array of predictions.
+
+        Score is ``H_binary(p_cross(ŷ, T)) / cost_PS``, where
+        ``p_cross = sigmoid((ŷ - ps_threshold) / τ)`` and ``H_binary`` is
+        binary entropy in nats.
+
+        Parameters
+        ----------
+        predictions : np.ndarray
+            Model pEC50 point estimates, shape ``(N,)``.
+
+        Returns
+        -------
+        np.ndarray
+            PS acquisition scores, shape ``(N,)``, in the range
+            ``[0, log(2) / cost_PS]``.
+        """
         p_cross = _sigmoid(predictions - self.ps_threshold, self.tau)
         h = _binary_entropy(p_cross)
         return h / self.cost_ps
@@ -151,6 +217,11 @@ class CostAwareGreedyAcquisition:
         -------
         list[tuple[str, QueryType]]
             Ordered list of (smiles, QueryType) pairs, highest-scoring first.
+
+        Raises
+        ------
+        ValueError
+            If ``predictions`` contains non-finite values (NaN or inf).
         """
         ps_labeled_smiles = list(ps_labeled_smiles or [])
 
