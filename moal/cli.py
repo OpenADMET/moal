@@ -215,7 +215,7 @@ def simulate(config: Path, output_dir: Path | None, verbose: bool) -> None:
         raise click.ClickException(str(exc)) from exc
 
     # Write output CSVs immediately so results are available as soon as
-    # computation finishes, independent of any dashboard export latency.
+    # computation finishes, independent of any dashboard export latency
     metrics_df = pd.DataFrame([r.metrics for r in results.iterations])
     metrics_path = out_dir / "iteration_metrics.csv"
     metrics_df.to_csv(metrics_path, index=False)
@@ -343,7 +343,7 @@ def plan(config: Path, output_dir: Path | None, verbose: bool) -> None:
                     1 for r in state.training_records if r.fidelity == QueryType.PRIMARY_SCREEN
                 )
                 # Upgrades are PS-INTERVAL records that also have a DRC record;
-                # training_records_for_refit removes them, so the difference is the count.
+                # training_records_for_refit removes them, so the difference is the count
                 n_upgrades = n_labeled - len(fit_records)
                 upgrade_suffix = (
                     f", [magenta]{n_upgrades} upgrades[/magenta]" if n_upgrades > 0 else ""

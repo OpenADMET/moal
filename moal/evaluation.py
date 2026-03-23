@@ -95,7 +95,7 @@ def scaffold_split(
         sc = _murcko_scaffold(smi)
         scaffold_to_indices[sc].append(i)
 
-    # Sort scaffold groups: largest first, break ties randomly.
+    # Sort scaffold groups: largest first, break ties randomly
     groups = list(scaffold_to_indices.values())
     order = np.argsort([-len(g) for g in groups])
     groups = [groups[i] for i in order]
@@ -110,7 +110,7 @@ def scaffold_split(
         else:
             train_idx.extend(group)
 
-    # Shuffle within each split for reproducibility.
+    # Shuffle within each split for reproducibility
     rng.shuffle(train_idx)
     rng.shuffle(test_idx)
     return train_idx, test_idx

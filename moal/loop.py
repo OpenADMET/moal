@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Rich console used for status messages; writes to stderr so it doesn't mix
-# with any stdout output and plays nicely with the progress bar.
+# with any stdout output and plays nicely with the progress bar
 _console = Console(stderr=True)
 
 
@@ -247,7 +247,7 @@ class ActiveLearningLoop:
         n_true_actives = self.oracle.n_true_actives(self.evaluator.activity_threshold)
 
         # Build a per-iteration noise schedule for NoisyOracleModel fast mode;
-        # linspace(a, a, n) naturally handles the constant-error case.
+        # linspace(a, a, n) naturally handles the constant-error case
         noise_schedule: np.ndarray | None = None
         if isinstance(self.model, NoisyOracleModel):
             noise_schedule = np.linspace(self.initial_error, self.final_error, n_iterations)
@@ -266,7 +266,7 @@ class ActiveLearningLoop:
 
         # Pre-compute first iteration's candidate queries before entering the
         # progress bar so Step 3 of iteration i prepares for iteration i+1.
-        # Both the unqueried pool and PS-labeled INTERVAL hits are scorable.
+        # Both the unqueried pool and PS-labeled INTERVAL hits are scorable
         unlabeled = self.oracle.get_unlabeled_smiles()
         ps_labeled = self.oracle.get_ps_labeled_smiles()
         all_scorable = unlabeled + ps_labeled
@@ -310,7 +310,7 @@ class ActiveLearningLoop:
                     # --- Query oracle -------------------------------------
                     # Snapshot the PS-labeled pool before querying so planned DRC
                     # queries can be classified as upgrades vs. first-pass in the
-                    # progress display without waiting for oracle results.
+                    # progress display without waiting for oracle results
                     ps_labeled_before = set(self.oracle.get_ps_labeled_smiles())
                     n_drc = sum(1 for _, qt in queries if qt == QueryType.DOSE_RESPONSE)
                     n_ps = sum(1 for _, qt in queries if qt == QueryType.PRIMARY_SCREEN)
@@ -337,13 +337,13 @@ class ActiveLearningLoop:
                     # Forward is_canonical so query_batch uses the same key strategy
                     # that was used when building the ground truth dict; omitting it
                     # would cause re-canonicalization to produce keys that don't exist
-                    # when the oracle was initialised with is_canonical=True.
+                    # when the oracle was initialised with is_canonical=True
                     new_records = self.oracle.query_batch(
                         queries, iteration, is_canonical=self.oracle.is_canonical
                     )
                     # Derive actual per-fidelity costs from records returned by the
                     # oracle — not from the pre-query candidate list, which may
-                    # differ if the oracle skips invalid or already-labeled compounds.
+                    # differ if the oracle skips invalid or already-labeled compounds
                     iter_drc_cost = sum(
                         r.cost for r in new_records if r.fidelity == QueryType.DOSE_RESPONSE
                     )
@@ -351,7 +351,7 @@ class ActiveLearningLoop:
                         r.cost for r in new_records if r.fidelity == QueryType.PRIMARY_SCREEN
                     )
                     # Upgrades are DRC queries for compounds already in the PS pool;
-                    # ps_labeled_before was captured before this iteration's queries.
+                    # ps_labeled_before was captured before this iteration's queries
                     iter_upgrade_cost = sum(
                         r.cost
                         for r in new_records
@@ -370,7 +370,7 @@ class ActiveLearningLoop:
                         1 for r in all_labeled if r.fidelity == QueryType.PRIMARY_SCREEN
                     )
                     # Count cumulative upgrades from the evaluator breakdown so the
-                    # refit message is consistent with the metrics that get logged.
+                    # refit message is consistent with the metrics that get logged
                     n_cumulative_upgrades = int(
                         self.evaluator.fidelity_breakdown(all_labeled).get("upgrades", 0)
                     )
@@ -410,7 +410,7 @@ class ActiveLearningLoop:
                             output_dir=self.output_dir,
                         )
 
-                    # Evaluate model metric on held-out test set.
+                    # Evaluate model metric on held-out test set
                     model_metric_value: float | None = None
                     if self.test_set is not None:
                         test_smiles, test_pec50 = self.test_set

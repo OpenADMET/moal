@@ -287,7 +287,7 @@ class LiveDashboard:
         self._app.layout = html.Div(
             [
                 # Seed with the loading splash so there is no flash of a default blank figure
-                # before the first Interval callback round-trip completes.
+                # before the first Interval callback round-trip completes
                 dcc.Graph(id="live-graph", figure=self._build_figure([])),
                 dcc.Interval(id="interval-component", interval=1000, n_intervals=0),
             ],
@@ -669,7 +669,7 @@ class LiveDashboard:
         # _OneDPLocator restricts steps to 1-2-5 sequence with step >= 0.1,
         # preventing ticks that need more than one decimal place on any frame.
         # The explicit ylim from _metric_axis_params guarantees the view always
-        # spans at least one full step, so _OneDPLocator sees >= 2 tick positions.
+        # spans at least one full step, so _OneDPLocator sees >= 2 tick positions
         ax3.yaxis.set_major_locator(_OneDPLocator())
         metric_ymin, metric_ymax, _, _ = self._metric_axis_params(metric_vals)
         ax3.set_ylim(metric_ymin, metric_ymax)
@@ -774,7 +774,7 @@ class LiveDashboard:
         t_lo = math.floor(vmin_data / step) * step
         t_hi = math.ceil(vmax_data / step) * step
 
-        # Guarantee at least two distinct tick positions.
+        # Guarantee at least two distinct tick positions
         if t_hi <= t_lo + step * 0.5:
             t_hi = t_lo + step
 
@@ -991,7 +991,7 @@ class LiveDashboard:
         actives_y_max = max(1.05, max_actives * 1.05)
         cost_k_y_max = max(1.05, max_cost_k * 1.05)
         # Metric axis: explicit range + tick0/dtick computed from data span so at
-        # least two tick labels are always visible even on narrow early-iteration ranges.
+        # least two tick labels are always visible even on narrow early-iteration ranges
         metric_ymin, metric_ymax, metric_tick0, metric_dtick = self._metric_axis_params(metric_vals)
 
         fig.update_layout(
@@ -1046,7 +1046,7 @@ class LiveDashboard:
             # Explicit range from _metric_axis_params guarantees >= 2 tick positions
             # are always visible. tick0/dtick are span-based (not max-based) so they
             # stay consistent with the range on every frame, including narrow early ones.
-            # tickformat ".3~g" trims trailing zeros (e.g. 1.0 → "1", 0.5 → "0.5").
+            # tickformat ".3~g" trims trailing zeros (e.g. 1.0 → "1", 0.5 → "0.5")
             range=[metric_ymin, metric_ymax],
             tickmode="linear",
             tick0=metric_tick0,

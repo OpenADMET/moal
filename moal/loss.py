@@ -21,7 +21,7 @@ from torch import Tensor
 
 from moal.types import CensoringType, LabelRecord, QueryType
 
-# Lower bound on σ to prevent loss collapse when σ is learned.
+# Lower bound on σ to prevent loss collapse when σ is learned
 _SIGMA_MIN = 0.05
 _LOG_SQRT_2PI = math.log(math.sqrt(2 * math.pi))
 
@@ -147,7 +147,7 @@ class CensoredRegressionLoss(nn.Module):
             return w * ((pred - t) / sigma) ** 2
 
         if ct == CensoringType.LEFT:
-            # True value < t; penalise if model predicts above t.
+            # True value < t; penalise if model predicts above t
             log_p = _normal_log_cdf((t - pred) / sigma)
             return w * (-log_p)
 
@@ -158,7 +158,7 @@ class CensoredRegressionLoss(nn.Module):
             # Direct subtraction of CDF values clamped to a minimum probability
             # mass to avoid log(0).  This is not a log-sum-exp technique; for
             # typical pEC50 predictions in [0, 14] catastrophic cancellation is
-            # unlikely, but the clamp ensures a finite gradient in edge cases.
+            # unlikely, but the clamp ensures a finite gradient in edge cases
             log_prob = torch.log(torch.clamp(log_p_upper.exp() - log_p_lower.exp(), min=1e-12))
             return w * (-log_prob)
 

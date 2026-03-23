@@ -1,7 +1,8 @@
 """ChemProp Lightning module with CheMeleon pretrained weights.
 
 Key design constraints:
-1. CheMeleon atom/bond feature constants are hardcoded and asserted at init.
+1. CheMeleon architecture hyperparameters are loaded from the checkpoint's
+   ``hyper_parameters`` dict; no separate atom/bond dimension constants are required.
 2. CheMeleon weights are loaded with strict=True — no silent mismatches.
 3. A freeze/unfreeze schedule trains the FFN head first (freeze_epochs epochs)
    then unfreezes the encoder with a discriminative (lower) learning rate.
@@ -69,10 +70,6 @@ class ChemPropLightningModule(L.LightningModule):
 
     Parameters
     ----------
-    hidden_size : int, optional
-        MPNN hidden dimension (must match CheMeleon checkpoint). Default is 300.
-    depth : int, optional
-        Number of message-passing steps. Default is 3.
     ffn_hidden_size : int, optional
         FFN head hidden dimension. Default is 300.
     ffn_num_layers : int, optional
@@ -179,7 +176,7 @@ class ChemPropLightningModule(L.LightningModule):
             Checkpoint dictionary with ``hyper_parameters`` and
             ``state_dict`` keys.
         """
-        # Ensure the CheMeleon checkpoint is downloaded.
+        # Ensure the CheMeleon checkpoint is downloaded
         download_chemeleon()
         ckpt_path = Path().home() / ".chemprop" / "chemeleon_mp.pt"
         return cast(dict[str, Any], torch.load(ckpt_path, weights_only=True))
@@ -254,7 +251,7 @@ class ChemPropLightningModule(L.LightningModule):
         """
         if self._encoder_frozen and self.current_epoch >= self.freeze_epochs:
             self._unfreeze_encoder()
-            # Rebuild optimizers so the newly unfrozen params get lr_encoder.
+            # Rebuild optimizers so the newly unfrozen params get lr_encoder
             self.trainer.strategy.setup_optimizers(self.trainer)
 
     # ------------------------------------------------------------------
@@ -385,24 +382,24 @@ class ChemPropLightningModule(L.LightningModule):
             Array of shape ``(N,)`` with pEC50 point estimates, aligned with
             ``smiles_list``.
         """
-        # Create the full dataset once rather than chunking manually.
+        # Create the full dataset once rather than chunking manually
         dataset = MoleculeDataset([MoleculeDatapoint.from_smi(s) for s in smiles_list])
 
-        # Let the dataloader handle batching and graph collation automatically.
+        # Let the dataloader handle batching and graph collation automatically
         dataloader = build_dataloader(dataset, batch_size=batch_size, shuffle=False)
 
         all_preds = []
 
-        # Disable gradient tracking for inference.
+        # Disable gradient tracking for inference
         with torch.inference_mode():
             for batch in dataloader:
-                # Move batch to device.
+                # Move batch to device
                 batch.bmg.to(self.device)
 
-                # Make predictions.
+                # Make predictions
                 preds = self(batch.bmg).cpu().numpy().tolist()
 
-                # Accumulate predictions.
+                # Accumulate predictions
                 all_preds.extend(preds)
 
         return np.array(all_preds, dtype=np.float32)
@@ -565,7 +562,7 @@ class NoisyOracleModel:
         for i, smi in enumerate(smiles_list):
             # KeyError propagates if smi is absent, matching ChemPropLightningModule behaviour
             true_pec50 = self._ground_truth[smi]
-            # Multiply by 2 so that the expected absolute error equals noise_scale.
+            # Multiply by 2 so that the expected absolute error equals noise_scale
             noise = self._rng.uniform(-2 * noise_scale, 2 * noise_scale)
             preds[i] = true_pec50 + noise
         return preds

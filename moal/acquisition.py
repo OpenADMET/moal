@@ -245,7 +245,7 @@ class CostAwareGreedyAcquisition:
             )
 
         # Candidates are (score, smiles, QueryType); SMILES is the dedup key so
-        # both pools can be merged without index-space collisions.
+        # both pools can be merged without index-space collisions
         candidates: list[tuple[float, str, QueryType]] = []
 
         if unlabeled_smiles:
