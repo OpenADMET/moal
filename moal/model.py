@@ -182,7 +182,6 @@ class ChemPropLightningModule(L.LightningModule):
         # Ensure the CheMeleon checkpoint is downloaded.
         download_chemeleon()
         ckpt_path = Path().home() / ".chemprop" / "chemeleon_mp.pt"
-        weights = torch.load(ckpt_path, weights_only=True)
         return cast(dict[str, Any], torch.load(ckpt_path, weights_only=True))
 
     # ------------------------------------------------------------------

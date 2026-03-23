@@ -203,7 +203,8 @@ class MixedFidelityDataModule(L.LightningDataModule):
             Shuffled DataLoader over the training split using
             :meth:`MixedFidelityDataset.collate_fn`.
         """
-        assert self._train_dataset is not None, "setup() must be called before train_dataloader()"
+        if self._train_dataset is None:
+            raise RuntimeError("setup() must be called before train_dataloader()")
         return DataLoader(
             self._train_dataset,
             batch_size=self.batch_size,
