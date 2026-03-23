@@ -208,7 +208,9 @@ class ChemPropLightningModule(L.LightningModule):
             Parameters belonging to ``self.model.agg`` and
             ``self.model.predictor``, concatenated in that order.
         """
-        return list(cast(nn.Module, self.model.agg).parameters()) + list(cast(nn.Module, self.model.predictor).parameters())
+        return list(cast(nn.Module, self.model.agg).parameters()) + list(
+            cast(nn.Module, self.model.predictor).parameters()
+        )
 
     def _freeze_encoder(self) -> None:
         """Freeze all message-passing encoder parameters.
