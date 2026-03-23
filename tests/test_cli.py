@@ -26,15 +26,12 @@ def _cli_output(result) -> str:
 
 
 class _ProgressRecorder:
-    instances: list["_ProgressRecorder"] = []
-
     def __init__(self, *args, **kwargs):
         self.added_tasks: list[dict[str, object]] = []
         self.updated_tasks: list[dict[str, object]] = []
         self.advanced_tasks: list[object] = []
 
     def __enter__(self):
-        type(self).instances.append(self)
         return self
 
     def __exit__(self, exc_type, exc, tb):
@@ -53,9 +50,12 @@ class _ProgressRecorder:
         self.advanced_tasks.append(task)
 
 
-def _latest_progress() -> _ProgressRecorder:
-    assert _ProgressRecorder.instances
-    return _ProgressRecorder.instances[-1]
+@pytest.fixture
+def progress_recorder(monkeypatch):
+    """Patch moal.cli.Progress so every Progress(...) call returns one shared recorder instance."""
+    recorder = _ProgressRecorder()
+    monkeypatch.setattr("moal.cli.Progress", lambda *args, **kwargs: recorder)
+    return recorder
 
 
 def _simulate_config(
@@ -269,7 +269,7 @@ class TestPlanCommand:
         assert result.exit_code == 1
         assert "data.plan.input_csv" in _result_text(result)
 
-    def test_plan_writes_annotated_state_csv(self, tmp_path, monkeypatch):
+    def test_plan_writes_annotated_state_csv(self, tmp_path, monkeypatch, progress_recorder):
         """End-to-end plan command must produce an annotated CSV with ps_score, drc_score, and recommendation columns."""
         state_csv = tmp_path / "state.csv"
         state_csv.write_text(
@@ -302,7 +302,6 @@ class TestPlanCommand:
         # unqueried: CCN, CCCC (2); ps upgrade: CCO (1) → 3 total predictions
         model.predict_smiles.return_value = np.array([5.0, 8.0, 6.5], dtype=np.float32)
         monkeypatch.setattr("moal.cli._build_plan_model", lambda cfg: model)
-        monkeypatch.setattr("moal.cli.Progress", _ProgressRecorder)
 
         runner = CliRunner()
         result = runner.invoke(
@@ -312,7 +311,7 @@ class TestPlanCommand:
 
         assert result.exit_code == 0, _result_text(result)
         assert output_csv.exists()
-        progress = _latest_progress()
+        progress = progress_recorder
         assert progress.added_tasks == [
             {"description": "[cyan]Parsing campaign state[/cyan]", "total": 3}
         ]
@@ -521,7 +520,7 @@ class TestPlanCommand:
         )
 
         assert result.exit_code == 1
-        assert "mixed-fidelity combination is unsupported in plan mode" in result.output
+        assert "mixed-fidelity combination is unsupported" in result.output
 
     def test_plan_surfaces_non_finite_prediction_failure(self, tmp_path, monkeypatch):
         """NaN predictions from the model must surface as exit code 1 rather than silently producing invalid scores."""
@@ -591,7 +590,7 @@ class TestPlanCommand:
         model.predict_smiles.assert_called_once_with(["CCN", "CCO"])
 
     def test_plan_handles_all_terminal_compounds_writes_nan_scores(
-        self, tmp_path, monkeypatch
+        self, tmp_path, monkeypatch, progress_recorder
     ):
         """When all compounds are terminal, the plan command must write NaN score columns without invoking the model."""
         state_csv = tmp_path / "state.csv"
@@ -605,7 +604,6 @@ class TestPlanCommand:
 
         model = Mock(spec_set=["refit", "predict_smiles"])
         monkeypatch.setattr("moal.cli._build_plan_model", lambda cfg: model)
-        monkeypatch.setattr("moal.cli.Progress", _ProgressRecorder)
 
         runner = CliRunner()
         result = runner.invoke(
@@ -615,7 +613,7 @@ class TestPlanCommand:
 
         assert result.exit_code == 0, _result_text(result)
         assert output_csv.exists()
-        progress = _latest_progress()
+        progress = progress_recorder
         descriptions = [
             update["description"]
             for update in progress.updated_tasks
@@ -676,3 +674,137 @@ class TestExampleConfig:
         assert cfg.data.simulate.input_csv == ""
         assert cfg.data.plan.output_csv == "campaign_state.csv"
         assert cfg.data.plan.input_csv == ""
+
+
+class TestSimulatePretrain:
+    """Tests for moal simulate with optional pretrain data."""
+
+    def _full_config(self, gt_path, pretrain_path=None, *, ps_threshold=5.0, test_set_size=0.0):
+        """Return a complete simulate YAML config string with optional pretrain sub-section."""
+        pretrain_block = (
+            f"    pretrain:\n"
+            f"      input_csv: {pretrain_path}\n"
+            if pretrain_path
+            else ""
+        )
+        return (
+            "data:\n"
+            "  simulate:\n"
+            f"    input_csv: {gt_path}\n"
+            "    smiles_column: smiles\n"
+            "    pec50_column: pec50\n"
+            f"    test_set_size: {test_set_size}\n"
+            + pretrain_block
+            + "model:\n"
+            "  fast: true\n"
+            "dashboard:\n"
+            "  enabled: false\n"
+            "active_learning_loop:\n"
+            "  n_iterations: 1\n"
+            "  k_per_iteration: 1\n"
+            "oracle:\n"
+            f"  ps_threshold: {ps_threshold}\n"
+        )
+
+    def _write_ground_truth(self, path):
+        path.write_text(
+            "smiles,pec50\n"
+            "c1ccccc1,5.5\n"
+            "CCO,7.8\n"
+            "CCN,4.2\n"
+            "CCC,6.1\n"
+            "CCCC,7.1\n"
+        )
+
+    def test_pretrain_csv_accepted_and_run_succeeds(self, tmp_path):
+        """A valid pretrain CSV must be ingested without error and the simulate run must complete."""
+        gt = tmp_path / "gt.csv"
+        self._write_ground_truth(gt)
+        pretrain = tmp_path / "pretrain.csv"
+        pretrain.write_text("smiles,relation,value\nCC(=O)O,<,5.0\nCC(C)O,==,6.5\n")
+
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(self._full_config(gt, pretrain))
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["simulate", "--config", str(cfg), "--output-dir", str(tmp_path / "out")],
+        )
+        assert result.exit_code == 0, _result_text(result)
+        assert (tmp_path / "out" / "iteration_metrics.csv").exists()
+
+    def test_invalid_pretrain_smiles_exits_one(self, tmp_path):
+        """An unparseable SMILES in the pretrain CSV must cause exit code 1."""
+        gt = tmp_path / "gt.csv"
+        self._write_ground_truth(gt)
+        pretrain = tmp_path / "pretrain.csv"
+        pretrain.write_text("smiles,relation,value\nnot_a_smiles,==,7.0\n")
+
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(self._full_config(gt, pretrain))
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["simulate", "--config", str(cfg), "--output-dir", str(tmp_path / "out")],
+        )
+        assert result.exit_code == 1
+
+    def test_pretrain_ps_threshold_mismatch_exits_one(self, tmp_path):
+        """A PS threshold in the pretrain CSV that doesn't match oracle.ps_threshold must exit with code 1."""
+        gt = tmp_path / "gt.csv"
+        self._write_ground_truth(gt)
+        pretrain = tmp_path / "pretrain.csv"
+        pretrain.write_text("smiles,relation,value\nCC(=O)O,<,6.0\n")  # 6.0 ≠ ps_threshold 5.0
+
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(self._full_config(gt, pretrain, ps_threshold=5.0))
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["simulate", "--config", str(cfg), "--output-dir", str(tmp_path / "out")],
+        )
+        assert result.exit_code == 1
+        assert "PS threshold" in _result_text(result)
+
+    def test_test_set_overlap_logged(self, tmp_path):
+        """When a pretrain compound overlaps with the test set, a warning must be logged with the SMILES."""
+        from unittest.mock import patch
+
+        gt = tmp_path / "gt.csv"
+        # Use a longer list so scaffold split can hold out a meaningful test set
+        rows = "\n".join(
+            f"c1ccc(CC{'C' * i})cc1,{5.0 + i * 0.3}" for i in range(15)
+        )
+        gt.write_text(f"smiles,pec50\n{rows}\n")
+
+        # Use one of the ground-truth SMILES as a pretrain record
+        first_smiles = "c1ccc(CC)cc1"
+        pretrain = tmp_path / "pretrain.csv"
+        pretrain.write_text(f"smiles,relation,value\n{first_smiles},==,7.0\n")
+
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(self._full_config(gt, pretrain, test_set_size=0.3))
+        runner = CliRunner()
+        warning_calls: list[str] = []
+
+        original_warning = cli.logger.warning
+
+        def _capture_warning(msg, *args, **kwargs):
+            warning_calls.append(msg % args if args else msg)
+            original_warning(msg, *args, **kwargs)
+
+        with patch.object(cli.logger, "warning", side_effect=_capture_warning):
+            result = runner.invoke(
+                main,
+                ["simulate", "--config", str(cfg), "--output-dir", str(tmp_path / "out")],
+            )
+        # Run must still succeed
+        assert result.exit_code == 0, _result_text(result)
+        # Overlap warning must have been emitted
+        overlap_messages = [
+            m for m in warning_calls
+            if "test set" in m.lower() and "overlap" in m.lower()
+        ]
+        assert overlap_messages, (
+            "Expected a test-set overlap warning, got: " + str(warning_calls)
+        )

@@ -39,10 +39,11 @@ from moal.oracle import CostAwareOracle
 from moal.planning import (
     annotate_campaign_state,
     parse_campaign_state,
+    parse_pretrain_records,
     training_records_for_refit,
 )
 from moal.preprocessing import SMILESPreprocessor
-from moal.types import QueryType
+from moal.types import LabelRecord, QueryType
 
 logger = logging.getLogger(__name__)
 _console = Console(stderr=True)
@@ -184,6 +185,9 @@ def simulate(config: Path, output_dir: Path | None, verbose: bool) -> None:
             theme=cfg.dashboard.theme,
         )
 
+    # Load optional pretrain data (same campaign state format as moal plan)
+    pretrain_records = _load_pretrain_records(cfg, preprocessor, test_set)
+
     loop = ActiveLearningLoop(
         oracle=oracle,
         model=model,
@@ -198,13 +202,17 @@ def simulate(config: Path, output_dir: Path | None, verbose: bool) -> None:
         initial_error=cfg.model.initial_error,
         final_error=cfg.model.final_error,
         reset_weights_on_refit=cfg.model.reset_weights_on_refit,
+        pretrain_records=pretrain_records,
         output_dir=out_dir,
     )
 
-    results = loop.run(
-        n_iterations=cfg.active_learning_loop.n_iterations,
-        k_per_iteration=cfg.active_learning_loop.k_per_iteration,
-    )
+    try:
+        results = loop.run(
+            n_iterations=cfg.active_learning_loop.n_iterations,
+            k_per_iteration=cfg.active_learning_loop.k_per_iteration,
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
     # Write output CSVs immediately so results are available as soon as
     # computation finishes, independent of any dashboard export latency.
@@ -422,6 +430,82 @@ def plan(config: Path, output_dir: Path | None, verbose: bool) -> None:
         "Annotated state CSV written to %s ",
         plan_path,
     )
+
+
+def _load_pretrain_records(
+    cfg: PipelineConfig,
+    preprocessor: SMILESPreprocessor,
+    test_set: tuple[list[str], np.ndarray] | None,
+) -> list[LabelRecord]:
+    """Load and validate optional pretrain records for ``moal simulate``.
+
+    Returns an empty list when ``data.simulate.pretrain.input_csv`` is not
+    set.  When the pretrain CSV is configured, parses it as a mixed-fidelity
+    campaign state CSV (same format as ``moal plan``), validates PS threshold
+    consistency, and warns about any overlap with the held-out test set.
+
+    Parameters
+    ----------
+    cfg : PipelineConfig
+        Active campaign configuration.
+    preprocessor : SMILESPreprocessor
+        Used to canonicalize SMILES from the pretrain CSV.
+    test_set : tuple or None
+        ``(smiles_list, pec50_array)`` held-out scaffold split, or None if no
+        test set is configured.  Used solely for overlap detection.
+
+    Returns
+    -------
+    list[LabelRecord]
+        Parsed pretrain records, or an empty list if no pretrain CSV is set.
+    """
+    pretrain_cfg = cfg.data.simulate.pretrain
+    if not pretrain_cfg.input_csv:
+        return []
+
+    pretrain_df = _read_csv(
+        Path(pretrain_cfg.input_csv),
+        label="data.simulate.pretrain.input_csv",
+    )
+    logger.info(
+        "Loaded %d rows from pretrain CSV %s",
+        len(pretrain_df),
+        pretrain_cfg.input_csv,
+    )
+
+    try:
+        records: list[LabelRecord] = parse_pretrain_records(
+            pretrain_df,
+            cost_ps=cfg.oracle.cost_ps,
+            cost_drc=cfg.oracle.cost_drc,
+            upper_bound=cfg.oracle.upper_bound,
+            preprocessor=preprocessor,
+            smiles_column=pretrain_cfg.smiles_column,
+            relation_column=pretrain_cfg.relation_column,
+            value_column=pretrain_cfg.value_column,
+            is_canonical=pretrain_cfg.is_canonical,
+            expected_ps_threshold=cfg.oracle.ps_threshold,
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    logger.info("Parsed %d pretrain training records.", len(records))
+
+    # Warn about test-set overlap (potential evaluation metric inflation)
+    if test_set is not None and records:
+        test_smiles_set = set(test_set[0])
+        pretrain_canonical = {r.canonical_smiles for r in records}
+        overlap = sorted(pretrain_canonical & test_smiles_set)
+        if overlap:
+            logger.warning(
+                "%d pretrain compound(s) overlap with the held-out test set. "
+                "Model performance metrics may be inflated for these compounds. "
+                "Overlapping SMILES:\n%s",
+                len(overlap),
+                "\n".join(f"  {s}" for s in overlap),
+            )
+
+    return records
 
 
 def _configure_logging(verbose: bool) -> None:

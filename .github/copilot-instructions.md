@@ -49,6 +49,14 @@ LabelRecord (frozen dataclass)
     ▼
 oracle.training_records ── excludes INTERVAL PS for compounds with DRC
     │   (prevents double-weighting of upgraded compounds)
+    │
+    │   [optional] pretrain_records ← parse_pretrain_records() ← CSV (<, >=, ==)
+    │                                  same format as moal plan campaign state
+    │                                  loaded once in cli.simulate(), passed to loop
+    ▼
+_merge_pretrain_with_oracle(pretrain_records, oracle.training_records)
+    │   Oracle wins on (canonical_smiles, fidelity) duplicates
+    │   training_records_for_refit() applied to combined pool
     ▼
 MixedFidelityDataModule ── train/val split (scaffold-unaware random split)
     │
@@ -127,7 +135,7 @@ These are separate and must not be conflated:
 - **`Chem.MolToSmiles(mol, isomericSmiles=True)`** is explicit in `preprocessing.py`. Do not remove this — RDKit's default has changed historically and chirality must be preserved.
 - **`TrainerConfig.to_dict()`** returns only `L.Trainer`-compatible keys (`max_epochs`, `accelerator`, `enable_progress_bar`, `enable_model_summary`, `log_every_n_steps`). `val_fraction`, `split_seed`, and `num_workers` are consumed by `MixedFidelityDataModule` via `to_datamodule_kwargs()` which returns `{val_fraction, seed, num_workers}`. Passing them to `L.Trainer` raises `TypeError`.
 - **`logging.basicConfig`** must only be called inside `cli.main()`, never at module scope. Module-level calls fire on import and reconfigure the root logger during test collection.
-- **`oracle.training_records`** (not `oracle.labeled_records`) must be passed to `model.refit()`. It excludes PS INTERVAL records for compounds that have a DRC record, preventing double-weighting of upgraded compounds.
+- **`oracle.training_records`** (not `oracle.labeled_records`) must be passed to `_merge_pretrain_with_oracle()` (or directly to `model.refit()` when no pretrain is configured). It excludes PS INTERVAL records for compounds that have a DRC record, preventing double-weighting of upgraded compounds.
 
 ---
 
@@ -147,7 +155,8 @@ All campaign parameters live in `moal/config.py` as frozen dataclasses. The YAML
 | `trainer:` | `TrainerConfig` | `max_epochs`, `accelerator`, `enable_progress_bar`, `enable_model_summary`, `val_fraction`, `split_seed`, `num_workers`, `log_every_n_steps` |
 | `dashboard:` | `DashboardConfig` | `enabled`, `model_metric`, `port`, `export_width`, `export_height`, `theme` |
 | `data:` | `DataConfig` | `output_dir`; nested `simulate:` → `SimulationDataConfig`; nested `plan:` → `PlanDataConfig` |
-| `data.simulate:` | `SimulationDataConfig` | `input_csv`, `smiles_column`, `pec50_column`, `is_canonical`, `test_set_size` |
+| `data.simulate:` | `SimulationDataConfig` | `input_csv`, `smiles_column`, `pec50_column`, `is_canonical`, `test_set_size`; nested `pretrain:` → `PretrainDataConfig` |
+| `data.simulate.pretrain:` | `PretrainDataConfig` | `input_csv`, `smiles_column`, `relation_column`, `value_column`, `is_canonical`; same fields as `PlanDataConfig` minus `output_csv` |
 | `data.plan:` | `PlanDataConfig` | `input_csv`, `output_csv`, `smiles_column`, `relation_column`, `value_column`, `is_canonical` |
 | `active_learning_loop:` | `ActiveLearningLoopConfig` | `n_iterations`, `k_per_iteration` |
 | *(top-level)* | `PipelineConfig` | `seed` |
@@ -156,13 +165,25 @@ All campaign parameters live in `moal/config.py` as frozen dataclasses. The YAML
 
 When `model.fast = true` in the config, `ActiveLearningLoop` uses `NoisyOracleModel` instead of `ChemPropLightningModule`. This surrogate looks up true pEC50 values from the oracle's ground truth and adds uniform noise, skipping all neural network training. The noise scale ramps linearly from `model.initial_error` down to `model.final_error` across iterations. Use fast mode for rapid campaign prototyping and integration tests; never for real experiments.
 
+`NoisyOracleModel.refit()` ignores its `records` argument — passing a combined pretrain+oracle pool in fast mode is silently harmless and requires no special-casing.
+
+### Pretrain merge helper
+
+`_merge_pretrain_with_oracle(pretrain, oracle_records, superseded_tracker)` in `loop.py` is called before every `model.refit()` when `pretrain_records` is non-empty. Key invariants:
+
+- Deduplication key is `(canonical_smiles, fidelity)`. Oracle always wins; the pretrain record is dropped and its canonical SMILES added to `superseded_tracker`.
+- `training_records_for_refit()` is applied to the **combined** list so pretrain PS INTERVAL records for compounds that the oracle upgrades to DRC are dropped naturally — no additional dedup logic is needed.
+- The `superseded_tracker` accumulates across all iterations; a single `logger.warning()` listing all superseded SMILES is emitted **once** after the loop ends (not every iteration).
+- Pretrain records carry `iteration = _PLAN_MODE_ITERATION` (0) from `parse_campaign_state`. Mixing these with oracle iteration values is harmless — `iteration` is informational only.
+
 ### Planning module
 
-`moal/planning.py` powers the `moal plan` command. Key components:
+`moal/planning.py` powers the `moal plan` command and provides shared CSV-parsing infrastructure used by `moal simulate`'s pretrain feature. Key components:
 
 - **`CampaignState`** (dataclass) — holds `training_records: list[LabelRecord]`, `unqueried_rows: list[tuple[int, str]]`, and `ps_upgrade_rows: list[tuple[int, str]]` (DRC upgrade candidates).
 - **`parse_campaign_state(df, *, cost_ps, cost_drc, upper_bound, preprocessor, ...)`** — converts the unified campaign state CSV into a `CampaignState`. Validates that no compound appears in multiple partitions and that relation/value fields are consistent.
-- **`training_records_for_refit(records)`** — mirrors `oracle.training_records` deduplication logic: drops PS INTERVAL rows for compounds that also have a DRC record.
+- **`parse_pretrain_records(df, *, ...)`** — thin wrapper over `parse_campaign_state()` for use in `moal simulate`. Warns and skips unqueried rows (no training signal), then returns `state.training_records`. Accepts the same kwargs as `parse_campaign_state()`.
+- **`training_records_for_refit(records)`** — mirrors `oracle.training_records` deduplication logic: drops PS INTERVAL rows for compounds that also have a DRC record. Applied to the **combined** pretrain + oracle pool inside `_merge_pretrain_with_oracle()`.
 - **`annotate_campaign_state(df, state, predictions, acquisition)`** — appends `ps_score`, `drc_score`, `overall_score`, and `recommendation` columns; sorts by `overall_score` descending. `predictions` must align with `state.unqueried_rows + state.ps_upgrade_rows`.
 
 ### Dashboard (Plotly + Dash)

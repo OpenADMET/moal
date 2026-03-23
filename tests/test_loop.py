@@ -662,3 +662,232 @@ class TestNoisyOracleErrorRamp:
         assert captured[0] == pytest.approx(initial, abs=1e-7), (
             f"Pre-loop call used noise_scale={captured[0]:.6f}, expected initial_error={initial}"
         )
+
+
+class TestPretrainRecords:
+    """Tests for ActiveLearningLoop behaviour when pretrain_records are provided."""
+
+    N_ITER = 2
+    K = 3
+
+    @pytest.fixture
+    def pretrain_loop(self, oracle, mock_model, acquisition, evaluator):
+        """Loop with two pretrain records (one PS-INTERVAL, one DRC-EXACT).
+
+        The PS-INTERVAL record is for an oracle compound (``unlabeled[0]``).
+        PS-INTERVAL is used instead of PS-LEFT so that, if the oracle later
+        acquires a DRC record for the same compound,
+        ``training_records_for_refit`` silently drops the superseded PS
+        record rather than ``validate_training_records`` raising ValueError.
+
+        The DRC-EXACT record uses a SMILES (``"CCCC"``) that is **not** in
+        the oracle's ground-truth pool.  This guarantees the oracle can never
+        acquire a PS-LEFT record for it, avoiding the contradictory-fidelity
+        conflict that ``validate_training_records`` is designed to catch.
+        """
+        from moal.types import CensoringType, LabelRecord, QueryType
+
+        unlabeled = oracle.get_unlabeled_smiles()
+        pretrain = [
+            LabelRecord(
+                smiles=unlabeled[0],
+                canonical_smiles=unlabeled[0],
+                value=5.0,
+                upper_bound=11.0,
+                censoring_type=CensoringType.INTERVAL,
+                fidelity=QueryType.PRIMARY_SCREEN,
+                cost=1.0,
+                iteration=0,
+            ),
+            LabelRecord(
+                smiles="CCCC",
+                canonical_smiles="CCCC",
+                value=7.5,
+                upper_bound=7.5,
+                censoring_type=CensoringType.EXACT,
+                fidelity=QueryType.DOSE_RESPONSE,
+                cost=10.0,
+                iteration=0,
+            ),
+        ]
+        return ActiveLearningLoop(
+            oracle=oracle,
+            model=mock_model,
+            acquisition=acquisition,
+            evaluator=evaluator,
+            pretrain_records=pretrain,
+        )
+
+    def test_pretrain_records_included_in_refit_call(
+        self, pretrain_loop, mock_model
+    ):
+        """model.refit must be called with the exact pretrain SMILES in the records list."""
+        pretrain_loop.run(n_iterations=self.N_ITER, k_per_iteration=self.K)
+        assert mock_model.refit.called
+        # Every pretrain SMILES must appear among the records passed to the first refit
+        first_call_records = mock_model.refit.call_args_list[0][1]["records"]
+        pretrain_smiles = {r.canonical_smiles for r in pretrain_loop.pretrain_records}
+        refit_smiles = {r.canonical_smiles for r in first_call_records}
+        missing = pretrain_smiles - refit_smiles
+        assert not missing, (
+            f"Pretrain SMILES not forwarded to refit: {missing}"
+        )
+
+    def test_empty_pretrain_reproduces_no_pretrain_behaviour(
+        self, oracle, mock_model, acquisition, evaluator
+    ):
+        """With pretrain_records=[], loop behaviour must be identical to not passing the arg."""
+        loop_no_pretrain = ActiveLearningLoop(
+            oracle=oracle, model=mock_model, acquisition=acquisition, evaluator=evaluator
+        )
+        loop_empty = ActiveLearningLoop(
+            oracle=oracle,
+            model=mock_model,
+            acquisition=acquisition,
+            evaluator=evaluator,
+            pretrain_records=[],
+        )
+        # Both should accept pretrain_records without error and produce the same refit count
+        from unittest.mock import create_autospec
+
+        m1 = create_autospec(ChemPropLightningModule, instance=True)
+        m2 = create_autospec(ChemPropLightningModule, instance=True)
+        rng = np.random.default_rng(0)
+        m1.predict_smiles.side_effect = lambda s, **k: rng.normal(6.0, 1.5, len(s)).astype(np.float32)
+        m1.refit.return_value = m1
+        m2.predict_smiles.side_effect = lambda s, **k: rng.normal(6.0, 1.5, len(s)).astype(np.float32)
+        m2.refit.return_value = m2
+
+        loop_no_pretrain.model = m1
+        loop_empty.model = m2
+
+        loop_no_pretrain.run(n_iterations=self.N_ITER, k_per_iteration=self.K)
+        loop_empty.run(n_iterations=self.N_ITER, k_per_iteration=self.K)
+
+        assert m1.refit.call_count == m2.refit.call_count
+
+    def test_oracle_supersedes_pretrain_same_fidelity(
+        self, oracle, mock_model, acquisition, evaluator
+    ):
+        """When oracle acquires a compound at the same fidelity as a pretrain record, only oracle record is kept."""
+        from moal.loop import _merge_pretrain_with_oracle
+        from moal.types import CensoringType, LabelRecord, QueryType
+
+        # Force the oracle to produce a DRC record for the first unlabeled compound
+        unlabeled = oracle.get_unlabeled_smiles()
+        target = unlabeled[0]
+
+        # Pretrain DRC record for the same compound
+        pretrain_drc = [
+            LabelRecord(
+                smiles=target,
+                canonical_smiles=target,
+                value=6.0,  # different value from oracle ground truth
+                upper_bound=6.0,
+                censoring_type=CensoringType.EXACT,
+                fidelity=QueryType.DOSE_RESPONSE,
+                cost=10.0,
+                iteration=0,
+            )
+        ]
+        # Simulate oracle having also acquired a DRC record for target
+        from moal.types import CensoringType as CT
+
+        oracle_drc = [
+            LabelRecord(
+                smiles=target,
+                canonical_smiles=target,
+                value=7.2,
+                upper_bound=7.2,
+                censoring_type=CT.EXACT,
+                fidelity=QueryType.DOSE_RESPONSE,
+                cost=10.0,
+                iteration=1,
+            )
+        ]
+        tracker: set[str] = set()
+        merged = _merge_pretrain_with_oracle(pretrain_drc, oracle_drc, tracker)
+
+        # Oracle record survives, pretrain record is dropped
+        drc_records = [r for r in merged if r.fidelity == QueryType.DOSE_RESPONSE]
+        assert len(drc_records) == 1
+        assert drc_records[0].value == pytest.approx(7.2)
+        assert target in tracker
+
+    def test_pretrain_ps_left_oracle_drc_raises_on_merge(self):
+        """Merging a pretrain PS-LEFT record with an oracle DRC record for the same compound
+        must raise ValueError — the same invariant enforced by validate_training_records in plan mode.
+
+        A pretrain inactive label (pEC50 < threshold) combined with an oracle exact
+        measurement produces contradictory LEFT and EXACT Tobit branches for the same compound.
+        """
+        from moal.loop import _merge_pretrain_with_oracle
+        from moal.types import CensoringType, LabelRecord, QueryType
+
+        smiles = "CCO"
+        pretrain_ps_left = [
+            LabelRecord(
+                smiles=smiles,
+                canonical_smiles=smiles,
+                value=5.0,
+                upper_bound=5.0,
+                censoring_type=CensoringType.LEFT,
+                fidelity=QueryType.PRIMARY_SCREEN,
+                cost=1.0,
+                iteration=0,
+            )
+        ]
+        oracle_drc = [
+            LabelRecord(
+                smiles=smiles,
+                canonical_smiles=smiles,
+                value=7.8,
+                upper_bound=7.8,
+                censoring_type=CensoringType.EXACT,
+                fidelity=QueryType.DOSE_RESPONSE,
+                cost=10.0,
+                iteration=1,
+            )
+        ]
+        tracker: set[str] = set()
+        with pytest.raises(ValueError, match="mixed-fidelity combination is unsupported"):
+            _merge_pretrain_with_oracle(pretrain_ps_left, oracle_drc, tracker)
+
+    def test_pretrain_ps_interval_deduped_when_oracle_upgrades(self):
+        """Pretrain PS INTERVAL record must be dropped when oracle has a DRC record for the same compound."""
+        from moal.loop import _merge_pretrain_with_oracle
+        from moal.types import CensoringType, LabelRecord, QueryType
+
+        smiles = "CCO"
+        pretrain_ps = [
+            LabelRecord(
+                smiles=smiles,
+                canonical_smiles=smiles,
+                value=5.0,
+                upper_bound=11.0,
+                censoring_type=CensoringType.INTERVAL,
+                fidelity=QueryType.PRIMARY_SCREEN,
+                cost=1.0,
+                iteration=0,
+            )
+        ]
+        oracle_drc = [
+            LabelRecord(
+                smiles=smiles,
+                canonical_smiles=smiles,
+                value=7.8,
+                upper_bound=7.8,
+                censoring_type=CensoringType.EXACT,
+                fidelity=QueryType.DOSE_RESPONSE,
+                cost=10.0,
+                iteration=2,
+            )
+        ]
+        tracker: set[str] = set()
+        merged = _merge_pretrain_with_oracle(pretrain_ps, oracle_drc, tracker)
+
+        # PS INTERVAL for upgraded compound must be removed by training_records_for_refit
+        ps_records = [r for r in merged if r.fidelity == QueryType.PRIMARY_SCREEN]
+        assert len(ps_records) == 0
+        drc_records = [r for r in merged if r.fidelity == QueryType.DOSE_RESPONSE]
+        assert len(drc_records) == 1

@@ -21,8 +21,9 @@ from moal.evaluation import ModelMetric, PipelineEvaluator
 from moal.logging_config import suppress_noisy_loggers, temporary_log_level
 from moal.model import ChemPropLightningModule, NoisyOracleModel
 from moal.oracle import CostAwareOracle
+from moal.planning import training_records_for_refit, validate_training_records
 from moal.preprocessing import SMILESPreprocessor
-from moal.types import IterationResults, LoopResults, QueryType
+from moal.types import IterationResults, LabelRecord, LoopResults, QueryType
 
 if TYPE_CHECKING:
     from moal.dashboard import LiveDashboard
@@ -32,6 +33,65 @@ logger = logging.getLogger(__name__)
 # Rich console used for status messages; writes to stderr so it doesn't mix
 # with any stdout output and plays nicely with the progress bar.
 _console = Console(stderr=True)
+
+
+def _merge_pretrain_with_oracle(
+    pretrain: list[LabelRecord],
+    oracle_records: list[LabelRecord],
+    superseded_tracker: set[str],
+) -> list[LabelRecord]:
+    """Combine pretrain records with oracle-acquired records for model refit.
+
+    Oracle records take precedence: any pretrain record whose
+    ``(canonical_smiles, fidelity)`` pair is already covered by an oracle
+    record is dropped and its canonical SMILES is added to
+    ``superseded_tracker`` (caller emits a consolidated warning at end of
+    campaign).
+
+    The combined list is passed through :func:`~moal.planning.training_records_for_refit`
+    so that pretrain PS INTERVAL records are dropped when the oracle has
+    acquired a DRC record for the same compound.  :func:`~moal.planning.validate_training_records`
+    is then called to enforce that no contradictory pretrain PS-LEFT / oracle DRC pair
+    survives the merge.
+
+    Parameters
+    ----------
+    pretrain : list[LabelRecord]
+        Records loaded from the optional pretrain CSV.  May be empty.
+    oracle_records : list[LabelRecord]
+        Records from ``oracle.training_records`` for the current iteration.
+    superseded_tracker : set[str]
+        Mutable set updated with canonical SMILES of any newly superseded
+        pretrain records.  The caller uses this to emit a single end-of-loop
+        warning.
+
+    Returns
+    -------
+    list[LabelRecord]
+        Merged and deduplicated records ready for ``model.refit()``.
+
+    Raises
+    ------
+    ValueError
+        If the merged records contain a compound with both a PS LEFT label
+        (from pretrain) and a DRC label (from the oracle), which produces
+        contradictory Tobit-loss signals.
+    """
+    if not pretrain:
+        return oracle_records
+
+    oracle_keys = {(r.canonical_smiles, r.fidelity) for r in oracle_records}
+    filtered: list[LabelRecord] = []
+    for rec in pretrain:
+        if (rec.canonical_smiles, rec.fidelity) in oracle_keys:
+            if rec.canonical_smiles not in superseded_tracker:
+                superseded_tracker.add(rec.canonical_smiles)
+        else:
+            filtered.append(rec)
+
+    merged = training_records_for_refit(filtered + oracle_records)
+    validate_training_records(merged)
+    return merged
 
 
 class ActiveLearningLoop:
@@ -87,6 +147,13 @@ class ActiveLearningLoop:
         When True, pass ``reset_weights=True`` to ``model.refit()`` at every
         active learning iteration. Default is False, which continues
         fine-tuning from the current model weights.
+    pretrain_records : list[LabelRecord], optional
+        Pre-labeled records loaded from an optional pretrain CSV (same
+        mixed-fidelity format as the ``moal plan`` campaign state).  These
+        are combined with oracle-acquired records before every
+        ``model.refit()`` call.  Oracle records take precedence when both
+        sources label the same compound at the same fidelity.  Default is
+        an empty list, which reproduces the no-pretrain behaviour.
     output_dir : str or Path or None, optional
         Directory for Lightning default logs (``lightning_logs/``). Forwarded
         as ``output_dir`` to every ``model.refit()`` call. When None (default),
@@ -109,6 +176,7 @@ class ActiveLearningLoop:
         initial_error: float = 0.7,
         final_error: float = 0.5,
         reset_weights_on_refit: bool = False,
+        pretrain_records: list[LabelRecord] | None = None,
         output_dir: str | Path | None = None,
     ) -> None:
         """Initialise the loop and store all campaign components."""
@@ -125,6 +193,7 @@ class ActiveLearningLoop:
         self.initial_error = initial_error
         self.final_error = final_error
         self.reset_weights_on_refit = reset_weights_on_refit
+        self.pretrain_records: list[LabelRecord] = pretrain_records or []
         self.output_dir = output_dir
 
     # ------------------------------------------------------------------
@@ -192,6 +261,10 @@ class ActiveLearningLoop:
             f"[cyan]{n_total}[/cyan] compounds | "
             f"[cyan]{n_true_actives}[/cyan] true actives"
         )
+        if self.pretrain_records:
+            _console.print(
+                f"  [dim]Pretrain pool: [bold]{len(self.pretrain_records)}[/bold] records[/dim]"
+            )
 
         # Pre-compute first iteration's candidate queries before entering the
         # progress bar so Step 3 of iteration i prepares for iteration i+1.
@@ -220,6 +293,7 @@ class ActiveLearningLoop:
         )
 
         total_steps = n_iterations * 3
+        _superseded_tracker: set[str] = set()
         with temporary_log_level(logging.WARNING, ["moal"]):
             with Progress(
                 SpinnerColumn(),
@@ -313,6 +387,19 @@ class ActiveLearningLoop:
                         if n_cumulative_upgrades > 0
                         else ""
                     )
+                    refit_records = _merge_pretrain_with_oracle(
+                        self.pretrain_records,
+                        self.oracle.training_records,
+                        _superseded_tracker,
+                    )
+                    n_pretrain_active = len(refit_records) - len(
+                        self.oracle.training_records
+                    )
+                    pretrain_suffix = (
+                        f" + [dim]{n_pretrain_active} pretrain[/dim]"
+                        if n_pretrain_active > 0
+                        else ""
+                    )
                     progress.update(
                         task,
                         description=(
@@ -321,11 +408,12 @@ class ActiveLearningLoop:
                             f"([orange1]{n_labeled_drc} DRC[/orange1], "
                             f"[steel_blue1]{n_labeled_ps} PS[/steel_blue1]"
                             f"{upgrade_suffix})"
+                            f"{pretrain_suffix}"
                         ),
                     )
                     if new_records:
                         self.model.refit(
-                            records=self.oracle.training_records,
+                            records=refit_records,
                             trainer_kwargs=self.trainer_kwargs,
                             datamodule_kwargs=self.datamodule_kwargs,
                             reset_weights=self.reset_weights_on_refit,
@@ -445,6 +533,13 @@ class ActiveLearningLoop:
             f"Confirmed actives: [green]{int(results.final_metrics.get('n_confirmed_actives', 0))}[/green]"
             f" [dim](of {n_true_actives})[/dim]"
         )
+        if _superseded_tracker:
+            logger.warning(
+                "%d pretrain record(s) were superseded by oracle queries during the "
+                "campaign (oracle records used in their place): %s",
+                len(_superseded_tracker),
+                ", ".join(sorted(_superseded_tracker)),
+            )
         return results
 
     # ------------------------------------------------------------------
