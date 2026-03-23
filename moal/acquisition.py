@@ -82,7 +82,7 @@ def _binary_entropy(p: np.ndarray) -> np.ndarray:
     # Cast to float64 so that the clip bounds (1e-9, 1-1e-9) are representable;
     # float32 rounds 1-1e-9 to exactly 1.0, letting log(0) through despite clipping
     p = np.clip(p.astype(np.float64), _EPS, 1 - _EPS)
-    return -(p * np.log(p) + (1 - p) * np.log(1 - p))
+    return -(p * np.log(p) + (1 - p) * np.log(1 - p))  # type: ignore[no-any-return]
 
 
 class CostAwareGreedyAcquisition:

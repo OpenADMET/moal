@@ -461,8 +461,8 @@ class PipelineEvaluator:
         if metric == ModelMetric.SPEARMAN_R:
             if len(preds) < 2:
                 return float("nan")
-            result = stats.spearmanr(preds, true)
-            return float(result.statistic)
+            spearman_result = stats.spearmanr(preds, true)
+            return float(spearman_result.statistic)
 
         if metric == ModelMetric.R2:
             ss_res = np.sum((true - preds) ** 2)

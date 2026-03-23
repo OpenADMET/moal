@@ -235,9 +235,10 @@ class CostAwareOracle:
         if is_canonical:
             key = smiles
         else:
-            key = self._preprocessor.canonicalize(smiles)
-            if key is None:
+            canonical = self._preprocessor.canonicalize(smiles)
+            if canonical is None:
                 raise ValueError(f"Cannot parse SMILES: {smiles!r}")
+            key = canonical
 
         if key in self._labeled:
             existing = self._labeled[key]
@@ -301,10 +302,11 @@ class CostAwareOracle:
             if is_canonical:
                 key = smiles
             else:
-                key = self._preprocessor.canonicalize(smiles)
-                if key is None:
+                canonical = self._preprocessor.canonicalize(smiles)
+                if canonical is None:
                     logger.warning("Skipping invalid SMILES in batch: %s", smiles)
                     continue
+                key = canonical
             if key in seen:
                 logger.warning("Duplicate within acquisition batch, skipping: %s", key)
                 continue

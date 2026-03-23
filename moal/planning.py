@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -102,7 +103,7 @@ def parse_campaign_state(
     n_unqueried_duplicates = 0
 
     for row_idx, row in df.iterrows():
-        csv_row = row_idx + 2  # account for zero indexing + header row
+        csv_row = cast(int, row_idx) + 2  # account for zero indexing + header row
         raw_smiles = str(row[smiles_column])
         relation_raw = row.get(relation_column, None)
         value_raw = row.get(value_column, None)
@@ -127,7 +128,7 @@ def parse_campaign_state(
                 n_unqueried_duplicates += 1
                 continue
             seen_unqueried.add(canonical)
-            unqueried_rows.append((row_idx, canonical))
+            unqueried_rows.append((cast(int, row_idx), canonical))
             continue
 
         relation = str(relation_raw).strip()
@@ -137,7 +138,7 @@ def parse_campaign_state(
             )
 
         try:
-            value = float(value_raw)
+            value = float(value_raw)  # type: ignore[arg-type]
         except (TypeError, ValueError) as exc:
             raise ValueError(f"Row {csv_row}: value must be a finite numeric pEC50 datum.") from exc
 
@@ -180,7 +181,7 @@ def parse_campaign_state(
             )
             # PS hits are DRC-upgrade inference targets in addition to training records
             if relation == ">=":
-                ps_upgrade_rows.append((row_idx, canonical))
+                ps_upgrade_rows.append((cast(int, row_idx), canonical))
 
         training_records.append(record)
 

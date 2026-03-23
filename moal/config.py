@@ -411,7 +411,7 @@ class PipelineConfig:
 
         def _to_dict(obj: Any) -> Any:
             if dataclasses.is_dataclass(obj):
-                return {k: _to_dict(v) for k, v in dataclasses.asdict(obj).items()}
+                return {k: _to_dict(v) for k, v in dataclasses.asdict(obj).items()}  # type: ignore[arg-type]
             return obj
 
         with open(path, "w") as f:

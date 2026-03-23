@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.request import urlretrieve
 
 import lightning as L
@@ -164,7 +164,7 @@ class ChemPropLightningModule(L.LightningModule):
             hidden_dim=ffn_hidden_size,
             n_layers=ffn_num_layers,
         )
-        return MPNN(message_passing=mp, agg=agg, predictor=ffn)
+        return cast(nn.Module, MPNN(message_passing=mp, agg=agg, predictor=ffn))
 
     def _get_chemeleon_mp(self) -> dict:
         """Load and return the CheMeleon pretrained message-passing weights.
@@ -183,7 +183,7 @@ class ChemPropLightningModule(L.LightningModule):
         download_chemeleon()
         ckpt_path = Path().home() / ".chemprop" / "chemeleon_mp.pt"
         weights = torch.load(ckpt_path, weights_only=True)
-        return weights
+        return cast(dict[str, Any], torch.load(ckpt_path, weights_only=True))
 
     # ------------------------------------------------------------------
     # Freeze / unfreeze schedule
@@ -197,7 +197,7 @@ class ChemPropLightningModule(L.LightningModule):
         list[nn.Parameter]
             Parameters belonging to ``self.model.message_passing``.
         """
-        return list(self.model.message_passing.parameters())
+        return list(cast(nn.Module, self.model.message_passing).parameters())
 
     def _head_params(self) -> list[nn.Parameter]:
         """Return the trainable parameters of the aggregation layer and FFN head.
@@ -208,7 +208,7 @@ class ChemPropLightningModule(L.LightningModule):
             Parameters belonging to ``self.model.agg`` and
             ``self.model.predictor``, concatenated in that order.
         """
-        return list(self.model.agg.parameters()) + list(self.model.predictor.parameters())
+        return list(cast(nn.Module, self.model.agg).parameters()) + list(cast(nn.Module, self.model.predictor).parameters())
 
     def _freeze_encoder(self) -> None:
         """Freeze all message-passing encoder parameters.
@@ -274,7 +274,7 @@ class ChemPropLightningModule(L.LightningModule):
         Tensor
             1-D tensor of shape ``(N,)`` with predicted pEC50 values.
         """
-        return self.model(batch_mol_graph).squeeze(-1)
+        return cast(Tensor, self.model(batch_mol_graph).squeeze(-1))
 
     def training_step(self, batch: tuple[Any, list[LabelRecord]], batch_idx: int) -> Tensor:
         """Compute and log the training loss for one batch.
@@ -458,7 +458,10 @@ class ChemPropLightningModule(L.LightningModule):
             self (for chaining).
         """
         if reset_weights:
-            self._build_model()
+            self.model = self._build_model(
+                ffn_hidden_size=self.hparams["ffn_hidden_size"],
+                ffn_num_layers=self.hparams["ffn_num_layers"],
+            )
             self._freeze_encoder()
 
         dm = MixedFidelityDataModule(records, **(datamodule_kwargs or {}))

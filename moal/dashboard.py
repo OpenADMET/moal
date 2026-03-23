@@ -192,6 +192,7 @@ class _OneDPLocator(Locator):
             Tick positions restricted to the 1-2-5 step sequence with
             step >= 0.1.
         """
+        assert self.axis is not None, "_OneDPLocator.__call__ requires a bound axis"
         vmin, vmax = self.axis.get_view_interval()
         return self.tick_values(vmin, vmax)
 

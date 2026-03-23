@@ -31,6 +31,8 @@ dev = [
     "ruff",
     "mypy",
     "types-PyYAML",
+    "pandas-stubs",
+    "scipy-stubs",
     "pre-commit",
 ]
 
@@ -76,3 +78,7 @@ warn_return_any = true
 warn_unused_ignores = true
 warn_unused_configs = true
 no_implicit_reexport = true
+
+[[tool.mypy.overrides]]
+module = ["chemprop.*", "plotly.*", "dash.*"]
+ignore_missing_imports = true
