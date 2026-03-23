@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "moal"
 version = "0.1.0"
 description = "Cost-aware synthetic active learning pipeline for cheminformatics"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "chemprop>=2.0,<3.0",
     "lightning>=2.0",
