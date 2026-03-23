@@ -1,3 +1,5 @@
+![Banner image](assets/banner.jpg)
+
 # `moal`: multi-objective active learning
 
 A Python pipeline for maximizing the discovery of **active compounds** (pEC50 > 7) from an unrevealed dataset while strictly minimizing labeling cost. The oracle offers two query fidelities:
