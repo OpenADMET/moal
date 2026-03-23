@@ -1072,6 +1072,8 @@ class LiveDashboard:
             row=1,
             col=2,
             tickformat="d",
+            tickmode="array",
+            tickvals=self._iteration_x_tickvals(len(iterations)),
             range=self._iteration_x_range(len(iterations), padding=0.5),
         )
         fig.update_xaxes(
@@ -1079,6 +1081,8 @@ class LiveDashboard:
             row=2,
             col=1,
             tickformat="d",
+            tickmode="array",
+            tickvals=self._iteration_x_tickvals(len(iterations)),
             range=self._iteration_x_range(len(iterations)),
         )
         fig.update_xaxes(
@@ -1233,10 +1237,14 @@ class LiveDashboard:
             xaxis2={
                 **frame_fig.layout.xaxis2.to_plotly_json(),
                 "range": self._iteration_x_range(n_iterations, padding=0.5),
+                "tickmode": "array",
+                "tickvals": self._iteration_x_tickvals(n_iterations),
             },
             xaxis3={
                 **frame_fig.layout.xaxis3.to_plotly_json(),
                 "range": self._iteration_x_range(n_iterations),
+                "tickmode": "array",
+                "tickvals": self._iteration_x_tickvals(n_iterations),
             },
             xaxis4=frame_fig.layout.xaxis4.to_plotly_json(),
             yaxis=frame_fig.layout.yaxis.to_plotly_json(),
@@ -1266,6 +1274,27 @@ class LiveDashboard:
         """
         max_cost = max(cum_costs, default=0.0)
         return [0.0, max(1.0, max_cost * 1.05)]
+
+    @staticmethod
+    def _iteration_x_tickvals(n_iterations: int) -> list[int]:
+        """Return one tick value per completed iteration with no duplicates.
+
+        Using ``tickmode="array"`` with these explicit values prevents Plotly's
+        auto-tick algorithm from placing multiple ticks at the same integer when
+        the axis range is narrow (e.g. at iteration 1 or 2).
+
+        Parameters
+        ----------
+        n_iterations : int
+            Number of iterations recorded so far.
+
+        Returns
+        -------
+        list[int]
+            ``[1, 2, ..., n_iterations]``, or ``[1]`` when *n_iterations* is 0
+            so the axis always has at least one labelled tick.
+        """
+        return list(range(1, max(n_iterations, 1) + 1))
 
     @staticmethod
     def _iteration_x_range(n_iterations: int, padding: float = 0.25) -> list[float]:
