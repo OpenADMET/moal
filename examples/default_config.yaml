@@ -15,9 +15,13 @@ data:
                                       # dashboard_animation.gif, dashboard_animation.html, config_used.yaml,
                                       # and relative plan outputs such as acquisition_plan.csv
   simulate:
-    input_csv: ""                     # REQUIRED for `moal simulate`: path to CSV containing SMILES and pEC50 values
+    input_csv: ""                     # REQUIRED for `moal simulate`: path to the campaign state CSV
+                                      # (same format as data.plan.input_csv — columns: smiles, relation, value)
+                                      # Only rows with relation "==" are used as oracle ground truth.
+                                      # Primary screen rows ("<", ">=") and blank rows are skipped.
     smiles_column: smiles             # Column name for SMILES strings in simulate.input_csv
-    pec50_column: pec50               # Column name for pEC50 values in simulate.input_csv
+    relation_column: relation         # Relation column (<, >=, ==, or empty)
+    value_column: value               # pEC50 value column (only == rows are read into the oracle)
     is_canonical: false               # Set to true to skip RDKit canonicalization for simulate input
     test_set_size: 0.15               # Fraction held out as scaffold-split test set for model tracking
 

@@ -26,12 +26,18 @@ Copy and edit the example config to point at your data:
 ```bash
 cp examples/default_config.yaml my_campaign.yaml
 
-# Edit my_campaign.yaml: set data.simulate.input_csv
+# Edit my_campaign.yaml: set data.simulate.input_csv to a campaign state CSV
+# where rows with relation "==" define the oracle ground truth pool
 moal simulate --config my_campaign.yaml --output-dir results/
 ```
 
-If you have prior experimental data in the same mixed-fidelity format used by
-`moal plan`, you can supply it as a pretrain pool — the model will train on it
+The simulate input CSV uses the **same unified campaign state format** as `moal plan`
+(columns `smiles`, `relation`, `value`).  Only rows with `relation == "=="` (exact
+DRC results) are loaded as oracle ground truth; primary screen rows (`<`, `>=`) and
+unqueried rows (empty) are skipped.
+
+If you have prior experimental data in the same mixed-fidelity format, you can
+supply it as a pretrain pool — the model will train on it
 at every iteration alongside whatever the oracle acquires:
 
 ```yaml
@@ -107,18 +113,17 @@ train-and-score workflow designed for iterative real-world campaigns.
 
 #### Unified state CSV format
 
-A single CSV drives both the training set and the inference target list. The
-expected base columns are `smiles`, `relation`, and `value` (all configurable
-via `data.plan.*`). **This same format is accepted by `data.simulate.pretrain`**
-to warm-start the model in `moal simulate` — labeled rows (`<`, `>=`, `==`)
-become pretrain training records; unqueried rows are skipped with a warning:
+A single CSV schema is shared by `moal simulate`, `moal plan`, and the optional
+pretrain sub-input.  The expected base columns are `smiles`, `relation`, and
+`value` (all configurable via `data.simulate.*`, `data.plan.*`, and
+`data.simulate.pretrain.*` respectively).
 
-| `relation` | `value` | Row state | Action |
-|---|---|---|---|
-| empty | empty | Unqueried | Model scores for PS **or** DRC; `recommendation` = `"ps"` or `"drc"` |
-| `<` | numeric | PS miss (inactive) | Training only; score columns are NaN |
-| `>=` | numeric | PS hit | Training **and** DRC-upgrade inference target; `recommendation` = `"drc"` |
-| `==` | numeric | DRC result (terminal) | Training only; score columns are NaN |
+| `relation` | `value` | Row state | Action in `moal simulate` | Action in `moal plan` |
+|---|---|---|---|---|
+| `==` | numeric | DRC result (exact) | **Oracle ground truth** | Training only; score columns are NaN |
+| `<` | numeric | PS miss (inactive) | Skipped | Training only; score columns are NaN |
+| `>=` | numeric | PS hit | Skipped | Training **and** DRC-upgrade inference target |
+| empty | empty | Unqueried | Skipped | Model scores for PS **or** DRC |
 
 #### Output format
 
@@ -162,7 +167,9 @@ The campaign emits a rich progress bar with `n_iterations × 3` discrete steps:
 
 ## Key Design Notes
 
-**Pretrain warm-starting:** `moal simulate` accepts a pretrain CSV (`data.simulate.pretrain.input_csv`) in the same `<` / `>=` / `==` mixed-fidelity format as `moal plan`. Pretrain records are merged with oracle-acquired records before each `model.refit()` call. Oracle records always win on a same-fidelity duplicate; pretrain PS INTERVAL records are automatically dropped when the oracle upgrades that compound to DRC. See `data.simulate.pretrain.*` in the config reference for all fields.
+**Unified input format:** All three CSV inputs — `data.simulate.input_csv`, `data.simulate.pretrain.input_csv`, and `data.plan.input_csv` — use the same campaign state schema (`smiles`, `relation`, `value`).  For `moal simulate`, only `==` rows are loaded as oracle ground truth; PS and blank rows are skipped.  For `moal plan` and the pretrain input, all labeled rows (`<`, `>=`, `==`) become training records; unqueried rows (empty) are inference targets or skipped with a warning, respectively.
+
+**Pretrain warm-starting:** `moal simulate` accepts a pretrain CSV (`data.simulate.pretrain.input_csv`) in the same mixed-fidelity format. Pretrain records are merged with oracle-acquired records before each `model.refit()` call. Oracle records always win on a same-fidelity duplicate; pretrain PS INTERVAL records are automatically dropped when the oracle upgrades that compound to DRC. See `data.simulate.pretrain.*` in the config reference for all fields.
 
 **Interval censoring:** Primary screen hits (`>= T`) are modeled as interval-censored `[T, 11.0]`, not right-censored at T. Using right-censoring would invert gradient signals for active compounds.
 

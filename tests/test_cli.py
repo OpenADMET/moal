@@ -62,7 +62,8 @@ def _simulate_config(
     *,
     input_csv: str = "",
     smiles_column: str = "smiles",
-    pec50_column: str = "pec50",
+    relation_column: str = "relation",
+    value_column: str = "value",
     is_canonical: bool = False,
     extra: str = "",
 ) -> str:
@@ -71,7 +72,8 @@ def _simulate_config(
         "  simulate:\n"
         f"    input_csv: {input_csv}\n"
         f"    smiles_column: {smiles_column}\n"
-        f"    pec50_column: {pec50_column}\n"
+        f"    relation_column: {relation_column}\n"
+        f"    value_column: {value_column}\n"
         f"    is_canonical: {'true' if is_canonical else 'false'}\n" + extra
     )
 
@@ -184,7 +186,7 @@ class TestSimulateCommand:
         "csv_content",
         [
             None,
-            'smiles,pec50\n"unclosed quote,5.0\n',
+            'smiles,relation,value\n"unclosed quote,==,5.0\n',
         ],
     )
     def test_bad_csv_exits_one(self, tmp_path, csv_content):
@@ -208,15 +210,16 @@ class TestSimulateCommand:
             assert "Failed to read data.simulate.input_csv" in _result_text(result)
 
     def test_custom_column_names_accepted(self, tmp_path):
-        """Non-default smiles/pec50 column names must be accepted and produce a successful simulate run."""
+        """Non-default smiles/relation/value column names must be accepted and produce a successful simulate run."""
         csv_file = tmp_path / "data.csv"
-        csv_file.write_text("mol,potency\nc1ccccc1,5.0\nCCO,7.0\n")
+        csv_file.write_text("mol,rel,pot\nc1ccccc1,==,5.0\nCCO,==,7.0\n")
         cfg = tmp_path / "config.yaml"
         cfg.write_text(
             _simulate_config(
                 input_csv=str(csv_file),
                 smiles_column="mol",
-                pec50_column="potency",
+                relation_column="rel",
+                value_column="pot",
             )
             + "model:\n"
             "  fast: true\n"
@@ -238,7 +241,7 @@ class TestSimulateCommand:
     def test_mismatched_column_names_exits_one(self, tmp_path):
         """Specifying a smiles column that is absent from the CSV must exit with code 1 and name the missing column."""
         csv_file = tmp_path / "data.csv"
-        csv_file.write_text("smiles,pec50\nc1ccccc1,5.0\n")
+        csv_file.write_text("smiles,relation,value\nc1ccccc1,==,5.0\n")
         cfg = tmp_path / "config.yaml"
         cfg.write_text(_simulate_config(input_csv=str(csv_file), smiles_column="nonexistent_col"))
         runner = CliRunner()
@@ -661,7 +664,8 @@ class TestSimulatePretrain:
             "  simulate:\n"
             f"    input_csv: {gt_path}\n"
             "    smiles_column: smiles\n"
-            "    pec50_column: pec50\n"
+            "    relation_column: relation\n"
+            "    value_column: value\n"
             f"    test_set_size: {test_set_size}\n" + pretrain_block + "model:\n"
             "  fast: true\n"
             "dashboard:\n"
@@ -674,7 +678,14 @@ class TestSimulatePretrain:
         )
 
     def _write_ground_truth(self, path):
-        path.write_text("smiles,pec50\nc1ccccc1,5.5\nCCO,7.8\nCCN,4.2\nCCC,6.1\nCCCC,7.1\n")
+        path.write_text(
+            "smiles,relation,value\n"
+            "c1ccccc1,==,5.5\n"
+            "CCO,==,7.8\n"
+            "CCN,==,4.2\n"
+            "CCC,==,6.1\n"
+            "CCCC,==,7.1\n"
+        )
 
     def test_pretrain_csv_accepted_and_run_succeeds(self, tmp_path):
         """A valid pretrain CSV must be ingested without error and the simulate run must complete."""
@@ -732,8 +743,8 @@ class TestSimulatePretrain:
 
         gt = tmp_path / "gt.csv"
         # Use a longer list so scaffold split can hold out a meaningful test set
-        rows = "\n".join(f"c1ccc(CC{'C' * i})cc1,{5.0 + i * 0.3}" for i in range(15))
-        gt.write_text(f"smiles,pec50\n{rows}\n")
+        rows = "\n".join(f"c1ccc(CC{'C' * i})cc1,==,{5.0 + i * 0.3}" for i in range(15))
+        gt.write_text(f"smiles,relation,value\n{rows}\n")
 
         # Use one of the ground-truth SMILES as a pretrain record
         first_smiles = "c1ccc(CC)cc1"

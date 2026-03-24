@@ -794,12 +794,10 @@ class TestPretrainRecords:
         assert drc_records[0].value == pytest.approx(7.2)
         assert target in tracker
 
-    def test_pretrain_ps_left_oracle_drc_raises_on_merge(self):
-        """Merging a pretrain PS-LEFT record with an oracle DRC record for the same compound
-        must raise ValueError — the same invariant enforced by validate_training_records in plan mode.
-
-        A pretrain inactive label (pEC50 < threshold) combined with an oracle exact
-        measurement produces contradictory LEFT and EXACT Tobit branches for the same compound.
+    def test_pretrain_ps_left_dropped_when_oracle_has_drc(self):
+        """Pretrain PS-LEFT record must be silently dropped when the oracle has a DRC record
+        for the same compound — the oracle's real measurement supersedes external pretrain data
+        regardless of fidelity.
         """
         from moal.loop import _merge_pretrain_with_oracle
         from moal.types import CensoringType, LabelRecord, QueryType
@@ -830,8 +828,57 @@ class TestPretrainRecords:
             )
         ]
         tracker: set[str] = set()
-        with pytest.raises(ValueError, match="mixed-fidelity combination is unsupported"):
-            _merge_pretrain_with_oracle(pretrain_ps_left, oracle_drc, tracker)
+        merged = _merge_pretrain_with_oracle(pretrain_ps_left, oracle_drc, tracker)
+
+        ps_records = [r for r in merged if r.fidelity == QueryType.PRIMARY_SCREEN]
+        drc_records = [r for r in merged if r.fidelity == QueryType.DOSE_RESPONSE]
+        assert len(ps_records) == 0
+        assert len(drc_records) == 1
+        assert drc_records[0].value == pytest.approx(7.8)
+        assert smiles in tracker
+
+    def test_pretrain_drc_dropped_when_oracle_queries_ps(self):
+        """Pretrain DRC record must be dropped when the oracle queries the same compound at PS
+        fidelity — the exact scenario that triggered the 'mixed-fidelity combination is
+        unsupported' error when running moal simulate with an all-DRC pretrain CSV.
+        """
+        from moal.loop import _merge_pretrain_with_oracle
+        from moal.types import CensoringType, LabelRecord, QueryType
+
+        smiles = "CCO"
+        pretrain_drc = [
+            LabelRecord(
+                smiles=smiles,
+                canonical_smiles=smiles,
+                value=7.5,
+                upper_bound=7.5,
+                censoring_type=CensoringType.EXACT,
+                fidelity=QueryType.DOSE_RESPONSE,
+                cost=10.0,
+                iteration=0,
+            )
+        ]
+        oracle_ps = [
+            LabelRecord(
+                smiles=smiles,
+                canonical_smiles=smiles,
+                value=5.0,
+                upper_bound=5.0,
+                censoring_type=CensoringType.LEFT,
+                fidelity=QueryType.PRIMARY_SCREEN,
+                cost=1.0,
+                iteration=1,
+            )
+        ]
+        tracker: set[str] = set()
+        merged = _merge_pretrain_with_oracle(pretrain_drc, oracle_ps, tracker)
+
+        drc_records = [r for r in merged if r.fidelity == QueryType.DOSE_RESPONSE]
+        ps_records = [r for r in merged if r.fidelity == QueryType.PRIMARY_SCREEN]
+        assert len(drc_records) == 0
+        assert len(ps_records) == 1
+        assert ps_records[0].censoring_type == CensoringType.LEFT
+        assert smiles in tracker
 
     def test_pretrain_ps_interval_deduped_when_oracle_upgrades(self):
         """Pretrain PS INTERVAL record must be dropped when oracle has a DRC record for the same compound."""

@@ -24,6 +24,7 @@ from chemprop.data import MoleculeDatapoint, MoleculeDataset
 from chemprop.data.dataloader import build_dataloader
 from chemprop.models import MPNN
 from chemprop.nn import BondMessagePassing, MeanAggregation, RegressionFFN
+from lightning.pytorch.loggers import CSVLogger
 from torch import Tensor
 from torch.optim import Adam
 
@@ -385,8 +386,14 @@ class ChemPropLightningModule(L.LightningModule):
         # Create the full dataset once rather than chunking manually
         dataset = MoleculeDataset([MoleculeDatapoint.from_smi(s) for s in smiles_list])
 
-        # Let the dataloader handle batching and graph collation automatically
-        dataloader = build_dataloader(dataset, batch_size=batch_size, shuffle=False)
+        # Let the dataloader handle batching and graph collation automatically.
+        # drop_last=False is explicit: chemprop defaults to dropping the last
+        # batch when len(dataset) % batch_size == 1 to protect batch-norm
+        # during training, but at inference that would silently omit a molecule
+        # and misalign predictions with the input SMILES list.
+        dataloader = build_dataloader(
+            dataset, batch_size=batch_size, shuffle=False, drop_last=False
+        )
 
         all_preds = []
 
@@ -475,6 +482,7 @@ class ChemPropLightningModule(L.LightningModule):
         if output_dir is not None and "default_root_dir" not in kwargs:
             kwargs["default_root_dir"] = str(output_dir)
 
+        kwargs["logger"] = CSVLogger(save_dir=kwargs["default_root_dir"])
         trainer = L.Trainer(**kwargs)
         trainer.fit(self, datamodule=dm)
         return self

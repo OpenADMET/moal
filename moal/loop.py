@@ -42,17 +42,19 @@ def _merge_pretrain_with_oracle(
 ) -> list[LabelRecord]:
     """Combine pretrain records with oracle-acquired records for model refit.
 
-    Oracle records take precedence: any pretrain record whose
-    ``(canonical_smiles, fidelity)`` pair is already covered by an oracle
-    record is dropped and its canonical SMILES is added to
+    Oracle records take unconditional precedence: if the oracle has any record
+    for a compound (at *any* fidelity), **all** pretrain records for that
+    compound are dropped and the canonical SMILES is added to
     ``superseded_tracker`` (caller emits a consolidated warning at end of
-    campaign).
+    campaign).  This prevents contradictory label combinations such as a
+    pretrain DRC record surviving alongside an oracle PS query on the same
+    compound.
 
     The combined list is passed through :func:`~moal.planning.training_records_for_refit`
     so that pretrain PS INTERVAL records are dropped when the oracle has
     acquired a DRC record for the same compound.  :func:`~moal.planning.validate_training_records`
-    is then called to enforce that no contradictory pretrain PS-LEFT / oracle DRC pair
-    survives the merge.
+    is then called as a safety net against any remaining inconsistencies in the
+    pretrain data itself.
 
     Parameters
     ----------
@@ -73,17 +75,16 @@ def _merge_pretrain_with_oracle(
     Raises
     ------
     ValueError
-        If the merged records contain a compound with both a PS LEFT label
-        (from pretrain) and a DRC label (from the oracle), which produces
-        contradictory Tobit-loss signals.
+        If the pretrain records themselves contain inconsistencies (e.g. two
+        DRC records for the same compound).
     """
     if not pretrain:
         return oracle_records
 
-    oracle_keys = {(r.canonical_smiles, r.fidelity) for r in oracle_records}
+    oracle_smiles = {r.canonical_smiles for r in oracle_records}
     filtered: list[LabelRecord] = []
     for rec in pretrain:
-        if (rec.canonical_smiles, rec.fidelity) in oracle_keys:
+        if rec.canonical_smiles in oracle_smiles:
             if rec.canonical_smiles not in superseded_tracker:
                 superseded_tracker.add(rec.canonical_smiles)
         else:

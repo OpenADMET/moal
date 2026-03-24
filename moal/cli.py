@@ -125,28 +125,54 @@ def simulate(config: Path, output_dir: Path | None, verbose: bool) -> None:
     if not cfg.data.simulate.input_csv:
         raise click.ClickException("data.simulate.input_csv must be set in the config.")
 
-    ground_truth_df = _read_csv(
+    simulate_df = _read_csv(
         Path(cfg.data.simulate.input_csv),
         label="data.simulate.input_csv",
     )
     logger.info(
-        "Loaded %d compounds from %s",
-        len(ground_truth_df),
+        "Loaded %d rows from %s",
+        len(simulate_df),
         cfg.data.simulate.input_csv,
     )
 
+    relation_col = cfg.data.simulate.relation_column
+    if relation_col not in simulate_df.columns:
+        raise click.ClickException(
+            f"simulate input CSV must contain relation column {relation_col!r} for filtering "
+            f"to DRC rows, got {sorted(simulate_df.columns)}"
+        )
+
+    # Only == (exact DRC) rows define the oracle ground truth pool
+    drc_mask = simulate_df[relation_col] == "=="
+    n_skipped = int((~drc_mask).sum())
+    if n_skipped > 0:
+        logger.info(
+            "Skipped %d non-DRC row(s) (blank or PS) from simulate input CSV — "
+            "only '==' rows are used as oracle ground truth",
+            n_skipped,
+        )
+    ground_truth_df = simulate_df[drc_mask].copy()
+    if ground_truth_df.empty:
+        raise click.ClickException(
+            "simulate input CSV contains no DRC ('==') rows; "
+            "at least one row with relation '==' is required to build the oracle pool."
+        )
+
     preprocessor = SMILESPreprocessor()
-    oracle = CostAwareOracle(
-        ground_truth_df=ground_truth_df,
-        cost_ps=cfg.oracle.cost_ps,
-        cost_drc=cfg.oracle.cost_drc,
-        ps_threshold=cfg.oracle.ps_threshold,
-        upper_bound=cfg.oracle.upper_bound,
-        smiles_column=cfg.data.simulate.smiles_column,
-        pec50_column=cfg.data.simulate.pec50_column,
-        is_canonical=cfg.data.simulate.is_canonical,
-        preprocessor=preprocessor,
-    )
+    try:
+        oracle = CostAwareOracle(
+            ground_truth_df=ground_truth_df,
+            cost_ps=cfg.oracle.cost_ps,
+            cost_drc=cfg.oracle.cost_drc,
+            ps_threshold=cfg.oracle.ps_threshold,
+            upper_bound=cfg.oracle.upper_bound,
+            smiles_column=cfg.data.simulate.smiles_column,
+            pec50_column=cfg.data.simulate.value_column,
+            is_canonical=cfg.data.simulate.is_canonical,
+            preprocessor=preprocessor,
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
     # Setting all seeds
     L.seed_everything(cfg.seed, workers=True, verbose=False)

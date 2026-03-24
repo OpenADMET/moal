@@ -270,14 +270,25 @@ class PretrainDataConfig:
 class SimulationDataConfig:
     """Dataset settings for the synthetic active-learning simulation workflow.
 
+    The input CSV uses the same unified campaign state format as ``moal plan``
+    and the pretrain sub-input: each row carries a SMILES string, a relation
+    symbol (``<``, ``>=``, ``==``, or empty), and a numeric pEC50 value.
+    Only rows with ``relation == "=="`` (exact DRC results) are used to build
+    the oracle ground truth pool.  Primary screen rows (``<``, ``>=``) and
+    unqueried rows (empty relation/value) are skipped with a log message.
+
     Attributes
     ----------
     input_csv : str
-        Path to CSV containing compound SMILES and pEC50 values.
+        Path to the campaign state CSV.  Must contain at least one row with
+        ``relation == "=="``; all other rows are skipped.
     smiles_column : str
-        Name of the column in ``input_csv`` that contains SMILES strings.
-    pec50_column : str
-        Name of the column in ``input_csv`` that contains pEC50 values.
+        Name of the SMILES column in ``input_csv``.
+    relation_column : str
+        Name of the relation column in ``input_csv`` (``<``, ``>=``, ``==``,
+        or empty).
+    value_column : str
+        Name of the pEC50 / threshold value column in ``input_csv``.
     is_canonical : bool
         When False (default), input SMILES are canonicalized via RDKit during
         oracle initialization. Set to True when the CSV already stores
@@ -295,7 +306,8 @@ class SimulationDataConfig:
 
     input_csv: str = ""
     smiles_column: str = "smiles"
-    pec50_column: str = "pec50"
+    relation_column: str = "relation"
+    value_column: str = "value"
     is_canonical: bool = False
     test_set_size: float = 0.15
     pretrain: PretrainDataConfig = field(default_factory=PretrainDataConfig)
