@@ -201,14 +201,20 @@ class ActiveLearningLoop:
     # Main entry point
     # ------------------------------------------------------------------
 
-    def run(self, n_iterations: int, k_per_iteration: int) -> LoopResults:
+    def run(
+        self,
+        n_iterations: int,
+        plate_size: int,
+        wells_per_ps: int,
+        wells_per_drc: int,
+    ) -> LoopResults:
         """Execute the full active learning campaign.
 
         Each iteration completes three sequential steps tracked in the Rich
         progress bar:
 
-        1. **Query oracle** — issue ``k`` queries from the pre-computed
-           candidate list assembled at the end of the previous iteration.
+        1. **Query oracle** — issue queries from the pre-computed candidate
+           list assembled at the end of the previous iteration.
         2. **Refit model** — fine-tune the model on the growing labeled pool.
         3. **Select compounds** — run model inference and acquisition scoring
            over the remaining pool to prepare the next iteration's queries.
@@ -217,8 +223,15 @@ class ActiveLearningLoop:
         ----------
         n_iterations : int
             Total number of active learning iterations to run.
-        k_per_iteration : int
-            Number of oracle queries to issue per iteration.
+        plate_size : int
+            Maximum total wells available per plate (i.e., per iteration).
+            The acquisition greedily selects ranked candidates in score order,
+            stopping as soon as the next candidate would push the total well
+            count over this limit.
+        wells_per_ps : int
+            Number of wells consumed by a single PS query.
+        wells_per_drc : int
+            Number of wells consumed by a single DRC query.
 
         Returns
         -------
@@ -255,8 +268,9 @@ class ActiveLearningLoop:
 
         _console.print(
             f"[bold]moal[/bold] campaign starting — "
-            f"[cyan]{n_iterations}[/cyan] iterations × "
-            f"[cyan]{k_per_iteration}[/cyan] queries | "
+            f"[cyan]{n_iterations}[/cyan] iterations | "
+            f"plate: [cyan]{plate_size}[/cyan] wells "
+            f"([cyan]{wells_per_ps}[/cyan] PS / [cyan]{wells_per_drc}[/cyan] DRC) | "
             f"[cyan]{n_total}[/cyan] compounds | "
             f"[cyan]{n_true_actives}[/cyan] true actives"
         )
@@ -283,7 +297,9 @@ class ActiveLearningLoop:
             self.acquisition.select(
                 unlabeled,
                 unlabeled_preds,
-                k_per_iteration,
+                plate_size,
+                wells_per_ps,
+                wells_per_drc,
                 ps_labeled_smiles=ps_labeled,
                 ps_labeled_predictions=ps_labeled_preds if ps_labeled else None,
             )
@@ -434,7 +450,7 @@ class ActiveLearningLoop:
                         task,
                         description=(
                             f"[green]Iter {iteration + 1}/{n_iterations}[/green]  "
-                            f"Selecting next {k_per_iteration} — "
+                            f"Selecting (plate={plate_size}) — "
                             f"[white]{len(remaining_unlabeled)} unqueried[/white], "
                             f"[magenta]{len(remaining_ps_labeled)} PS hits[/magenta]"
                             " eligible for upgrade"
@@ -450,7 +466,9 @@ class ActiveLearningLoop:
                         pending_queries = self.acquisition.select(
                             remaining_unlabeled,
                             unlabeled_preds,
-                            k_per_iteration,
+                            plate_size,
+                            wells_per_ps,
+                            wells_per_drc,
                             ps_labeled_smiles=remaining_ps_labeled,
                             ps_labeled_predictions=ps_labeled_preds
                             if remaining_ps_labeled

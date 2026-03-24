@@ -80,7 +80,11 @@ acquisition:
 # --------------------------------------------------------------------------
 active_learning_loop:
   n_iterations: 20                    # Number of active learning iterations (m)
-  k_per_iteration: 100                # Number of queries selected per iteration (k)
+  plate_size: 1536                    # Maximum wells available per plate (per iteration).
+                                      # Selection stops when the next candidate would exceed this limit;
+                                      # remaining capacity is deferred to the next iteration.
+  wells_per_ps: 1                     # Wells consumed by a single Primary Screen query (typically 1)
+  wells_per_drc: 13                   # Wells consumed by a single DRC query (e.g., 13-point singlet DRC)
 
 # --------------------------------------------------------------------------
 # ChemProp / CheMeleon model

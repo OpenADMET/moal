@@ -68,12 +68,13 @@ ChemPropLightningModule.refit()   ← or NoisyOracleModel (fast=True)
 model.predict_smiles(unlabeled + ps_labeled)  →  pEC50 point estimates
     │
     ▼
-CostAwareGreedyAcquisition.select(unlabeled, predictions, k,
+CostAwareGreedyAcquisition.select(unlabeled, predictions,
+                                  plate_size, wells_per_ps, wells_per_drc,
                                   ps_labeled_smiles, ps_labeled_predictions)
     │  DRC score = p_active(ŷ) / cost_DRC                [exploitation]
     │  PS  score = H_binary(p_cross(ŷ, T)) / cost_PS     [exploration]
     │  PS-labeled compounds: DRC-upgrade candidates only (no PS re-query)
-    │  Greedy top-k, one query per compound
+    │  Greedy by score; stops when next candidate would overflow plate_size wells
     ▼
 ActiveLearningLoop.run()  →  LoopResults
     │  3 Rich progress steps per iteration: query → refit → select
@@ -158,7 +159,7 @@ All campaign parameters live in `moal/config.py` as frozen dataclasses. The YAML
 | `data.simulate:` | `SimulationDataConfig` | `input_csv`, `smiles_column`, `pec50_column`, `is_canonical`, `test_set_size`; nested `pretrain:` → `PretrainDataConfig` |
 | `data.simulate.pretrain:` | `PretrainDataConfig` | `input_csv`, `smiles_column`, `relation_column`, `value_column`, `is_canonical`; same fields as `PlanDataConfig` minus `output_csv` |
 | `data.plan:` | `PlanDataConfig` | `input_csv`, `output_csv`, `smiles_column`, `relation_column`, `value_column`, `is_canonical` |
-| `active_learning_loop:` | `ActiveLearningLoopConfig` | `n_iterations`, `k_per_iteration` |
+| `active_learning_loop:` | `ActiveLearningLoopConfig` | `n_iterations`, `plate_size`, `wells_per_ps`, `wells_per_drc` |
 | *(top-level)* | `PipelineConfig` | `seed` |
 
 ### Fast mode (NoisyOracleModel)

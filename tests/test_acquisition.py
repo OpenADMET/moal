@@ -82,10 +82,10 @@ class TestSelect:
     """Integration tests for CostAwareGreedyAcquisition.select()."""
 
     def test_returns_k_unique_queries(self, acq):
-        """Select must return exactly k pairs with no repeated SMILES, since a compound should only be queried once."""
+        """Select must return no repeated SMILES, since a compound should only be queried once."""
         smiles = [f"C{i}" for i in range(20)]
         preds = np.random.default_rng(0).normal(6.0, 1.5, 20).astype(np.float32)
-        selected = acq.select(smiles, preds, k=5)
+        selected = acq.select(smiles, preds, plate_size=5, wells_per_ps=1, wells_per_drc=1)
         assert len(selected) == 5
         selected_smiles = [s for s, _ in selected]
         assert len(selected_smiles) == len(set(selected_smiles))
@@ -94,7 +94,7 @@ class TestSelect:
         """Every selection must be either PS or DRC — no other query type should ever be emitted."""
         smiles = [f"C{i}" for i in range(10)]
         preds = np.ones(10, dtype=np.float32) * 6.0
-        selected = acq.select(smiles, preds, k=8)
+        selected = acq.select(smiles, preds, plate_size=8, wells_per_ps=1, wells_per_drc=1)
         for _, qt in selected:
             assert qt in (QueryType.PRIMARY_SCREEN, QueryType.DOSE_RESPONSE)
 
@@ -102,32 +102,34 @@ class TestSelect:
         """Compounds with very high predicted pEC50 should prefer DRC."""
         smiles = ["high", "low"]
         preds = np.array([9.5, 3.0], dtype=np.float32)
-        selected = acq.select(smiles, preds, k=1)
+        selected = acq.select(smiles, preds, plate_size=1, wells_per_ps=1, wells_per_drc=1)
         assert selected[0] == ("high", QueryType.DOSE_RESPONSE)
 
     def test_at_threshold_prefers_ps(self, acq):
         """Compounds at the PS threshold (max entropy) should prefer PS when cheap."""
         smiles = ["at_threshold"]
         preds = np.array([5.0], dtype=np.float32)
-        selected = acq.select(smiles, preds, k=1)
+        selected = acq.select(smiles, preds, plate_size=1, wells_per_ps=1, wells_per_drc=1)
         assert selected[0][1] == QueryType.PRIMARY_SCREEN
 
     @pytest.mark.parametrize(
-        "smiles,preds,k",
+        "smiles,preds,plate_size",
         [
             ([], np.array([]), 5),
             ([f"C{i}" for i in range(10)], np.ones(10, dtype=np.float32) * 6.0, 0),
         ],
     )
-    def test_empty_selection_returns_empty(self, acq, smiles, preds, k):
-        """An empty pool or k=0 must return [] without error, as there is nothing to select."""
-        assert acq.select(smiles, preds, k=k) == []
+    def test_empty_selection_returns_empty(self, acq, smiles, preds, plate_size):
+        """An empty pool or plate_size=0 must return [] without error, as there is nothing to select."""
+        assert (
+            acq.select(smiles, preds, plate_size=plate_size, wells_per_ps=1, wells_per_drc=1) == []
+        )
 
-    def test_k_larger_than_pool(self, acq):
-        """When k exceeds the pool size, all available compounds must be returned rather than raising."""
+    def test_plate_larger_than_pool(self, acq):
+        """When plate_size exceeds the pool's total well cost, all available compounds must be returned."""
         smiles = ["A", "B"]
         preds = np.array([5.0, 6.0], dtype=np.float32)
-        selected = acq.select(smiles, preds, k=100)
+        selected = acq.select(smiles, preds, plate_size=100, wells_per_ps=1, wells_per_drc=1)
         assert len(selected) == 2  # limited by pool size
 
     def test_invalid_cost_raises(self):
@@ -148,7 +150,7 @@ class TestSelect:
         )
         smiles = [f"C{i}" for i in range(5)]
         preds = np.array([5.0, 6.0, 7.0, 8.0, 9.0], dtype=np.float32)
-        selected = degenerate.select(smiles, preds, k=3)
+        selected = degenerate.select(smiles, preds, plate_size=3, wells_per_ps=1, wells_per_drc=1)
         assert len(selected) == 3
         for _, qt in selected:
             assert qt in (QueryType.PRIMARY_SCREEN, QueryType.DOSE_RESPONSE)
@@ -162,7 +164,48 @@ class TestSelect:
         smiles = ["A", "B", "C"]
         preds = np.array([float("nan"), 6.0, 7.0], dtype=np.float32)
         with pytest.raises(ValueError, match="finite"):
-            acq.select(smiles, preds, k=2)
+            acq.select(smiles, preds, plate_size=2, wells_per_ps=1, wells_per_drc=1)
+
+    def test_drc_cost_stops_at_plate_boundary(self, acq):
+        """Selection must stop when the next DRC candidate would overflow the plate.
+
+        With plate_size=14, wells_per_drc=13, and wells_per_ps=1, the top
+        candidate (DRC, 13 wells) fills most of the plate.  The second candidate
+        is also a DRC (13 wells), which would push total wells to 26 > 14, so
+        the loop must hard-stop and return only the first compound.
+        """
+        acq_asymmetric = CostAwareGreedyAcquisition(
+            cost_ps=1.0,
+            cost_drc=10.0,
+            ps_threshold=5.0,
+            target_threshold=7.0,
+            tau=0.5,
+        )
+        smiles = ["high1", "high2", "low"]
+        # Both high compounds score heavily for DRC; low scores for PS
+        preds = np.array([9.5, 9.0, 3.0], dtype=np.float32)
+        selected = acq_asymmetric.select(
+            smiles, preds, plate_size=14, wells_per_ps=1, wells_per_drc=13
+        )
+        # First candidate: DRC for "high1" (13 wells used; 1 well left)
+        # Second candidate: DRC for "high2" would use 13 more → 26 > 14 → stop
+        assert len(selected) == 1
+        assert selected[0] == ("high1", QueryType.DOSE_RESPONSE)
+
+    def test_wells_used_never_exceeds_plate_size(self):
+        """Total wells consumed by the selection must never exceed plate_size."""
+        acq = CostAwareGreedyAcquisition(cost_ps=1.0, cost_drc=10.0)
+        rng = np.random.default_rng(7)
+        smiles = [f"C{i}" for i in range(50)]
+        preds = rng.normal(6.0, 1.5, 50).astype(np.float32)
+        plate_size, wells_ps, wells_drc = 100, 1, 13
+        selected = acq.select(
+            smiles, preds, plate_size=plate_size, wells_per_ps=wells_ps, wells_per_drc=wells_drc
+        )
+        total_wells = sum(
+            wells_drc if qt == QueryType.DOSE_RESPONSE else wells_ps for _, qt in selected
+        )
+        assert total_wells <= plate_size
 
 
 class TestPSUpgradeCandidates:
@@ -186,7 +229,9 @@ class TestPSUpgradeCandidates:
         selected = acq.select(
             [],
             np.array([]),
-            1,
+            plate_size=1,
+            wells_per_ps=1,
+            wells_per_drc=1,
             ps_labeled_smiles=ps_smiles,
             ps_labeled_predictions=ps_preds,
         )
@@ -202,7 +247,9 @@ class TestPSUpgradeCandidates:
         selected = acq.select(
             unlabeled,
             unlabeled_preds,
-            1,
+            plate_size=1,
+            wells_per_ps=1,
+            wells_per_drc=1,
             ps_labeled_smiles=ps_labeled,
             ps_labeled_predictions=ps_labeled_preds,
         )
@@ -212,9 +259,15 @@ class TestPSUpgradeCandidates:
         """Passing ps_labeled_smiles=[] must not change behaviour vs omitting the argument."""
         smiles = [f"C{i}" for i in range(5)]
         preds = np.ones(5, dtype=np.float32) * 6.0
-        without_pool = acq.select(smiles, preds, 3)
+        without_pool = acq.select(smiles, preds, plate_size=3, wells_per_ps=1, wells_per_drc=1)
         with_empty_pool = acq.select(
-            smiles, preds, 3, ps_labeled_smiles=[], ps_labeled_predictions=None
+            smiles,
+            preds,
+            plate_size=3,
+            wells_per_ps=1,
+            wells_per_drc=1,
+            ps_labeled_smiles=[],
+            ps_labeled_predictions=None,
         )
         assert without_pool == with_empty_pool
 
@@ -224,7 +277,9 @@ class TestPSUpgradeCandidates:
             acq.select(
                 [],
                 np.array([]),
-                1,
+                plate_size=1,
+                wells_per_ps=1,
+                wells_per_drc=1,
                 ps_labeled_smiles=["A", "B"],
                 ps_labeled_predictions=np.array([1.0]),
             )

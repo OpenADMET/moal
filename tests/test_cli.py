@@ -227,7 +227,9 @@ class TestSimulateCommand:
             "  enabled: false\n"
             "active_learning_loop:\n"
             "  n_iterations: 1\n"
-            "  k_per_iteration: 1\n"
+            "  plate_size: 1\n"
+            "  wells_per_ps: 1\n"
+            "  wells_per_drc: 1\n"
         )
         runner = CliRunner()
         result = runner.invoke(
@@ -643,7 +645,9 @@ class TestExampleConfig:
         assert cfg.oracle.cost_ps == 1.0
         assert cfg.oracle.cost_drc == 10.0
         assert cfg.active_learning_loop.n_iterations == 20
-        assert cfg.active_learning_loop.k_per_iteration == 100
+        assert cfg.active_learning_loop.plate_size == 1536
+        assert cfg.active_learning_loop.wells_per_ps == 1
+        assert cfg.active_learning_loop.wells_per_drc == 13
         assert cfg.model.fast is True
         assert cfg.model.reset_weights_on_refit is False
         assert cfg.data.simulate.input_csv == ""
@@ -672,7 +676,9 @@ class TestSimulatePretrain:
             "  enabled: false\n"
             "active_learning_loop:\n"
             "  n_iterations: 1\n"
-            "  k_per_iteration: 1\n"
+            "  plate_size: 1\n"
+            "  wells_per_ps: 1\n"
+            "  wells_per_drc: 1\n"
             "oracle:\n"
             f"  ps_threshold: {ps_threshold}\n"
         )
