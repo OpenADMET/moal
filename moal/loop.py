@@ -375,6 +375,21 @@ class ActiveLearningLoop:
                         if r.fidelity == QueryType.DOSE_RESPONSE
                         and r.canonical_smiles in ps_labeled_before
                     )
+                    iter_n_ps = sum(
+                        1 for r in new_records if r.fidelity == QueryType.PRIMARY_SCREEN
+                    )
+                    iter_n_drc_upgrade = sum(
+                        1
+                        for r in new_records
+                        if r.fidelity == QueryType.DOSE_RESPONSE
+                        and r.canonical_smiles in ps_labeled_before
+                    )
+                    iter_n_drc_new = sum(
+                        1
+                        for r in new_records
+                        if r.fidelity == QueryType.DOSE_RESPONSE
+                        and r.canonical_smiles not in ps_labeled_before
+                    )
                     progress.advance(task)
 
                     # --- Refit model --------------------------------------
@@ -508,6 +523,9 @@ class ActiveLearningLoop:
                             iter_drc_cost=iter_drc_cost,
                             iter_ps_cost=iter_ps_cost,
                             iter_upgrade_cost=iter_upgrade_cost,
+                            iter_n_drc_new=iter_n_drc_new,
+                            iter_n_upgrades=iter_n_drc_upgrade,
+                            iter_n_ps=iter_n_ps,
                             model_metric_value=model_metric_value,
                         )
 
