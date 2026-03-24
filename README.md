@@ -162,7 +162,7 @@ The campaign emits a rich progress bar with `n_iterations × 3` discrete steps:
 ```
  ⠹  Iter 3/20  Querying oracle — 5 DRC (2 upgrades), 3 PS             ████░░  15%  0:00:12
  ⠹  Iter 3/20  Retraining model — 28 oracle + 60 pretrain records (DRC / PS)  ████░░  17%  0:00:45
- ⠹  Iter 3/20  Selecting next 10 — 18 unqueried, 3 PS hits eligible for upgrade  ████░░  18%  0:00:46
+ ⠹  Iter 3/20  Selecting (plate=1536) — 18 unqueried, 3 PS hits eligible for upgrade  ████░░  18%  0:00:46
 ```
 
 ## Key Design Notes
@@ -178,9 +178,11 @@ The campaign emits a rich progress bar with `n_iterations × 3` discrete steps:
 - Primary screen hit threshold T (`ps_threshold`): pEC50 ≈ 5.0
 - Optimization target (`activity_threshold`): pEC50 = 7.0
 
-**Acquisition strategy (greedy):** Each iteration scores two pools — unqueried compounds (eligible for PS or DRC) and PS-INTERVAL-labeled hits (eligible for DRC upgrade only) — on the same cost-normalised scale:
+**Acquisition strategy (plate-budget greedy):** Each iteration scores two pools — unqueried compounds (eligible for PS or DRC) and PS-INTERVAL-labeled hits (eligible for DRC upgrade only) — on the same cost-normalised scale:
 - `score(x, DRC) = sigmoid((ŷ - 7.0) / τ) / cost_DRC` — exploits likely actives; applies equally to first-pass DRC and upgrade-DRC candidates
 - `score(x, PS) = H_binary(sigmoid((ŷ - T) / τ)) / cost_PS` — cheaply resolves threshold ambiguity; only generated for unqueried compounds
+
+Candidates are selected in score order until adding the next would exceed `active_learning_loop.plate_size` wells (each PS query costs `wells_per_ps`, each DRC costs `wells_per_drc`). When the next candidate overflows the plate the loop hard-stops; remaining candidates are deferred to the next iteration and rescored on the updated model. To replicate a flat query count of k, set `plate_size=k`, `wells_per_ps=1`, `wells_per_drc=1`.
 
 **Per-fidelity loss monitoring:** `training_step` and `validation_step` log `train_drc_loss`, `train_ps_loss`, `val_drc_loss`, and `val_ps_loss` separately (in addition to the aggregate `train_loss` / `val_loss`), making it possible to detect if DRC regression degrades while PS labels keep the total loss deceptively low.
 

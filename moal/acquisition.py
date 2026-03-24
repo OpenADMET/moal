@@ -86,7 +86,7 @@ def _binary_entropy(p: np.ndarray) -> np.ndarray:
 
 
 class CostAwareGreedyAcquisition:
-    """Select k (compound, fidelity) query pairs per active-learning iteration.
+    """Select (compound, fidelity) query pairs that fit within a plate budget.
 
     Parameters
     ----------
@@ -181,19 +181,29 @@ class CostAwareGreedyAcquisition:
         self,
         unlabeled_smiles: list[str],
         predictions: np.ndarray,
-        k: int,
+        plate_size: int,
+        wells_per_ps: int,
+        wells_per_drc: int,
         ps_labeled_smiles: list[str] | None = None,
         ps_labeled_predictions: np.ndarray | None = None,
     ) -> list[tuple[str, QueryType]]:
-        """Greedily select k (compound, fidelity) pairs.
+        """Greedily select queries that fit within a plate well budget.
 
-        Two pools are considered:
+        Candidates are ranked by acquisition score (highest first) across two
+        pools:
 
-        - *Unqueried* compounds (``unlabeled_smiles``): eligible for either PS or
-          DRC.  Both candidates enter the unified ranked list.
+        - *Unqueried* compounds (``unlabeled_smiles``): eligible for either PS
+          or DRC.  Both candidates enter the unified ranked list.
         - *PS-labeled* compounds (``ps_labeled_smiles``): already screened with
           PS; eligible for a DRC upgrade only.  Only a DRC candidate is
           generated for each.
+
+        The loop walks the ranked list from highest to lowest score.  When the
+        next candidate's well cost would push the running total above
+        ``plate_size``, the loop stops and returns whatever has been selected so
+        far.  No attempt is made to fill the remaining capacity with lower-ranked
+        candidates — unused wells are deferred to the next iteration, where all
+        candidates will be rescored on the updated labeled pool.
 
         Parameters
         ----------
@@ -202,8 +212,13 @@ class CostAwareGreedyAcquisition:
         predictions : np.ndarray
             Model pEC50 point estimates, shape ``(N,)``, aligned with
             ``unlabeled_smiles``.
-        k : int
-            Number of queries to select.
+        plate_size : int
+            Maximum total wells available on the plate.  Selection stops as
+            soon as adding the next candidate would exceed this limit.
+        wells_per_ps : int
+            Number of wells consumed by a single PS query.
+        wells_per_drc : int
+            Number of wells consumed by a single DRC query.
         ps_labeled_smiles : list[str], optional
             Ground-truth keys for compounds that have a PS label but no DRC
             label (i.e., INTERVAL-censored hits eligible for a full
@@ -216,7 +231,8 @@ class CostAwareGreedyAcquisition:
         Returns
         -------
         list[tuple[str, QueryType]]
-            Ordered list of (smiles, QueryType) pairs, highest-scoring first.
+            Ordered list of (smiles, QueryType) pairs, highest-scoring first,
+            whose cumulative well cost does not exceed ``plate_size``.
 
         Raises
         ------
@@ -229,7 +245,7 @@ class CostAwareGreedyAcquisition:
             logger.warning("No unlabeled compounds available for acquisition.")
             return []
 
-        if k == 0:
+        if plate_size == 0:
             return []
 
         predictions = np.asarray(predictions, dtype=np.float32)
@@ -271,22 +287,25 @@ class CostAwareGreedyAcquisition:
 
         selected: list[tuple[str, QueryType]] = []
         selected_smiles: set[str] = set()
+        wells_used = 0
         for _score, smi, qt in candidates:
             if smi in selected_smiles:
                 continue
+            cost = wells_per_drc if qt == QueryType.DOSE_RESPONSE else wells_per_ps
+            if wells_used + cost > plate_size:
+                break
             selected.append((smi, qt))
             selected_smiles.add(smi)
-            if len(selected) >= k:
-                break
+            wells_used += cost
 
-        if len(selected) < k:
+        if wells_used == 0 and (unlabeled_smiles or ps_labeled_smiles):
             logger.warning(
-                "Could only select %d queries (requested %d); "
-                "%d unqueried and %d PS-labeled compounds available.",
-                len(selected),
-                k,
-                len(unlabeled_smiles),
-                len(ps_labeled_smiles),
+                "No candidates fit within plate_size=%d "
+                "(wells_per_ps=%d, wells_per_drc=%d). "
+                "No queries selected for this iteration.",
+                plate_size,
+                wells_per_ps,
+                wells_per_drc,
             )
         return selected
 

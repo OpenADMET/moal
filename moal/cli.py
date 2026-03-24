@@ -235,7 +235,9 @@ def simulate(config: Path, output_dir: Path | None, verbose: bool) -> None:
     try:
         results = loop.run(
             n_iterations=cfg.active_learning_loop.n_iterations,
-            k_per_iteration=cfg.active_learning_loop.k_per_iteration,
+            plate_size=cfg.active_learning_loop.plate_size,
+            wells_per_ps=cfg.active_learning_loop.wells_per_ps,
+            wells_per_drc=cfg.active_learning_loop.wells_per_drc,
         )
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc

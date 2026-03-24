@@ -142,7 +142,9 @@ def loop(oracle, mock_model, acquisition, evaluator):
 # ---------------------------------------------------------------------------
 
 N_ITERATIONS = 3
-K = 5
+PLATE_SIZE = 5
+WELLS_PS = 1
+WELLS_DRC = 1
 
 
 class TestLoopExecution:
@@ -150,21 +152,36 @@ class TestLoopExecution:
 
     def test_correct_number_of_iterations(self, loop):
         """The results list must contain exactly n_iterations entries, confirming the loop ran the requested number of times."""
-        results = loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
+        results = loop.run(
+            n_iterations=N_ITERATIONS,
+            plate_size=PLATE_SIZE,
+            wells_per_ps=WELLS_PS,
+            wells_per_drc=WELLS_DRC,
+        )
         assert len(results.iterations) == N_ITERATIONS
 
     def test_labeled_pool_grows(self, loop, oracle):
         """The cumulative labeled count must be non-decreasing and total k × n_iterations compounds at the end."""
-        results = loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
+        results = loop.run(
+            n_iterations=N_ITERATIONS,
+            plate_size=PLATE_SIZE,
+            wells_per_ps=WELLS_PS,
+            wells_per_drc=WELLS_DRC,
+        )
         prev = 0
         for iter_result in results.iterations:
             assert iter_result.cumulative_labeled >= prev
             prev = iter_result.cumulative_labeled
-        assert results.total_labeled == N_ITERATIONS * K
+        assert results.total_labeled == N_ITERATIONS * PLATE_SIZE
 
     def test_cost_is_monotonically_increasing(self, loop):
         """Cumulative cost must be non-decreasing, since assays can only add cost, not remove it."""
-        results = loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
+        results = loop.run(
+            n_iterations=N_ITERATIONS,
+            plate_size=PLATE_SIZE,
+            wells_per_ps=WELLS_PS,
+            wells_per_drc=WELLS_DRC,
+        )
         costs = results.costs()
         assert all(costs[i] <= costs[i + 1] for i in range(len(costs) - 1))
         assert results.total_cost == pytest.approx(costs[-1])
@@ -175,13 +192,23 @@ class TestLoopExecution:
         A compound may have two records if it was upgraded from PS to DRC, but
         must never have two records with the same fidelity.
         """
-        loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
+        loop.run(
+            n_iterations=N_ITERATIONS,
+            plate_size=PLATE_SIZE,
+            wells_per_ps=WELLS_PS,
+            wells_per_drc=WELLS_DRC,
+        )
         pairs = [(r.canonical_smiles, r.fidelity) for r in oracle.labeled_records]
         assert len(pairs) == len(set(pairs))
 
     def test_model_refit_called_each_iteration(self, loop, mock_model):
         """model.refit must be called exactly once per iteration to ensure the model is updated with new labels."""
-        loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
+        loop.run(
+            n_iterations=N_ITERATIONS,
+            plate_size=PLATE_SIZE,
+            wells_per_ps=WELLS_PS,
+            wells_per_drc=WELLS_DRC,
+        )
         assert mock_model.refit.call_count == N_ITERATIONS
 
     def test_reset_weights_flag_forwarded_to_refit(
@@ -196,7 +223,12 @@ class TestLoopExecution:
             reset_weights_on_refit=True,
         )
 
-        loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
+        loop.run(
+            n_iterations=N_ITERATIONS,
+            plate_size=PLATE_SIZE,
+            wells_per_ps=WELLS_PS,
+            wells_per_drc=WELLS_DRC,
+        )
 
         assert mock_model.refit.call_count == N_ITERATIONS
         assert all(call.kwargs["reset_weights"] is True for call in mock_model.refit.call_args_list)
@@ -210,7 +242,12 @@ class TestLoopExecution:
         It can only strictly shrink when a DRC query is made (compound leaves
         both pools entirely).  It must never grow.
         """
-        loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
+        loop.run(
+            n_iterations=N_ITERATIONS,
+            plate_size=PLATE_SIZE,
+            wells_per_ps=WELLS_PS,
+            wells_per_drc=WELLS_DRC,
+        )
         call_sizes = [len(c.args[0]) for c in mock_model.predict_smiles.call_args_list]
         assert all(s1 >= s2 for s1, s2 in zip(call_sizes, call_sizes[1:], strict=False)), (
             f"Scorable pool grew between iterations; sizes: {call_sizes}"
@@ -222,14 +259,24 @@ class TestMetrics:
 
     def test_metrics_are_finite(self, loop):
         """All numeric metrics must be finite after every iteration; nan or inf would indicate a data pipeline bug."""
-        results = loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
+        results = loop.run(
+            n_iterations=N_ITERATIONS,
+            plate_size=PLATE_SIZE,
+            wells_per_ps=WELLS_PS,
+            wells_per_drc=WELLS_DRC,
+        )
         for iter_result in results.iterations:
             for key, value in iter_result.metrics.items():
                 assert np.isfinite(value), f"Metric {key} is not finite: {value}"
 
     def test_total_cost_in_final_metrics(self, loop):
         """final_metrics must contain total_cost matching oracle.total_cost so downstream reporting is consistent."""
-        results = loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
+        results = loop.run(
+            n_iterations=N_ITERATIONS,
+            plate_size=PLATE_SIZE,
+            wells_per_ps=WELLS_PS,
+            wells_per_drc=WELLS_DRC,
+        )
         assert "total_cost" in results.final_metrics
         assert results.final_metrics["total_cost"] == pytest.approx(results.total_cost)
 
@@ -242,7 +289,12 @@ class TestMetrics:
     )
     def test_metric_in_bounds(self, loop, key, lo, hi):
         """Recall must lie in [0, 1] and actives_per_dollar must be non-negative across all iterations."""
-        results = loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
+        results = loop.run(
+            n_iterations=N_ITERATIONS,
+            plate_size=PLATE_SIZE,
+            wells_per_ps=WELLS_PS,
+            wells_per_drc=WELLS_DRC,
+        )
         for iter_result in results.iterations:
             assert key in iter_result.metrics, (
                 f"Expected metric '{key}' in iter_result.metrics; "
@@ -277,7 +329,7 @@ class TestEarlyStop:
         ev = PipelineEvaluator()
         loop = ActiveLearningLoop(oracle=oracle, model=mock, acquisition=acq, evaluator=ev)
 
-        results = loop.run(n_iterations=100, k_per_iteration=5)
+        results = loop.run(n_iterations=100, plate_size=5, wells_per_ps=1, wells_per_drc=1)
         # At most 10 unique compounds could be queried; each may contribute 2 records
         # (PS + DRC upgrade), so total_labeled can exceed pool_size.  Check unique compounds.
         unique_labeled = len(oracle._labeled)
@@ -303,7 +355,12 @@ class TestDashboardIntegration:
             evaluator=evaluator,
             dashboard=mock_db,
         )
-        loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
+        loop.run(
+            n_iterations=N_ITERATIONS,
+            plate_size=PLATE_SIZE,
+            wells_per_ps=WELLS_PS,
+            wells_per_drc=WELLS_DRC,
+        )
         assert mock_db.update.call_count == N_ITERATIONS
 
         for call in mock_db.update.call_args_list:
@@ -337,7 +394,12 @@ class TestTestSetIntegration:
             test_set=(test_smiles, test_pec50),
             model_metric=ModelMetric.MAE,
         )
-        results = loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
+        results = loop.run(
+            n_iterations=N_ITERATIONS,
+            plate_size=PLATE_SIZE,
+            wells_per_ps=WELLS_PS,
+            wells_per_drc=WELLS_DRC,
+        )
         for ir in results.iterations:
             assert ir.model_metric_value is not None
             assert np.isfinite(ir.model_metric_value)
@@ -350,7 +412,12 @@ class TestTestSetIntegration:
             acquisition=acquisition,
             evaluator=evaluator,
         )
-        results = loop.run(n_iterations=N_ITERATIONS, k_per_iteration=K)
+        results = loop.run(
+            n_iterations=N_ITERATIONS,
+            plate_size=PLATE_SIZE,
+            wells_per_ps=WELLS_PS,
+            wells_per_drc=WELLS_DRC,
+        )
         for ir in results.iterations:
             assert ir.model_metric_value is None
 
@@ -411,7 +478,7 @@ class TestIsCanonicalForwarding:
             final_error=0.0,
         )
 
-        results = loop.run(n_iterations=2, k_per_iteration=2)
+        results = loop.run(n_iterations=2, plate_size=2, wells_per_ps=1, wells_per_drc=1)
 
         # The oracle must have labeled compounds — if the bug were present,
         # every query would have been silently skipped and the pool would be empty.
@@ -478,7 +545,7 @@ class TestPSUpgradeInLoop:
         """Running enough iterations must produce at least one compound with
         both a PS and a DRC record (confirming the upgrade path fires).
         """
-        upgrade_loop.run(n_iterations=6, k_per_iteration=2)
+        upgrade_loop.run(n_iterations=6, plate_size=2, wells_per_ps=1, wells_per_drc=1)
         records = upgrade_oracle.labeled_records
         # Group by canonical SMILES
         by_smiles: dict = defaultdict(list)
@@ -493,13 +560,13 @@ class TestPSUpgradeInLoop:
 
     def test_no_duplicate_fidelity_pairs(self, upgrade_loop, upgrade_oracle):
         """Each (smiles, fidelity) pair must appear at most once in labeled_records."""
-        upgrade_loop.run(n_iterations=4, k_per_iteration=2)
+        upgrade_loop.run(n_iterations=4, plate_size=2, wells_per_ps=1, wells_per_drc=1)
         pairs = [(r.canonical_smiles, r.fidelity) for r in upgrade_oracle.labeled_records]
         assert len(pairs) == len(set(pairs))
 
     def test_cost_includes_both_ps_and_drc(self, upgrade_loop, upgrade_oracle):
         """Total cost must reflect both PS and DRC assays when upgrades occur."""
-        upgrade_loop.run(n_iterations=6, k_per_iteration=2)
+        upgrade_loop.run(n_iterations=6, plate_size=2, wells_per_ps=1, wells_per_drc=1)
         manual_cost = sum(r.cost for r in upgrade_oracle.labeled_records)
         assert upgrade_oracle.total_cost == pytest.approx(manual_cost)
 
@@ -508,7 +575,7 @@ class TestPSUpgradeInLoop:
         as all INTERVAL-censored hits are upgraded to DRC.
         """
         # Run enough iterations to exhaust the whole pool
-        upgrade_loop.run(n_iterations=10, k_per_iteration=2)
+        upgrade_loop.run(n_iterations=10, plate_size=2, wells_per_ps=1, wells_per_drc=1)
         # All compounds labeled; none remain eligible for PS→DRC upgrade
         assert upgrade_oracle.get_ps_labeled_smiles() == []
 
@@ -551,7 +618,9 @@ class TestNoisyOracleErrorRamp:
     """Verify that the per-iteration noise ramp is correctly computed and dispatched."""
 
     N_ITER = 4
-    K = 2
+    PLATE_SIZE = 2
+    WELLS_PS = 1
+    WELLS_DRC = 1
 
     def _make_loop(self, oracle, initial_error, final_error):
         model = NoisyOracleModel(oracle._ground_truth, seed=0)
@@ -591,7 +660,12 @@ class TestNoisyOracleErrorRamp:
             return real_predict(smiles_list, noise_scale, batch_size)
 
         with patch.object(model, "predict_smiles", side_effect=_spy):
-            loop.run(n_iterations=self.N_ITER, k_per_iteration=self.K)
+            loop.run(
+                n_iterations=self.N_ITER,
+                plate_size=self.PLATE_SIZE,
+                wells_per_ps=self.WELLS_PS,
+                wells_per_drc=self.WELLS_DRC,
+            )
 
         # The first call is the pre-loop seed; calls 1..N_ITER are the per-iteration
         # Step 3 selections. Slice off the seed call and check the iteration calls.
@@ -618,7 +692,12 @@ class TestNoisyOracleErrorRamp:
             return real_predict(smiles_list, noise_scale, batch_size)
 
         with patch.object(model, "predict_smiles", side_effect=_spy):
-            loop.run(n_iterations=self.N_ITER, k_per_iteration=self.K)
+            loop.run(
+                n_iterations=self.N_ITER,
+                plate_size=self.PLATE_SIZE,
+                wells_per_ps=self.WELLS_PS,
+                wells_per_drc=self.WELLS_DRC,
+            )
 
         assert len(captured) >= self.N_ITER + 1
         for i, ns in enumerate(captured):
@@ -638,7 +717,12 @@ class TestNoisyOracleErrorRamp:
             return real_predict(smiles_list, noise_scale, batch_size)
 
         with patch.object(model, "predict_smiles", side_effect=_spy):
-            loop.run(n_iterations=self.N_ITER, k_per_iteration=self.K)
+            loop.run(
+                n_iterations=self.N_ITER,
+                plate_size=self.PLATE_SIZE,
+                wells_per_ps=self.WELLS_PS,
+                wells_per_drc=self.WELLS_DRC,
+            )
 
         assert captured, "predict_smiles was never called"
         assert captured[0] == pytest.approx(initial, abs=1e-7), (
@@ -650,7 +734,9 @@ class TestPretrainRecords:
     """Tests for ActiveLearningLoop behaviour when pretrain_records are provided."""
 
     N_ITER = 2
-    K = 3
+    PLATE_SIZE = 3
+    WELLS_PS = 1
+    WELLS_DRC = 1
 
     @pytest.fixture
     def pretrain_loop(self, oracle, mock_model, acquisition, evaluator):
@@ -702,7 +788,12 @@ class TestPretrainRecords:
 
     def test_pretrain_records_included_in_refit_call(self, pretrain_loop, mock_model):
         """model.refit must be called with the exact pretrain SMILES in the records list."""
-        pretrain_loop.run(n_iterations=self.N_ITER, k_per_iteration=self.K)
+        pretrain_loop.run(
+            n_iterations=self.N_ITER,
+            plate_size=self.PLATE_SIZE,
+            wells_per_ps=self.WELLS_PS,
+            wells_per_drc=self.WELLS_DRC,
+        )
         assert mock_model.refit.called
         # Every pretrain SMILES must appear among the records passed to the first refit
         first_call_records = mock_model.refit.call_args_list[0][1]["records"]
@@ -743,8 +834,18 @@ class TestPretrainRecords:
         loop_no_pretrain.model = m1
         loop_empty.model = m2
 
-        loop_no_pretrain.run(n_iterations=self.N_ITER, k_per_iteration=self.K)
-        loop_empty.run(n_iterations=self.N_ITER, k_per_iteration=self.K)
+        loop_no_pretrain.run(
+            n_iterations=self.N_ITER,
+            plate_size=self.PLATE_SIZE,
+            wells_per_ps=self.WELLS_PS,
+            wells_per_drc=self.WELLS_DRC,
+        )
+        loop_empty.run(
+            n_iterations=self.N_ITER,
+            plate_size=self.PLATE_SIZE,
+            wells_per_ps=self.WELLS_PS,
+            wells_per_drc=self.WELLS_DRC,
+        )
 
         assert m1.refit.call_count == m2.refit.call_count
 

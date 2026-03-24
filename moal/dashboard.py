@@ -347,6 +347,9 @@ class LiveDashboard:
         iter_drc_cost: float,
         iter_ps_cost: float,
         iter_upgrade_cost: float = 0.0,
+        iter_n_drc_new: int = 0,
+        iter_n_upgrades: int = 0,
+        iter_n_ps: int = 0,
         model_metric_value: float | None = None,
     ) -> None:
         """Append iteration data for live display and deferred GIF/HTML export.
@@ -363,6 +366,12 @@ class LiveDashboard:
             Total PS cost incurred in the current iteration.
         iter_upgrade_cost : float, optional
             Portion of ``iter_drc_cost`` attributable to PS→DRC upgrades.
+        iter_n_drc_new : int, optional
+            Number of new (first-pass) DRC queries issued this iteration.
+        iter_n_upgrades : int, optional
+            Number of PS→DRC upgrade queries issued this iteration.
+        iter_n_ps : int, optional
+            Number of PS queries issued this iteration.
         model_metric_value : float, optional
             Held-out test-set metric for this iteration, or None if unavailable.
         """
@@ -390,6 +399,9 @@ class LiveDashboard:
             "iter_drc_cost": iter_drc_cost,
             "iter_ps_cost": iter_ps_cost,
             "iter_upgrade_cost": iter_upgrade_cost,
+            "iter_n_drc_new": iter_n_drc_new,
+            "iter_n_upgrades": iter_n_upgrades,
+            "iter_n_ps": iter_n_ps,
             "model_metric_value": model_metric_value,
             "n_ps_only": n_ps_only,
             "n_drc_new": n_drc_new,
@@ -841,6 +853,9 @@ class LiveDashboard:
         iter_drc_new = [it["iter_drc_cost"] - it["iter_upgrade_cost"] for it in iterations]
         iter_upgrades = [it["iter_upgrade_cost"] for it in iterations]
         iter_ps = [it["iter_ps_cost"] for it in iterations]
+        iter_n_drc_new = [it.get("iter_n_drc_new", 0) for it in iterations]
+        iter_n_upgrades = [it.get("iter_n_upgrades", 0) for it in iterations]
+        iter_n_ps = [it.get("iter_n_ps", 0) for it in iterations]
         # Scale to thousands so secondary y-axis ticks stay compact whole-number integers
         cum_total_costs = [
             c / 1000
@@ -880,6 +895,8 @@ class LiveDashboard:
                 y=iter_drc_new,
                 name="DRC",
                 marker_color=_COLOUR_DRC,
+                customdata=iter_n_drc_new,
+                hovertemplate="<b>DRC</b><br>%{customdata} queries<br>$%{y:.0f}<extra></extra>",
                 showlegend=False,
             ),
             row=1,
@@ -891,6 +908,8 @@ class LiveDashboard:
                 y=iter_upgrades,
                 name="PS→DRC",
                 marker_color=_COLOUR_UPGRADE,
+                customdata=iter_n_upgrades,
+                hovertemplate="<b>PS→DRC</b><br>%{customdata} upgrades<br>$%{y:.0f}<extra></extra>",
                 showlegend=False,
             ),
             row=1,
@@ -902,6 +921,8 @@ class LiveDashboard:
                 y=iter_ps,
                 name="PS",
                 marker_color=_COLOUR_PS,
+                customdata=iter_n_ps,
+                hovertemplate="<b>PS</b><br>%{customdata} queries<br>$%{y:.0f}<extra></extra>",
                 showlegend=False,
             ),
             row=1,

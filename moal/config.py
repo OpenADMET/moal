@@ -379,12 +379,26 @@ class ActiveLearningLoopConfig:
     ----------
     n_iterations : int
         Number of active learning iterations (m).
-    k_per_iteration : int
-        Number of oracle queries issued per iteration (k).
+    plate_size : int
+        Maximum number of wells available per plate (i.e., per iteration).
+        The acquisition greedily selects ranked candidates in score order,
+        stopping as soon as the next candidate would push the total well
+        count over this limit.  Any remaining plate capacity is accepted
+        and the unused candidates are deferred to the next iteration, where
+        the model will be re-scored on the updated labeled pool.
+    wells_per_ps : int
+        Number of wells consumed by a single Primary Screen (PS) query.
+        Typically 1 for a singlet primary screen.
+    wells_per_drc : int
+        Number of wells consumed by a single Dose-Response Curve (DRC) query.
+        For example, a 13-point DRC in duplicate consumes 26 wells; a compact
+        8-point singlet DRC consumes 8.
     """
 
     n_iterations: int = 20
-    k_per_iteration: int = 10
+    plate_size: int = 1536
+    wells_per_ps: int = 1
+    wells_per_drc: int = 13
 
 
 @dataclass(frozen=True)
