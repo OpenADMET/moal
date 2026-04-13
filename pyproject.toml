@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61", "wheel"]
+requires = ["setuptools>=82.0.1", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,26 +8,26 @@ version = "0.1.0"
 description = "Cost-aware synthetic active learning pipeline for cheminformatics"
 requires-python = ">=3.11"
 dependencies = [
-    "chemprop>=2.0,<3.0",
-    "lightning>=2.0",
-    "torch>=2.0",
-    "rdkit>=2023.3",
-    "pandas>=2.0",
-    "numpy>=1.25",
-    "scipy>=1.11",
-    "click>=8.1",
-    "pyyaml>=6.0",
-    "rich>=13.0",
-    "matplotlib>=3.7",
-    "Pillow>=9.0",
-    "plotly>=5.0",
-    "dash>=2.0",
+    "chemprop>=2.2.3,<3.0",
+    "lightning>=2.6.1",
+    "torch>=2.11.0",
+    "rdkit>=2026.3.1",
+    "pandas>=3.0.2",
+    "numpy>=2.4.4",
+    "scipy>=1.17.1",
+    "click>=8.3.2",
+    "pyyaml>=6.0.3",
+    "rich>=15.0.0",
+    "matplotlib>=3.10.8",
+    "Pillow>=12.2.0",
+    "plotly>=6.7.0",
+    "dash>=4.1.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.4",
-    "pytest-cov>=4.1",
+    "pytest>=9.0.3",
+    "pytest-cov>=7.1.0",
     "ruff",
     "mypy",
     "types-PyYAML",
