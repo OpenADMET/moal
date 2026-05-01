@@ -258,6 +258,9 @@ def simulate(config: Path, output_dir: Path | None, verbose: bool) -> None:
         html_path = out_dir / "dashboard_animation.html"
         dashboard.save_html(html_path)
 
+        html_cdn_path = out_dir / "dashboard_animation_cdn.html"
+        dashboard.save_html(html_cdn_path, use_cdn=True)
+
         gif_path = out_dir / "dashboard_animation.gif"
         dashboard.save_gif(gif_path)
         dashboard.close()

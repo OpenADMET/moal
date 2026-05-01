@@ -58,7 +58,7 @@ class SMILESPreprocessor:
         if mol is None or mol.GetNumAtoms() == 0:
             logger.warning("SMILES reduced to empty molecule after salt stripping: %s", smiles)
             return None
-        return Chem.MolToSmiles(mol, isomericSmiles=True)
+        return str(Chem.MolToSmiles(mol, isomericSmiles=True))
 
     def process_batch(self, smiles_list: list[str]) -> tuple[list[str], list[str]]:
         """Canonicalize a batch of SMILES strings.

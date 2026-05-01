@@ -554,6 +554,44 @@ class TestSaveHtml:
         assert re.search(r"Plotly\.animate\('[^']+', null\);", content) is None
         assert "redraw: false" in content
 
+    def test_save_html_cdn_omits_embedded_plotlyjs(self, tmp_path):
+        """save_html(use_cdn=True) must load Plotly from CDN instead of embedding it."""
+        db = LiveDashboard(n_iterations=2, n_compounds=20)
+        records = _make_records(4)
+        for _ in range(2):
+            db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
+
+        cdn_path = tmp_path / "dashboard_cdn.html"
+        embedded_path = tmp_path / "dashboard_embedded.html"
+        db.save_html(cdn_path, use_cdn=True)
+        db.save_html(embedded_path, use_cdn=False)
+        db.close()
+
+        cdn_content = cdn_path.read_text()
+
+        # CDN version must reference the Plotly CDN URL
+        assert "cdn.plot.ly" in cdn_content
+        # CDN version must be substantially smaller (no embedded JS bundle)
+        assert cdn_path.stat().st_size < embedded_path.stat().st_size
+
+    def test_slider_and_playback_use_same_frame_duration(self, tmp_path):
+        """Slider step args and the injected play script must use the same frame/transition durations."""
+        db = LiveDashboard(n_iterations=2, n_compounds=20)
+        records = _make_records(4)
+        for _ in range(2):
+            db.update(records, activity_threshold=7.0, iter_drc_cost=5.0, iter_ps_cost=1.0)
+
+        html_path = tmp_path / "dashboard.html"
+        db.save_html(html_path)
+        db.close()
+
+        content = html_path.read_text()
+        # Slider step JSON uses compact form; injected play script uses spaced form
+        assert '"duration":700' in content  # slider step frame duration
+        assert "duration: 700" in content  # injected JS play animation frame duration
+        assert '"duration":300' in content  # slider step transition duration
+        assert "duration: 300" in content  # injected JS play animation transition duration
+
     def test_animated_frames_include_per_iteration_axis_layout(self):
         """Animated HTML frames must carry per-iteration axis updates, not just trace data."""
         db = LiveDashboard(n_iterations=3, n_compounds=20)
