@@ -9,7 +9,7 @@ description = "Cost-aware synthetic active learning pipeline for cheminformatics
 requires-python = ">=3.11"
 dependencies = [
     "chemprop>=2.0,<3.0",
-    "lightning>=2.0",
+    "lightning>=2.0,<2.6.2",
     "torch>=2.0",
     "rdkit>=2023.3",
     "pandas>=2.0",
