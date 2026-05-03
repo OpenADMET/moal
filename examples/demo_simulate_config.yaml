@@ -1,0 +1,64 @@
+# Simulate config for the moal demo notebook.
+# Run from the examples/ directory:
+#   moal simulate --config demo_simulate_config.yaml
+#
+# Or from repo root:
+#   moal simulate --config examples/demo_simulate_config.yaml
+
+seed: 42
+
+oracle:
+  cost_ps: 1.0
+  cost_drc: 10.0
+  ps_threshold: 5.0
+  upper_bound: 11.0
+  activity_threshold: 6.0          # PXR: active = pEC50 >= 6.0 (1 µM)
+
+model:
+  fast: true                        # Noisy-oracle surrogate — no CheMeleon training
+  initial_error: 1.2
+  final_error: 0.65
+  freeze_epochs: 1
+  lr_encoder: 1.0e-4
+  lr_head: 1.0e-3
+  ffn_hidden_size: 300
+  ffn_num_layers: 2
+  sigma: 0.5
+  w_drc: 1.0
+  w_ps: 1.0
+  learnable_sigma: false
+  reset_weights_on_refit: true
+
+acquisition:
+  ps_threshold: 5.0
+  target_threshold: 6.0
+  tau: 0.5
+
+trainer:
+  max_epochs: 10
+  accelerator: auto
+  enable_progress_bar: false
+  enable_model_summary: false
+  val_fraction: 0.1
+  split_seed: 42
+  num_workers: 0
+  log_every_n_steps: 1
+
+dashboard:
+  enabled: false
+
+data:
+  output_dir: demo_output/simulate_results
+  simulate:
+    input_csv: data/pxr_data.csv
+    smiles_column: smiles
+    relation_column: relation
+    value_column: value
+    is_canonical: false
+    test_set_size: 0.15
+
+active_learning_loop:
+  n_iterations: 20
+  plate_size: 1536
+  wells_per_ps: 1
+  wells_per_drc: 13
