@@ -1,0 +1,49 @@
+acquisition:
+  ps_threshold: 5.0
+  target_threshold: 6.0
+  tau: 0.5
+active_learning_loop:
+  n_iterations: 20
+  plate_size: 1536
+  wells_per_drc: 13
+  wells_per_ps: 1
+dashboard:
+  enabled: false
+data:
+  output_dir: /Users/smcolby/repos/moal/examples/demo_output/simulate_results
+  simulate:
+    input_csv: /Users/smcolby/repos/moal/examples/data/pxr_data.csv
+    is_canonical: false
+    smiles_column: smiles
+    test_set_size: 0.15
+    value_column: value
+model:
+  fast: true
+  ffn_hidden_size: 300
+  ffn_num_layers: 2
+  final_error: 0.65
+  freeze_epochs: 1
+  initial_error: 1.2
+  learnable_sigma: false
+  lr_encoder: 0.0001
+  lr_head: 0.001
+  reset_weights_on_refit: true
+  sigma: 0.5
+  w_drc: 1.0
+  w_ps: 1.0
+oracle:
+  activity_threshold: 6.0
+  cost_drc: 10.0
+  cost_ps: 1.0
+  ps_threshold: 5.0
+  upper_bound: 11.0
+seed: 42
+trainer:
+  accelerator: auto
+  enable_model_summary: false
+  enable_progress_bar: false
+  log_every_n_steps: 1
+  max_epochs: 10
+  num_workers: 0
+  split_seed: 42
+  val_fraction: 0.1
