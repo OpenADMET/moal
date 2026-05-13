@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import cast
 
 import numpy as np
@@ -53,6 +53,7 @@ def parse_campaign_state(
     smiles_column: str = "smiles",
     relation_column: str = "relation",
     value_column: str = "value",
+    weight_column: str | None = None,
     is_canonical: bool = False,
     expected_ps_threshold: float | None = None,
 ) -> CampaignState:
@@ -81,6 +82,11 @@ def parse_campaign_state(
         Used to canonicalize SMILES when ``is_canonical`` is False.
     smiles_column, relation_column, value_column : str
         Column names in ``df``.
+    weight_column : str or None
+        Optional column name for per-sample loss weights. When provided,
+        each labeled row's weight is read from this column (NaN / empty cells
+        default to 1.0). Must be a finite positive float when present. When
+        None (default), all records receive ``weight=1.0``.
     is_canonical : bool
         When True, skip RDKit canonicalization.
     expected_ps_threshold : float or None
@@ -94,6 +100,10 @@ def parse_campaign_state(
     if smiles_column not in df.columns:
         raise ValueError(
             f"state CSV must contain column {smiles_column!r}, got {sorted(df.columns)}"
+        )
+    if weight_column is not None and weight_column not in df.columns:
+        raise ValueError(
+            f"weight_column {weight_column!r} not found in state CSV, got {sorted(df.columns)}"
         )
 
     training_records: list[LabelRecord] = []
@@ -150,6 +160,22 @@ def parse_campaign_state(
                 f"got {value}."
             )
 
+        weight = 1.0
+        if weight_column is not None:
+            weight_raw = row.get(weight_column, None)
+            if not (pd.isna(weight_raw) or str(weight_raw).strip() == ""):
+                try:
+                    weight = float(weight_raw)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"Row {csv_row}: weight must be a finite positive float,"
+                        f" got {weight_raw!r}."
+                    ) from exc
+                if not math.isfinite(weight) or weight <= 0:
+                    raise ValueError(
+                        f"Row {csv_row}: weight must be finite and positive, got {weight}."
+                    )
+
         if relation == "==":
             record = LabelRecord(
                 smiles=raw_smiles,
@@ -160,6 +186,7 @@ def parse_campaign_state(
                 fidelity=QueryType.DOSE_RESPONSE,
                 cost=cost_drc,
                 iteration=_PLAN_MODE_ITERATION,
+                weight=weight,
             )
         else:
             if expected_ps_threshold is not None and not math.isclose(
@@ -178,6 +205,7 @@ def parse_campaign_state(
                 fidelity=QueryType.PRIMARY_SCREEN,
                 cost=cost_ps,
                 iteration=_PLAN_MODE_ITERATION,
+                weight=weight,
             )
             # PS hits are DRC-upgrade inference targets in addition to training records
             if relation == ">=":
@@ -219,6 +247,7 @@ def parse_pretrain_records(
     smiles_column: str = "smiles",
     relation_column: str = "relation",
     value_column: str = "value",
+    weight_column: str | None = None,
     is_canonical: bool = False,
     expected_ps_threshold: float | None = None,
 ) -> list[LabelRecord]:
@@ -245,6 +274,10 @@ def parse_pretrain_records(
         Used to canonicalize SMILES when ``is_canonical`` is False.
     smiles_column, relation_column, value_column : str
         Column names in ``df``.
+    weight_column : str or None
+        Optional column name for per-sample loss weights. Forwarded to
+        :func:`parse_campaign_state`. When None (default), all records
+        receive ``weight=1.0``.
     is_canonical : bool
         When True, skip RDKit canonicalization.
     expected_ps_threshold : float or None
@@ -266,6 +299,7 @@ def parse_pretrain_records(
         smiles_column=smiles_column,
         relation_column=relation_column,
         value_column=value_column,
+        weight_column=weight_column,
         is_canonical=is_canonical,
         expected_ps_threshold=expected_ps_threshold,
     )
@@ -450,3 +484,50 @@ def validate_training_records(records: list[LabelRecord]) -> None:
                 f"Compound {canonical_smiles!r} has both a PS '<' (inactive) row and "
                 "a DRC row. This mixed-fidelity combination is unsupported."
             )
+
+
+def normalize_record_weights(records: list[LabelRecord]) -> list[LabelRecord]:
+    """Return records with ``weight`` normalized to mean=1.0 per fidelity class.
+
+    Normalizes DRC and PS records independently so that the global ``w_drc``
+    and ``w_ps`` scale relationship is preserved after per-sample weighting.
+    When all records already have ``weight=1.0`` (the default), normalization
+    is a no-op.
+
+    Parameters
+    ----------
+    records : list[LabelRecord]
+        Training records whose weights will be normalized.  The original
+        records are not modified — new :class:`~moal.types.LabelRecord`
+        objects are returned.
+
+    Returns
+    -------
+    list[LabelRecord]
+        New records with normalized weights.  Ordering is preserved.
+
+    Raises
+    ------
+    ValueError
+        If all records in a fidelity class have weight=0 (mean is zero or
+        negative), which would produce a division-by-zero normalization.
+    """
+    drc_weights = [rec.weight for rec in records if rec.fidelity == QueryType.DOSE_RESPONSE]
+    ps_weights = [rec.weight for rec in records if rec.fidelity == QueryType.PRIMARY_SCREEN]
+
+    drc_mean = float(np.mean(drc_weights)) if drc_weights else 1.0
+    ps_mean = float(np.mean(ps_weights)) if ps_weights else 1.0
+
+    if drc_mean <= 0:
+        raise ValueError(f"Mean DRC weight is {drc_mean}; all DRC weights must be positive.")
+    if ps_mean <= 0:
+        raise ValueError(f"Mean PS weight is {ps_mean}; all PS weights must be positive.")
+
+    normalized = []
+    for rec in records:
+        mean = drc_mean if rec.fidelity == QueryType.DOSE_RESPONSE else ps_mean
+        if mean == 1.0 and rec.weight == 1.0:
+            normalized.append(rec)
+        else:
+            normalized.append(replace(rec, weight=rec.weight / mean))
+    return normalized

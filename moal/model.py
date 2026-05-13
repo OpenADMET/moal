@@ -30,6 +30,7 @@ from torch.optim import Adam
 
 from moal.dataset import MixedFidelityDataModule
 from moal.loss import CensoredRegressionLoss
+from moal.planning import normalize_record_weights
 from moal.types import LabelRecord
 
 logger = logging.getLogger(__name__)
@@ -469,6 +470,7 @@ class ChemPropLightningModule(L.LightningModule):
             )
             self._freeze_encoder()
 
+        records = normalize_record_weights(records)
         dm = MixedFidelityDataModule(records, **(datamodule_kwargs or {}))
         dm.setup()
 
