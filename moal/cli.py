@@ -710,6 +710,7 @@ def _build_simulation_model(
         w_drc=cfg.model.w_drc,
         w_ps=cfg.model.w_ps,
         learnable_sigma=cfg.model.learnable_sigma,
+        from_foundation=cfg.model.from_foundation,
     )
 
 
@@ -748,6 +749,7 @@ def _build_plan_model(cfg: PipelineConfig) -> ChemPropLightningModule:
         w_drc=cfg.model.w_drc,
         w_ps=cfg.model.w_ps,
         learnable_sigma=cfg.model.learnable_sigma,
+        from_foundation=cfg.model.from_foundation,
     )
 
 

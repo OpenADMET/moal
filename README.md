@@ -7,7 +7,7 @@ A Python pipeline for maximizing the discovery of **active compounds** (pEC50 > 
 - **Primary Screen (PS):** Returns an inequality label (`< T` or `>= T`) at a configurable threshold. Cheap. A hit (`>= T`) is an INTERVAL-censored label — eligible for a DRC upgrade in a later iteration.
 - **Dose-Response Curve (DRC):** Returns the exact continuous pEC50 value. Expensive. Can be run as a first-pass query *or* as a follow-up upgrade on a PS hit.
 
-The underlying predictive model is **ChemProp** initialized with **CheMeleon** pretrained weights, trained with a **Tobit (censored regression) loss** that correctly handles both label types.
+The underlying predictive model is **ChemProp** fine-tuned with a **Tobit (censored regression) loss** that correctly handles both label types. By default the ChemProp encoder is initialised with **CheMeleon** pretrained weights (see `model.from_foundation` below).
 
 ## Installation
 
@@ -49,7 +49,8 @@ data:
 ```
 
 CheMeleon pretrained weights are downloaded automatically from Zenodo on first
-run and cached at `~/.chemprop/chemeleon_mp.pt` for subsequent use.
+run and cached at `~/.chemprop/chemeleon_mp.pt` for subsequent use (only when
+`model.from_foundation: chemeleon`, the default).
 
 ## Commands
 
@@ -166,6 +167,14 @@ The campaign emits a rich progress bar with `n_iterations × 3` discrete steps:
 ```
 
 ## Key Design Notes
+
+**Foundation model (`model.from_foundation`):** Controls which weights initialise the ChemProp message-passing encoder. Three values are accepted:
+
+- `"chemeleon"` (default) — downloads the CheMeleon checkpoint from Zenodo and loads it.
+- A filesystem path string — loads a local checkpoint in the same `{hyper_parameters, state_dict}` format as CheMeleon.
+- `false` — builds the encoder with default ChemProp architecture and random weights; no checkpoint required. Useful for ablation studies or environments without network access.
+
+Unknown named strings and non-existent paths raise `ValueError` at model construction. The `from_foundation` value is recorded in Lightning checkpoints alongside all other hyperparameters.
 
 **Unified input format:** All three CSV inputs — `data.simulate.input_csv`, `data.simulate.pretrain.input_csv`, and `data.plan.input_csv` — use the same campaign state schema (`smiles`, `relation`, `value`).  For `moal simulate`, only `==` rows are loaded as oracle ground truth; PS and blank rows are skipped.  For `moal plan` and the pretrain input, all labeled rows (`<`, `>=`, `==`) become training records; unqueried rows (empty) are inference targets or skipped with a warning, respectively.
 
