@@ -34,6 +34,41 @@ from moal.types import LabelRecord
 
 logger = logging.getLogger(__name__)
 
+_KNOWN_FOUNDATION_MODELS: frozenset[str] = frozenset({"chemeleon"})
+
+
+def _validate_from_foundation(value: str | bool) -> None:
+    """Validate the ``from_foundation`` parameter value.
+
+    Parameters
+    ----------
+    value : str or bool
+        The value to validate.
+
+    Raises
+    ------
+    ValueError
+        If ``value`` is not ``False``, a known named model, or an existing
+        file path.
+    """
+    if value is False:
+        return
+    if not isinstance(value, str):
+        raise ValueError(
+            f"from_foundation must be False, a known model name, or a filesystem path; "
+            f"got {value!r}. Known names: {sorted(_KNOWN_FOUNDATION_MODELS)}"
+        )
+    if value in _KNOWN_FOUNDATION_MODELS:
+        return
+    if Path(value).exists():
+        return
+    raise ValueError(
+        f"from_foundation={value!r} is not a recognised foundation model name "
+        f"and does not resolve to an existing file path. "
+        f"Known names: {sorted(_KNOWN_FOUNDATION_MODELS)}. "
+        "Pass False to use random ChemProp weights."
+    )
+
 
 def download_chemeleon() -> None:
     """Download the CheMeleon checkpoint if not already cached locally.
@@ -67,7 +102,7 @@ def download_chemeleon() -> None:
 
 
 class ChemPropLightningModule(L.LightningModule):
-    """ChemProp MPNN fine-tuned from CheMeleon pretrained weights.
+    """ChemProp MPNN with configurable foundation-model encoder initialisation.
 
     Parameters
     ----------
@@ -91,6 +126,12 @@ class ChemPropLightningModule(L.LightningModule):
         Primary screen loss weight. Default is 0.3.
     learnable_sigma : bool, optional
         If True, σ is a learned parameter. Default is False.
+    from_foundation : str or bool, optional
+        Controls encoder initialisation. ``"chemeleon"`` (default) downloads
+        and loads CheMeleon pretrained weights. A filesystem path string loads
+        a local checkpoint in ``{hyper_parameters, state_dict}`` format.
+        ``False`` builds the encoder with default ChemProp architecture and
+        random weights.
     """
 
     def __init__(
@@ -104,8 +145,11 @@ class ChemPropLightningModule(L.LightningModule):
         w_drc: float = 1.0,
         w_ps: float = 0.3,
         learnable_sigma: bool = False,
+        from_foundation: str | bool = "chemeleon",
     ) -> None:
         super().__init__()
+        _validate_from_foundation(from_foundation)
+        self._from_foundation = from_foundation
         self.save_hyperparameters()
 
         self.freeze_epochs = freeze_epochs
@@ -132,7 +176,7 @@ class ChemPropLightningModule(L.LightningModule):
         ffn_hidden_size: int,
         ffn_num_layers: int,
     ) -> nn.Module:
-        """Construct the MPNN with CheMeleon message-passing weights.
+        """Construct the MPNN, dispatching on ``self._from_foundation``.
 
         Parameters
         ----------
@@ -144,32 +188,30 @@ class ChemPropLightningModule(L.LightningModule):
         Returns
         -------
         nn.Module
-            Fully assembled ``chemprop.models.MPNN`` with pretrained
-            message-passing weights and a freshly initialised FFN head.
+            Fully assembled ``chemprop.models.MPNN``.
         """
-        chemeleon_weights = self._get_chemeleon_mp()
+        if self._from_foundation is False:
+            logger.info("Building ChemProp encoder with random weights (from_foundation=False).")
+            mp: nn.Module = BondMessagePassing()  # pyright: ignore[reportAbstractUsage]
+        else:
+            foundation_weights = self._load_foundation_weights()
+            mp = BondMessagePassing(**foundation_weights["hyper_parameters"])  # pyright: ignore[reportAbstractUsage]
+            mp.load_state_dict(foundation_weights["state_dict"])
 
-        # Mean aggregation
         agg = MeanAggregation()
-
-        # Message passing
-        mp = BondMessagePassing(**chemeleon_weights["hyper_parameters"])  # pyright: ignore[reportAbstractUsage]
-        mp.load_state_dict(chemeleon_weights["state_dict"])
-
-        # FFN predictor head
         ffn = RegressionFFN(  # pyright: ignore[reportAbstractUsage]
-            input_dim=mp.output_dim,  # Infer input dim from mp output
+            input_dim=cast(BondMessagePassing, mp).output_dim,
             hidden_dim=ffn_hidden_size,
             n_layers=ffn_num_layers,
         )
         return cast(nn.Module, MPNN(message_passing=mp, agg=agg, predictor=ffn))
 
-    def _get_chemeleon_mp(self) -> dict:
-        """Load and return the CheMeleon pretrained message-passing weights.
+    def _load_foundation_weights(self) -> dict:
+        """Load pretrained message-passing weights from a named model or local path.
 
-        Calls :func:`download_chemeleon` to ensure the checkpoint exists at
-        ``~/.chemprop/chemeleon_mp.pt``, then loads it with
-        ``weights_only=True``.
+        When ``self._from_foundation == "chemeleon"`` the checkpoint is
+        downloaded from Zenodo if not already cached.  For any other string
+        value it is treated as a local filesystem path.
 
         Returns
         -------
@@ -177,9 +219,12 @@ class ChemPropLightningModule(L.LightningModule):
             Checkpoint dictionary with ``hyper_parameters`` and
             ``state_dict`` keys.
         """
-        # Ensure the CheMeleon checkpoint is downloaded
-        download_chemeleon()
-        ckpt_path = Path().home() / ".chemprop" / "chemeleon_mp.pt"
+        if self._from_foundation == "chemeleon":
+            download_chemeleon()
+            ckpt_path = Path().home() / ".chemprop" / "chemeleon_mp.pt"
+        else:
+            ckpt_path = Path(str(self._from_foundation))
+            logger.info("Loading foundation weights from local path: %s", ckpt_path)
         return cast(dict[str, Any], torch.load(ckpt_path, weights_only=True))
 
     # ------------------------------------------------------------------
