@@ -1226,7 +1226,7 @@ class LiveDashboard:
             data=list(frame_fig.data),
             layout=self._build_animation_frame_layout(frame_fig, iterations),
             name=str(iteration_index),
-            traces=list(range(len(frame_fig.data))),
+            traces=list(range(len(frame_fig.data))),  # pyright: ignore[reportArgumentType]
         )
 
     def _build_animation_frame_layout(

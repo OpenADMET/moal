@@ -334,6 +334,7 @@ def plan(config: Path, output_dir: Path | None, verbose: bool) -> None:
                     smiles_column=cfg.data.plan.smiles_column,
                     relation_column=cfg.data.plan.relation_column,
                     value_column=cfg.data.plan.value_column,
+                    weight_column=cfg.data.plan.weight_column,
                     is_canonical=cfg.data.plan.is_canonical,
                     expected_ps_threshold=cfg.oracle.ps_threshold,
                 )
@@ -506,6 +507,7 @@ def _load_pretrain_records(
             smiles_column=pretrain_cfg.smiles_column,
             relation_column=pretrain_cfg.relation_column,
             value_column=pretrain_cfg.value_column,
+            weight_column=pretrain_cfg.weight_column,
             is_canonical=pretrain_cfg.is_canonical,
             expected_ps_threshold=cfg.oracle.ps_threshold,
         )
@@ -713,6 +715,7 @@ def _build_simulation_model(
         w_drc=cfg.model.w_drc,
         w_ps=cfg.model.w_ps,
         learnable_sigma=cfg.model.learnable_sigma,
+        from_foundation=cfg.model.from_foundation,
     )
 
 
@@ -751,6 +754,7 @@ def _build_plan_model(cfg: PipelineConfig) -> ChemPropLightningModule:
         w_drc=cfg.model.w_drc,
         w_ps=cfg.model.w_ps,
         learnable_sigma=cfg.model.learnable_sigma,
+        from_foundation=cfg.model.from_foundation,
     )
 
 
