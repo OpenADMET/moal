@@ -33,7 +33,7 @@ class MixedFidelityDataset(Dataset):
     ) -> None:
         self.records = records
         self._mol_graphs = MoleculeDataset(
-            [MoleculeDatapoint.from_smi(r.canonical_smiles) for r in self.records]
+            [MoleculeDatapoint.from_smi(r.canonical_smiles) for r in self.records]  # pyright: ignore[reportArgumentType]
         )
 
     def __len__(self) -> int:

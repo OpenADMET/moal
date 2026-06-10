@@ -8,9 +8,9 @@ repos:
 
   - repo: local
     hooks:
-      - id: mypy
-        name: mypy
-        entry: mypy moal
+      - id: pyright
+        name: pyright
+        entry: pyright moal
         language: system
         pass_filenames: false
         types: [python]
