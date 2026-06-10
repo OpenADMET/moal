@@ -12,6 +12,7 @@ def _make_record(
     upper_bound: float,
     censoring_type: CensoringType,
     fidelity: QueryType = QueryType.DOSE_RESPONSE,
+    weight: float = 1.0,
 ) -> LabelRecord:
     """Helper that builds a minimal LabelRecord for loss function tests."""
     return LabelRecord(
@@ -23,6 +24,7 @@ def _make_record(
         fidelity=fidelity,
         cost=1.0,
         iteration=0,
+        weight=weight,
     )
 
 
@@ -234,3 +236,54 @@ class TestLossBreakdown:
         recs = [_make_record(5.0, 5.0, CensoringType.EXACT, QueryType.DOSE_RESPONSE)]  # 1 record
         with pytest.raises(ValueError):
             loss_fn(preds, recs)
+
+
+class TestPerSampleWeight:
+    """Tests that per-sample rec.weight scales the loss contribution proportionally."""
+
+    def test_weight_one_matches_default(self):
+        """Explicit weight=1.0 must produce the same loss as the default (weight omitted)."""
+        loss_fn = CensoredRegressionLoss(sigma=1.0)
+        pred = torch.tensor([7.0])
+        rec_default = _make_record(5.0, 5.0, CensoringType.EXACT)
+        rec_explicit = _make_record(5.0, 5.0, CensoringType.EXACT, weight=1.0)
+        loss_default = loss_fn(pred, [rec_default])
+        loss_explicit = loss_fn(pred, [rec_explicit])
+        assert loss_explicit.item() == pytest.approx(loss_default.item(), rel=1e-6)
+
+    def test_weight_2_doubles_exact_loss(self):
+        """weight=2.0 must produce exactly twice the loss of weight=1.0 for EXACT records."""
+        loss_fn = CensoredRegressionLoss(sigma=1.0)
+        pred = torch.tensor([7.0])
+        rec_1 = _make_record(5.0, 5.0, CensoringType.EXACT, weight=1.0)
+        rec_2 = _make_record(5.0, 5.0, CensoringType.EXACT, weight=2.0)
+        loss_1 = loss_fn(pred, [rec_1])
+        loss_2 = loss_fn(pred, [rec_2])
+        assert loss_2.item() == pytest.approx(2.0 * loss_1.item(), rel=1e-6)
+
+    def test_weight_half_halves_loss(self):
+        """weight=0.5 must produce exactly half the loss of weight=1.0."""
+        loss_fn = CensoredRegressionLoss(sigma=1.0)
+        pred = torch.tensor([7.0])
+        rec_1 = _make_record(5.0, 5.0, CensoringType.EXACT, weight=1.0)
+        rec_half = _make_record(5.0, 5.0, CensoringType.EXACT, weight=0.5)
+        loss_1 = loss_fn(pred, [rec_1])
+        loss_half = loss_fn(pred, [rec_half])
+        assert loss_half.item() == pytest.approx(0.5 * loss_1.item(), rel=1e-6)
+
+    def test_weight_scales_left_and_interval(self):
+        """weight=2.0 must double the loss for LEFT and INTERVAL censoring types too."""
+        loss_fn = CensoredRegressionLoss(sigma=1.0)
+        pred = torch.tensor([7.0])
+
+        rec_left_1 = _make_record(5.0, 5.0, CensoringType.LEFT, weight=1.0)
+        rec_left_2 = _make_record(5.0, 5.0, CensoringType.LEFT, weight=2.0)
+        loss_left_1 = loss_fn(pred, [rec_left_1])
+        loss_left_2 = loss_fn(pred, [rec_left_2])
+        assert loss_left_2.item() == pytest.approx(2.0 * loss_left_1.item(), rel=1e-6)
+
+        rec_iv_1 = _make_record(5.0, 11.0, CensoringType.INTERVAL, weight=1.0)
+        rec_iv_2 = _make_record(5.0, 11.0, CensoringType.INTERVAL, weight=2.0)
+        loss_iv_1 = loss_fn(pred, [rec_iv_1])
+        loss_iv_2 = loss_fn(pred, [rec_iv_2])
+        assert loss_iv_2.item() == pytest.approx(2.0 * loss_iv_1.item(), rel=1e-6)

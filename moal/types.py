@@ -75,6 +75,11 @@ class LabelRecord:
     iteration : int
         Zero-based active learning iteration index at which this record was
         acquired.
+    weight : float
+        Per-sample loss weight used by :class:`~moal.loss.CensoredRegressionLoss`.
+        Normalized to mean=1.0 within each fidelity class by
+        :func:`~moal.planning.normalize_record_weights` before training.
+        Defaults to 1.0 (uniform weighting).
     """
 
     smiles: str
@@ -85,6 +90,11 @@ class LabelRecord:
     fidelity: QueryType
     cost: float
     iteration: int
+    weight: float = 1.0
+    """Per-sample loss weight. Normalized to mean=1.0 per fidelity class by
+    :func:`~moal.planning.normalize_record_weights` before training so the
+    global ``w_drc`` / ``w_ps`` scale relationship is preserved. Default 1.0
+    is a no-op and preserves backward compatibility."""
 
 
 @dataclass

@@ -124,12 +124,16 @@ class CensoredRegressionLoss(nn.Module):
         pred : Tensor
             Scalar pEC50 prediction for the compound.
         rec : LabelRecord
-            Labeled observation providing the censoring type and bounds.
+            Labeled observation providing the censoring type, bounds, and
+            per-sample weight.
 
         Returns
         -------
         Tensor
-            Scalar weighted loss value.
+            Scalar weighted loss value. The per-fidelity weight ``w``
+            (``w_drc`` or ``w_ps``) is multiplied by ``rec.weight`` so that
+            each sample's gradient contribution is proportional to both the
+            fidelity importance and the per-sample reliability.
 
         Raises
         ------
@@ -144,12 +148,12 @@ class CensoredRegressionLoss(nn.Module):
         w = self.w_drc if rec.fidelity == QueryType.DOSE_RESPONSE else self.w_ps
 
         if ct == CensoringType.EXACT:
-            return w * ((pred - t) / sigma) ** 2
+            return w * rec.weight * ((pred - t) / sigma) ** 2
 
         if ct == CensoringType.LEFT:
             # True value < t; penalise if model predicts above t
             log_p = _normal_log_cdf((t - pred) / sigma)
-            return w * (-log_p)
+            return w * rec.weight * (-log_p)
 
         if ct == CensoringType.INTERVAL:
             # True value in [t, u]; use log probability mass in the interval.
@@ -160,7 +164,7 @@ class CensoredRegressionLoss(nn.Module):
             # typical pEC50 predictions in [0, 14] catastrophic cancellation is
             # unlikely, but the clamp ensures a finite gradient in edge cases
             log_prob = torch.log(torch.clamp(log_p_upper.exp() - log_p_lower.exp(), min=1e-12))
-            return w * (-log_prob)
+            return w * rec.weight * (-log_prob)
 
         raise ValueError(f"Unknown CensoringType: {ct}")
 
