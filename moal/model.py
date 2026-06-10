@@ -192,14 +192,14 @@ class ChemPropLightningModule(L.LightningModule):
         """
         if self._from_foundation is False:
             logger.info("Building ChemProp encoder with random weights (from_foundation=False).")
-            mp: nn.Module = BondMessagePassing()
+            mp: nn.Module = BondMessagePassing()  # pyright: ignore[reportAbstractUsage]
         else:
             foundation_weights = self._load_foundation_weights()
-            mp = BondMessagePassing(**foundation_weights["hyper_parameters"])
+            mp = BondMessagePassing(**foundation_weights["hyper_parameters"])  # pyright: ignore[reportAbstractUsage]
             mp.load_state_dict(foundation_weights["state_dict"])
 
         agg = MeanAggregation()
-        ffn = RegressionFFN(
+        ffn = RegressionFFN(  # pyright: ignore[reportAbstractUsage]
             input_dim=cast(BondMessagePassing, mp).output_dim,
             hidden_dim=ffn_hidden_size,
             n_layers=ffn_num_layers,
@@ -429,7 +429,7 @@ class ChemPropLightningModule(L.LightningModule):
             ``smiles_list``.
         """
         # Create the full dataset once rather than chunking manually
-        dataset = MoleculeDataset([MoleculeDatapoint.from_smi(s) for s in smiles_list])
+        dataset = MoleculeDataset([MoleculeDatapoint.from_smi(s) for s in smiles_list])  # pyright: ignore[reportArgumentType]
 
         # Let the dataloader handle batching and graph collation automatically.
         # drop_last=False is explicit: chemprop defaults to dropping the last
