@@ -487,7 +487,7 @@ class LiveDashboard:
         except Exception as exc:
             logger.warning("Could not save dashboard GIF: %s", exc)
 
-    def save_html(self, path: str | Path) -> None:
+    def save_html(self, path: str | Path, *, use_cdn: bool = False) -> None:
         """Export the animated figure as a standalone HTML file.
 
         The exported file embeds an iteration slider and play/pause buttons so
@@ -498,12 +498,17 @@ class LiveDashboard:
         ----------
         path : str or Path
             Destination file path (should end in ``.html``).
+        use_cdn : bool, optional
+            When ``True``, the Plotly JS bundle is loaded from the Plotly CDN
+            instead of being embedded in the file.  This reduces the file size
+            from ~3 MB to a few KB but requires an internet connection to view.
+            Default is ``False`` (fully self-contained file).
         """
         animated_fig = self._build_animated_figure()
         animated_fig.update_layout(width=self._export_width, height=self._export_height)
         animated_fig.write_html(
             str(path),
-            include_plotlyjs=True,
+            include_plotlyjs="cdn" if use_cdn else True,
             post_script=_PLAY_PAUSE_SCRIPT,
             auto_play=False,
         )
@@ -1151,10 +1156,10 @@ class LiveDashboard:
                 "args": [
                     [str(i + 1)],
                     {
-                        "frame": {"duration": 350, "redraw": False},
+                        "frame": {"duration": 700, "redraw": False},
                         "mode": "immediate",
                         "transition": {
-                            "duration": 220,
+                            "duration": 300,
                             "easing": _EASING,
                             "ordering": "layout first",
                         },
@@ -1221,7 +1226,7 @@ class LiveDashboard:
             data=list(frame_fig.data),
             layout=self._build_animation_frame_layout(frame_fig, iterations),
             name=str(iteration_index),
-            traces=list(range(len(frame_fig.data))),
+            traces=list(range(len(frame_fig.data))),  # pyright: ignore[reportArgumentType]
         )
 
     def _build_animation_frame_layout(

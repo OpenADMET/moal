@@ -104,6 +104,9 @@ model:
   initial_error: 1.2                  # Fast mode: Starting noise magnitude (pEC50 units) for the error ramp in fast mode
   final_error: 0.65                   # Fast mode: Ending noise magnitude for the ramp 
                                       # Set equal to initial_error for constant noise
+  from_foundation: chemeleon          # Encoder initialisation: "chemeleon" (download CheMeleon from Zenodo),
+                                      # a local path to a {hyper_parameters, state_dict} checkpoint file,
+                                      # or false for random ChemProp weights (no checkpoint required)
 
 # --------------------------------------------------------------------------
 # PyTorch Lightning trainer

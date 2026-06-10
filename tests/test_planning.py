@@ -11,12 +11,13 @@ import pytest
 from moal.acquisition import CostAwareGreedyAcquisition
 from moal.planning import (
     annotate_campaign_state,
+    normalize_record_weights,
     parse_campaign_state,
     parse_pretrain_records,
     training_records_for_refit,
 )
 from moal.preprocessing import SMILESPreprocessor
-from moal.types import CensoringType, QueryType
+from moal.types import CensoringType, LabelRecord, QueryType
 
 
 @pytest.fixture
@@ -690,3 +691,137 @@ class TestParsePretrainRecords:
         # PS INTERVAL is a training record; ps_upgrade_rows are internal to CampaignState
         assert len(records) == 1
         assert records[0].censoring_type == CensoringType.INTERVAL
+
+
+# ---------------------------------------------------------------------------
+# normalize_record_weights
+# ---------------------------------------------------------------------------
+
+
+def _make_label_record(
+    smiles: str,
+    fidelity: QueryType,
+    weight: float = 1.0,
+) -> LabelRecord:
+    """Minimal LabelRecord for normalize_record_weights tests."""
+    return LabelRecord(
+        smiles=smiles,
+        canonical_smiles=smiles,
+        value=5.0,
+        upper_bound=5.0,
+        censoring_type=CensoringType.EXACT,
+        fidelity=fidelity,
+        cost=1.0,
+        iteration=0,
+        weight=weight,
+    )
+
+
+class TestNormalizeRecordWeights:
+    """Tests for normalize_record_weights()."""
+
+    def test_unit_weights_unchanged(self):
+        """All weight=1.0 records must remain unchanged after normalization."""
+        records = [
+            _make_label_record("C", QueryType.DOSE_RESPONSE, weight=1.0),
+            _make_label_record("CC", QueryType.DOSE_RESPONSE, weight=1.0),
+            _make_label_record("CCC", QueryType.PRIMARY_SCREEN, weight=1.0),
+        ]
+        normalized = normalize_record_weights(records)
+        assert [r.weight for r in normalized] == pytest.approx([1.0, 1.0, 1.0])
+
+    def test_drc_and_ps_normalized_independently(self):
+        """DRC and PS weights must be normalized to mean=1.0 independently."""
+        records = [
+            _make_label_record("C", QueryType.DOSE_RESPONSE, weight=1.0),
+            _make_label_record("CC", QueryType.DOSE_RESPONSE, weight=3.0),
+            _make_label_record("CCC", QueryType.PRIMARY_SCREEN, weight=2.0),
+            _make_label_record("CCCC", QueryType.PRIMARY_SCREEN, weight=6.0),
+        ]
+        normalized = normalize_record_weights(records)
+        drc_weights = [r.weight for r in normalized if r.fidelity == QueryType.DOSE_RESPONSE]
+        ps_weights = [r.weight for r in normalized if r.fidelity == QueryType.PRIMARY_SCREEN]
+        assert sum(drc_weights) / len(drc_weights) == pytest.approx(1.0, rel=1e-6)
+        assert sum(ps_weights) / len(ps_weights) == pytest.approx(1.0, rel=1e-6)
+
+    def test_preserves_relative_ordering(self):
+        """Relative order of weights within a fidelity class must be preserved."""
+        records = [
+            _make_label_record("C", QueryType.DOSE_RESPONSE, weight=1.0),
+            _make_label_record("CC", QueryType.DOSE_RESPONSE, weight=4.0),
+            _make_label_record("CCC", QueryType.DOSE_RESPONSE, weight=7.0),
+        ]
+        normalized = normalize_record_weights(records)
+        weights = [r.weight for r in normalized]
+        assert weights[0] < weights[1] < weights[2]
+
+    def test_zero_weight_raises(self):
+        """A record with weight=0.0 produces a zero mean, which must raise ValueError."""
+        records = [
+            _make_label_record("C", QueryType.DOSE_RESPONSE, weight=0.0),
+            _make_label_record("CC", QueryType.DOSE_RESPONSE, weight=0.0),
+        ]
+        with pytest.raises(ValueError, match="Mean DRC weight"):
+            normalize_record_weights(records)
+
+
+class TestWeightColumnParsing:
+    """Tests for weight_column support in parse_campaign_state()."""
+
+    @pytest.fixture
+    def preprocessor(self):
+        return SMILESPreprocessor()
+
+    def test_weight_column_read_correctly(self, preprocessor):
+        """Records must carry the weight from the weight_column."""
+        df = pd.DataFrame(
+            [
+                {"smiles": "CCO", "relation": "==", "value": 6.0, "w": 4.0},
+                {"smiles": "CC", "relation": "<", "value": 5.0, "w": 0.5},
+            ]
+        )
+        state = parse_campaign_state(
+            df,
+            cost_ps=1.0,
+            cost_drc=10.0,
+            upper_bound=11.0,
+            preprocessor=preprocessor,
+            weight_column="w",
+        )
+        weights = {rec.fidelity: rec.weight for rec in state.training_records}
+        assert weights[QueryType.DOSE_RESPONSE] == pytest.approx(4.0)
+        assert weights[QueryType.PRIMARY_SCREEN] == pytest.approx(0.5)
+
+    def test_weight_column_nan_defaults_to_one(self, preprocessor):
+        """NaN in weight_column must default to weight=1.0."""
+        df = pd.DataFrame(
+            [
+                {"smiles": "CCO", "relation": "==", "value": 6.0, "w": float("nan")},
+            ]
+        )
+        state = parse_campaign_state(
+            df,
+            cost_ps=1.0,
+            cost_drc=10.0,
+            upper_bound=11.0,
+            preprocessor=preprocessor,
+            weight_column="w",
+        )
+        assert state.training_records[0].weight == pytest.approx(1.0)
+
+    def test_weight_column_invalid_raises(self, preprocessor):
+        """Zero weight in weight_column must raise ValueError."""
+        df = pd.DataFrame(
+            [
+                {"smiles": "CCO", "relation": "==", "value": 6.0, "w": 0.0},
+            ]
+        )
+        with pytest.raises(ValueError, match="weight must be finite and positive"):
+            parse_campaign_state(
+                df,
+                cost_ps=1.0,
+                cost_drc=10.0,
+                upper_bound=11.0,
+                preprocessor=preprocessor,
+                weight_column="w",
+            )

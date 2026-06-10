@@ -151,7 +151,7 @@ All campaign parameters live in `moal/config.py` as frozen dataclasses. The YAML
 | YAML key | Dataclass | Notable fields |
 |---|---|---|
 | `oracle:` | `OracleConfig` | `cost_ps`, `cost_drc`, `ps_threshold`, `upper_bound`, `activity_threshold` |
-| `model:` | `ModelConfig` | `hidden_size`, `depth`, `ffn_hidden_size`, `ffn_num_layers`, `freeze_epochs`, `lr_encoder`, `lr_head`, `sigma`, `w_drc`, `w_ps`, `learnable_sigma`, `reset_weights_on_refit`, **`fast`**, **`initial_error`**, **`final_error`** |
+| `model:` | `ModelConfig` | `hidden_size`, `depth`, `ffn_hidden_size`, `ffn_num_layers`, `freeze_epochs`, `lr_encoder`, `lr_head`, `sigma`, `w_drc`, `w_ps`, `learnable_sigma`, `reset_weights_on_refit`, **`fast`**, **`initial_error`**, **`final_error`**, **`from_foundation`** |
 | `acquisition:` | `AcquisitionConfig` | `ps_threshold`, `target_threshold`, **`tau`** |
 | `trainer:` | `TrainerConfig` | `max_epochs`, `accelerator`, `enable_progress_bar`, `enable_model_summary`, `val_fraction`, `split_seed`, `num_workers`, `log_every_n_steps` |
 | `dashboard:` | `DashboardConfig` | `enabled`, `model_metric`, `port`, `export_width`, `export_height`, `theme` |
@@ -213,7 +213,7 @@ All modules use `logger = logging.getLogger(__name__)`. The `suppress_noisy_logg
 
 ### Freeze/unfreeze schedule
 
-`ChemPropLightningModule` freezes the CheMeleon encoder for the first `freeze_epochs` training epochs, then unfreezes and adds a second optimizer for the encoder at `lr_encoder`. The epoch counter resets on every `trainer.fit()` call (every AL iteration). This is intentional — early iterations have tiny labeled pools where encoder fine-tuning would overfit.
+`ChemPropLightningModule` freezes the message-passing encoder for the first `freeze_epochs` training epochs, then unfreezes and adds a second optimizer for the encoder at `lr_encoder`. The epoch counter resets on every `trainer.fit()` call (every AL iteration). This is intentional — early iterations have tiny labeled pools where encoder fine-tuning would overfit.
 
 ### Scaffold split
 
@@ -227,6 +227,14 @@ All modules use `logger = logging.getLogger(__name__)`. The `suppress_noisy_logg
 
 `CliRunner.invoke()` does **not** sandbox file I/O by default. Any test that triggers CLI output-directory creation must pass `--output-dir str(tmp_path / "out")` (or use `runner.isolated_filesystem()`) to avoid leaking `results/` into the pytest CWD.
 
-### CheMeleon feature dimensions
+### Foundation model (`from_foundation`)
 
-`_CHEMPELEON_ATOM_FDIM = 72` and `_CHEMPELEON_BOND_FDIM = 14` in `model.py` are hardcoded to match the CheMeleon pretraining feature spec. These are verified at model initialization. Do not change them without updating the checkpoint.
+`ChemPropLightningModule` accepts a `from_foundation: str | bool` constructor parameter (default `"chemeleon"`) that controls encoder initialisation:
+
+- `"chemeleon"` — downloads the CheMeleon checkpoint from Zenodo, caches it at `~/.chemprop/chemeleon_mp.pt`, and loads its weights.
+- Any other string — treated as a filesystem path; the checkpoint must have `{"hyper_parameters": ..., "state_dict": ...}` format (same as CheMeleon).
+- `False` — builds `BondMessagePassing()` with default ChemProp architecture and random weights; no checkpoint is required.
+
+The known-name registry lives in `_KNOWN_FOUNDATION_MODELS: frozenset[str]` at module level. `_validate_from_foundation(value)` is called at `__init__` time; it raises `ValueError` for unknown names and non-existent paths. `from_foundation` is included in `save_hyperparameters()`.
+
+`True` is not a valid value — the validator catches it because `True` is not in `_KNOWN_FOUNDATION_MODELS` and `Path(True)` is not a valid path expression.
