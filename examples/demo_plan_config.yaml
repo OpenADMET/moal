@@ -1,0 +1,131 @@
+# Example campaign configuration for moal.
+#
+# Run with:
+#   moal simulate --config examples/default_config.yaml
+#   moal plan --config examples/default_config.yaml
+#
+# Every field shown here is the default value. Override only what you need.
+# See moal/config.py for full documentation of each parameter.
+
+# --------------------------------------------------------------------------
+# Dataset and I/O
+# --------------------------------------------------------------------------
+data:
+  output_dir: demo_output/plan_results  # Directory for iteration_metrics.csv, cumulative_actives_curve.csv,
+                                      # dashboard_animation.gif, dashboard_animation.html, config_used.yaml,
+                                      # and relative plan outputs such as acquisition_plan.csv
+  simulate:
+    input_csv: data/pxr_data.csv      # REQUIRED for `moal simulate`: path to the campaign state CSV
+                                      # (same format as data.plan.input_csv — columns: smiles, relation, value)
+                                      # Only rows with relation "==" are used as oracle ground truth.
+                                      # Primary screen rows ("<", ">=") and blank rows are skipped.
+    smiles_column: SMILES             # Column name for SMILES strings in simulate.input_csv
+    relation_column: relation         # Relation column (<, >=, ==, or empty)
+    value_column: value               # pEC50 value column (only == rows are read into the oracle)
+    is_canonical: true                # Set to true to skip RDKit canonicalization for simulate input
+    test_set_size: 0.15               # Fraction held out as scaffold-split test set for model tracking
+
+    pretrain:
+      input_csv: data/pxr_chembl.csv      # Optional: path to a pretrain CSV in campaign state format
+                                      # (same format as data.plan.input_csv — columns: smiles, relation, value)
+                                      # Rows with labeled relation/value are used as training records at every
+                                      # model.refit() call. Rows with empty relation/value are skipped.
+                                      # Leave empty (default) to disable pretraining.
+      smiles_column: smiles           # SMILES column in the pretrain CSV
+      relation_column: relation       # Relation column (<, >=, ==, or empty)
+      value_column: value             # pEC50 / threshold value column
+      is_canonical: true              # Set to true to skip RDKit canonicalization for pretrain input
+
+  plan:
+    input_csv: data/pxr_campaign_state_manual.csv  # REQUIRED for `moal plan`: path to the unified campaign state CSV
+                                      # Expected columns: smiles, relation (`<`, `>=`, `==`, or empty), value
+                                      # Rows with populated relation+value = training set
+                                      # Rows with empty relation+value = unqueried inference targets
+                                      # PS-hit rows (`>=`) appear in both training and as DRC upgrade candidates
+    output_csv: campaign_state_annotated.csv     # Annotated state CSV; relative paths resolve under data.output_dir
+                                      # Preserves original columns and appends ps_score, drc_score,
+                                      # overall_score, recommendation for re-ingestion
+    smiles_column: smiles             # SMILES column in plan.input_csv
+    relation_column: relation         # Relation column in plan.input_csv (`<`, `>=`, `==`, or empty)
+    value_column: value               # pEC50 / threshold column in plan.input_csv
+    is_canonical: true                # Set to true to skip RDKit canonicalization for plan input
+
+# --------------------------------------------------------------------------
+# Random seed
+# --------------------------------------------------------------------------
+seed: 42                              # Master random seed (scaffold split, tie-breaking)
+
+# --------------------------------------------------------------------------
+# Oracle / assay parameters
+# --------------------------------------------------------------------------
+oracle:
+  cost_ps: 1.0                        # Cost ($) of a Primary Screen query
+  cost_drc: 10.0                      # Cost ($) of a Dose-Response Curve query
+  ps_threshold: 5.0                   # pEC50 threshold used by the primary screen (10 µM IC50).
+                                      #   Compounds with true pEC50 < ps_threshold → LEFT label ("< 5")
+                                      #   Compounds with true pEC50 >= ps_threshold → INTERVAL label (">= 5")
+  upper_bound: 11.0                   # Practical pEC50 ceiling for INTERVAL labels (100 fM IC50)
+  activity_threshold: 6.0             # pEC50 defining an "active" compound for evaluation (100 nM IC50)
+
+# --------------------------------------------------------------------------
+# Acquisition function
+# --------------------------------------------------------------------------
+acquisition:
+  ps_threshold: 5.0                   # Must match oracle.ps_threshold
+  target_threshold: 6.0               # pEC50 optimization target; drives DRC exploitation score
+  tau: 0.1                            # Sigmoid temperature (lower = more exploitative)
+
+# --------------------------------------------------------------------------
+# Active learning loop
+# --------------------------------------------------------------------------
+active_learning_loop:
+  n_iterations: 32                    # Number of active learning iterations (m)
+  plate_size: 1536                    # Maximum wells available per plate (per iteration).
+                                      # Selection stops when the next candidate would exceed this limit;
+                                      # remaining capacity is deferred to the next iteration.
+  wells_per_ps: 1                     # Wells consumed by a single Primary Screen query (typically 1)
+  wells_per_drc: 13                   # Wells consumed by a single DRC query (e.g., 13-point singlet DRC)
+
+# --------------------------------------------------------------------------
+# ChemProp / CheMeleon model
+# --------------------------------------------------------------------------
+model:
+  ffn_hidden_size: 512                # Hidden layer size for the FFN head
+  ffn_num_layers: 3                   # Number of layers in the FFN head (not counting the input layer)
+  freeze_epochs: 1                    # Epochs to train only the FFN head before unfreezing the encoder
+  lr_encoder: 1.0e-4                  # Learning rate for the message-passing encoder (after unfreezing)
+  lr_head: 1.0e-3                     # Learning rate for the FFN head throughout training
+  sigma: 0.5                          # Tobit loss noise scale (pEC50 log-units); typical intra-assay CV
+  w_drc: 1.0                          # Loss weight for DRC (exact) labels
+  w_ps: 0.3                           # Loss weight for PS (inequality) labels
+  learnable_sigma: false              # If true, sigma is a learned parameter
+  reset_weights_on_refit: false       # If true, reload pretrained weights before each AL refit instead of warm-starting
+  fast: false                         # When true, bypass CheMeleon and use a noisy oracle predictor
+  initial_error: 1.2                  # Fast mode: Starting noise magnitude (pEC50 units) for the error ramp in fast mode
+  final_error: 0.65                   # Fast mode: Ending noise magnitude for the ramp 
+                                      # Set equal to initial_error for constant noise
+
+# --------------------------------------------------------------------------
+# PyTorch Lightning trainer
+# --------------------------------------------------------------------------
+trainer:
+  max_epochs: 20                      # Max epochs per iteration
+  accelerator: mps                    # "cpu", "gpu", "mps", or "auto"
+  enable_progress_bar: false          # Show training progress bar at each iteration
+  enable_model_summary: false         # Show Lightning model summary during training at each iteration
+  val_fraction: 0.0                   # Fraction of labeled records held out for validation
+  split_seed: 42                      # Seed for the train/val split inside MixedFidelityDataModule
+  num_workers: 1                      # DataLoader worker processes (0 = main process only)
+  log_every_n_steps: 1                # Log every N training steps (default 1)
+                                      # AL pools are small and often have fewer than 50 batches/epoch
+
+# --------------------------------------------------------------------------
+# Dashboard
+# --------------------------------------------------------------------------
+dashboard:
+  enabled: true                       # Run the live Dash server and generate output artifacts
+  model_metric: mae                   # Metric displayed in panel 3: mae | rmse | kendall_tau | spearman_r | r2
+  port: 8050                          # Local port for the Dash server (http://127.0.0.1:8050)
+  export_width: 900                  # Pixel width for kaleido PNG frame export (GIF and static PNG)
+  export_height: 600                  # Pixel height for kaleido PNG frame export
+  theme: plotly_dark                  # Plotly template: plotly_dark | plotly | plotly_white | ggplot2 | seaborn | simple_white
