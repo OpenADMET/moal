@@ -82,6 +82,12 @@ class ModelConfig:
         mode. The ramp linearly interpolates from initial_error to final_error
         over all iterations. Set equal to initial_error for a constant noise
         level.
+    from_foundation : str or bool
+        Controls encoder initialisation. ``"chemeleon"`` (default) downloads
+        and loads CheMeleon pretrained weights. A filesystem path string loads
+        a local checkpoint in the same ``{hyper_parameters, state_dict}``
+        format. ``False`` builds the encoder with default ChemProp architecture
+        and random weights (no checkpoint required).
     """
 
     ffn_hidden_size: int = 300
@@ -97,6 +103,7 @@ class ModelConfig:
     fast: bool = False
     initial_error: float = 0.7
     final_error: float = 0.5
+    from_foundation: str | bool = "chemeleon"
 
 
 @dataclass(frozen=True)

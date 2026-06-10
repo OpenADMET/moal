@@ -13,13 +13,17 @@ import warnings
 
 import numpy as np
 import pytest
+import torch
 import torch.nn as nn
 from chemprop.models import MPNN
 from chemprop.nn import BondMessagePassing, MeanAggregation, RegressionFFN
 
 from moal.loss import CensoredRegressionLoss
-from moal.model import ChemPropLightningModule, NoisyOracleModel
+from moal.model import _KNOWN_FOUNDATION_MODELS, ChemPropLightningModule, NoisyOracleModel
 from moal.types import CensoringType, LabelRecord, QueryType
+
+# Capture the real _build_model before any test fixture can patch it.
+_REAL_BUILD_MODEL = ChemPropLightningModule._build_model
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -94,6 +98,7 @@ class TestDefaultInit:
             "w_drc",
             "w_ps",
             "learnable_sigma",
+            "from_foundation",
         }
         assert expected.issubset(set(model.hparams.keys()))
 
@@ -106,6 +111,7 @@ class TestDefaultInit:
         assert model.hparams["w_drc"] == pytest.approx(1.0)
         assert model.hparams["w_ps"] == pytest.approx(0.3)
         assert model.hparams["learnable_sigma"] is False
+        assert model.hparams["from_foundation"] == "chemeleon"
 
 
 # ---------------------------------------------------------------------------
@@ -387,3 +393,103 @@ class TestNoisyOracleModel:
             smiles, noise_scale=0.3, batch_size=1
         )
         np.testing.assert_array_equal(preds_default, preds_custom)
+
+
+# ---------------------------------------------------------------------------
+# from_foundation flag
+# ---------------------------------------------------------------------------
+
+
+class TestFromFoundation:
+    """Tests for the from_foundation parameter on ChemPropLightningModule."""
+
+    def test_known_foundation_models_contains_chemeleon(self):
+        """_KNOWN_FOUNDATION_MODELS must contain 'chemeleon'."""
+        assert "chemeleon" in _KNOWN_FOUNDATION_MODELS
+
+    def test_default_is_chemeleon(self, model):
+        """Default from_foundation must be 'chemeleon' in hparams."""
+        assert model.hparams["from_foundation"] == "chemeleon"
+
+    def test_false_builds_random_encoder(self):
+        """from_foundation=False must construct the model without any weight loading.
+
+        The _build_model patch means no real weights are loaded anyway, so we
+        just verify construction succeeds and the hparam is recorded correctly.
+        """
+        m = ChemPropLightningModule(from_foundation=False)
+        assert m.hparams["from_foundation"] is False
+        assert isinstance(m.model, nn.Module)
+
+    def test_false_encoder_uses_chemprop_defaults(self, monkeypatch):
+        """from_foundation=False must call BondMessagePassing() with no args (ChemProp defaults).
+
+        We temporarily restore the real _build_model so the False-branch dispatch
+        runs, then verify BondMessagePassing() is called with no args and
+        _load_foundation_weights is never invoked.
+        """
+        called_with_no_args = []
+
+        original_bmp = BondMessagePassing
+
+        def tracking_bmp(*args, **kwargs):
+            called_with_no_args.append((args, kwargs))
+            return original_bmp(*args, **kwargs)
+
+        monkeypatch.setattr("moal.model.BondMessagePassing", tracking_bmp)
+        monkeypatch.setattr(ChemPropLightningModule, "_build_model", _REAL_BUILD_MODEL)
+        monkeypatch.setattr(
+            ChemPropLightningModule,
+            "_load_foundation_weights",
+            lambda self: (_ for _ in ()).throw(
+                AssertionError(
+                    "_load_foundation_weights must not be called when from_foundation=False"
+                )
+            ),
+        )
+
+        m = ChemPropLightningModule(from_foundation=False)
+        # BondMessagePassing must have been called once with no positional/keyword args
+        assert len(called_with_no_args) == 1
+        assert called_with_no_args[0] == ((), {})
+        assert m._from_foundation is False
+
+    def test_nonexistent_path_raises_value_error(self):
+        """A path string that does not exist on disk must raise ValueError at construction."""
+        with pytest.raises(ValueError, match="does not resolve to an existing file path"):
+            ChemPropLightningModule(from_foundation="/nonexistent/path/weights.pt")
+
+    def test_unknown_named_string_raises_value_error(self):
+        """An unrecognised named string must raise ValueError listing known models."""
+        with pytest.raises(ValueError, match="not a recognised foundation model name"):
+            ChemPropLightningModule(from_foundation="unknown_model_v99")
+
+    def test_true_raises_value_error(self):
+        """True is not a valid from_foundation value and must raise ValueError."""
+        with pytest.raises(ValueError):
+            ChemPropLightningModule(from_foundation=True)  # type: ignore[arg-type]
+
+    def test_custom_path_loads_weights(self, tmp_path, monkeypatch):
+        """A valid local path must be accepted and its checkpoint loaded.
+
+        We write a minimal fake checkpoint, restore the real _build_model so
+        the path-loading branch executes, and mock torch.load to return a
+        lightweight dict with correct keys.
+        """
+        weights_path = tmp_path / "custom_weights.pt"
+        weights_path.touch()  # create empty file so path validation passes
+
+        # Build a minimal real BondMessagePassing to get valid hyper_parameters
+        real_mp = BondMessagePassing()
+        fake_ckpt = {
+            "hyper_parameters": {k: v for k, v in real_mp.hparams.items() if k != "cls"},
+            "state_dict": real_mp.state_dict(),
+        }
+
+        # Restore real _build_model and mock torch.load
+        monkeypatch.setattr(ChemPropLightningModule, "_build_model", _REAL_BUILD_MODEL)
+        monkeypatch.setattr(torch, "load", lambda path, **kwargs: fake_ckpt)
+
+        m = ChemPropLightningModule(from_foundation=str(weights_path))
+        assert m.hparams["from_foundation"] == str(weights_path)
+        assert isinstance(m.model, nn.Module)
