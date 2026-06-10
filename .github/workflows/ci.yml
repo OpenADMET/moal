@@ -16,7 +16,7 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: ruff format --check .
       - run: ruff check .
-      - run: mypy moal
+      - run: pyright moal
 
   test:
     runs-on: ${{ matrix.os }}

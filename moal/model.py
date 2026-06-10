@@ -153,11 +153,11 @@ class ChemPropLightningModule(L.LightningModule):
         agg = MeanAggregation()
 
         # Message passing
-        mp = BondMessagePassing(**chemeleon_weights["hyper_parameters"])
+        mp = BondMessagePassing(**chemeleon_weights["hyper_parameters"])  # pyright: ignore[reportAbstractUsage]
         mp.load_state_dict(chemeleon_weights["state_dict"])
 
         # FFN predictor head
-        ffn = RegressionFFN(
+        ffn = RegressionFFN(  # pyright: ignore[reportAbstractUsage]
             input_dim=mp.output_dim,  # Infer input dim from mp output
             hidden_dim=ffn_hidden_size,
             n_layers=ffn_num_layers,
@@ -384,7 +384,7 @@ class ChemPropLightningModule(L.LightningModule):
             ``smiles_list``.
         """
         # Create the full dataset once rather than chunking manually
-        dataset = MoleculeDataset([MoleculeDatapoint.from_smi(s) for s in smiles_list])
+        dataset = MoleculeDataset([MoleculeDatapoint.from_smi(s) for s in smiles_list])  # pyright: ignore[reportArgumentType]
 
         # Let the dataloader handle batching and graph collation automatically.
         # drop_last=False is explicit: chemprop defaults to dropping the last
