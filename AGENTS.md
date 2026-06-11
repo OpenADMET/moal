@@ -51,7 +51,7 @@ A campaign assembles these components, all configured from one YAML mapped onto 
 
 ## Coding rules
 
-Scoped coding rules are committed under `.claude/rules/`. Before editing files matching a rule's `paths` frontmatter, read that rule. They cover Python core idioms, NumPy-style documentation, pytest discipline, packaging, security on the checkpoint-loading surface (`model.py`), machine learning methodology, cheminformatics data pipelines, medicinal chemistry and SAR interpretation, experimental biology and assay interpretation, and this repository's own pipeline conventions (`moal.md`: frozen-dataclass config, `LabelRecord`, interval-censored labels and the Tobit loss, the trainer/datamodule kwarg split).
+Scoped coding rules are committed under `.claude/rules/`. Before editing files matching a rule's `paths` frontmatter, read that rule. They cover Python core idioms, NumPy-style documentation, pytest discipline, packaging, prose writing conventions for Markdown (`writing-conventions`: no em-dashes or filler), security on the checkpoint-loading surface (`model.py`), machine learning methodology, cheminformatics data pipelines, medicinal chemistry and SAR interpretation, experimental biology and assay interpretation, and this repository's own pipeline conventions (`moal.md`: frozen-dataclass config, `LabelRecord`, interval-censored labels and the Tobit loss, the trainer/datamodule kwarg split).
 
 ## Review personas
 

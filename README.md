@@ -4,7 +4,7 @@
 
 A Python pipeline for maximizing the discovery of **active compounds** (pEC50 > 7) from an unrevealed dataset while strictly minimizing labeling cost. The oracle offers two query fidelities:
 
-- **Primary Screen (PS):** Returns an inequality label (`< T` or `>= T`) at a configurable threshold. Cheap. A hit (`>= T`) is an INTERVAL-censored label — eligible for a DRC upgrade in a later iteration.
+- **Primary Screen (PS):** Returns an inequality label (`< T` or `>= T`) at a configurable threshold. Cheap. A hit (`>= T`) is an INTERVAL-censored label, eligible for a DRC upgrade in a later iteration.
 - **Dose-Response Curve (DRC):** Returns the exact continuous pEC50 value. Expensive. Can be run as a first-pass query *or* as a follow-up upgrade on a PS hit.
 
 The underlying predictive model is **ChemProp** fine-tuned with a **Tobit (censored regression) loss** that correctly handles both label types. By default the ChemProp encoder is initialised with **CheMeleon** pretrained weights (see `model.from_foundation` below).
@@ -37,7 +37,7 @@ DRC results) are loaded as oracle ground truth; primary screen rows (`<`, `>=`) 
 unqueried rows (empty) are skipped.
 
 If you have prior experimental data in the same mixed-fidelity format, you can
-supply it as a pretrain pool — the model will train on it
+supply it as a pretrain pool, and the model will train on it
 at every iteration alongside whatever the oracle acquires:
 
 ```yaml
@@ -66,8 +66,8 @@ moal simulate --config examples/default_config.yaml --verbose
 
 #### Optional pretrain data
 
-If you have prior labeled data — from a previous campaign, a public assay, or
-any source in the `moal plan` campaign state format — you can warm-start the
+If you have prior labeled data (from a previous campaign, a public assay, or
+any source in the `moal plan` campaign state format), you can warm-start the
 model at every iteration by pointing `data.simulate.pretrain.input_csv` at it.
 The pretrain records are parsed with the same `<` / `>=` / `==` logic used by
 `moal plan`, combined with oracle-acquired records before each `model.refit()`,
@@ -76,11 +76,11 @@ and deduplicated so that:
 - Oracle records **always take precedence** over pretrain records at the same
   fidelity (the oracle has ground truth; the pretrain source may not).
 - Pretrain PS INTERVAL records for compounds that the oracle later upgrades to
-  DRC are **automatically dropped** — the exact label supersedes the censored one.
+  DRC are **automatically dropped**: the exact label supersedes the censored one.
 - Unqueried rows (empty `relation`/`value`) in the pretrain CSV are **skipped with
-  a warning** — they carry no training signal.
+  a warning**, they carry no training signal.
 - Compounds that overlap with the held-out test set trigger a **warning listing
-  each SMILES** — training on them inflates model evaluation metrics.
+  each SMILES**: training on them inflates model evaluation metrics.
 
 ```yaml
 data:
@@ -96,7 +96,7 @@ data:
 
 Omitting `pretrain.input_csv` (the default) leaves the workflow completely
 unchanged. `pretrain` is not supported with `model.fast = true` because
-`NoisyOracleModel.refit()` ignores its records argument — the noisy oracle
+`NoisyOracleModel.refit()` ignores its records argument; the noisy oracle
 already has access to ground truth and does not benefit from pretrain data.
 
 ### `plan`
@@ -154,7 +154,7 @@ Four panels update in real time after every iteration:
 | Model Performance | Iteration | Configurable metric (MAE / RMSE / Kendall's τ / Spearman's ρ / R²) |
 | Compound Status | Unqueried, PS, DRC | Number of compounds |
 
-The model performance panel requires a held-out test set (scaffold-split) — the CLI creates one automatically. In headless/server environments, set `dashboard.show: false` in your YAML config.
+The model performance panel requires a held-out test set (scaffold-split); the CLI creates one automatically. In headless/server environments, set `dashboard.show: false` in your YAML config.
 
 ## Progress Bar
 
@@ -170,13 +170,13 @@ The campaign emits a rich progress bar with `n_iterations × 3` discrete steps:
 
 **Foundation model (`model.from_foundation`):** Controls which weights initialise the ChemProp message-passing encoder. Three values are accepted:
 
-- `"chemeleon"` (default) — downloads the CheMeleon checkpoint from Zenodo and loads it.
-- A filesystem path string — loads a local checkpoint in the same `{hyper_parameters, state_dict}` format as CheMeleon.
-- `false` — builds the encoder with default ChemProp architecture and random weights; no checkpoint required. Useful for ablation studies or environments without network access.
+- `"chemeleon"` (default): downloads the CheMeleon checkpoint from Zenodo and loads it.
+- A filesystem path string: loads a local checkpoint in the same `{hyper_parameters, state_dict}` format as CheMeleon.
+- `false`: builds the encoder with default ChemProp architecture and random weights; no checkpoint required. Useful for ablation studies or environments without network access.
 
 Unknown named strings and non-existent paths raise `ValueError` at model construction. The `from_foundation` value is recorded in Lightning checkpoints alongside all other hyperparameters.
 
-**Unified input format:** All three CSV inputs — `data.simulate.input_csv`, `data.simulate.pretrain.input_csv`, and `data.plan.input_csv` — use the same campaign state schema (`smiles`, `relation`, `value`).  For `moal simulate`, only `==` rows are loaded as oracle ground truth; PS and blank rows are skipped.  For `moal plan` and the pretrain input, all labeled rows (`<`, `>=`, `==`) become training records; unqueried rows (empty) are inference targets or skipped with a warning, respectively.
+**Unified input format:** All three CSV inputs (`data.simulate.input_csv`, `data.simulate.pretrain.input_csv`, and `data.plan.input_csv`) use the same campaign state schema (`smiles`, `relation`, `value`).  For `moal simulate`, only `==` rows are loaded as oracle ground truth; PS and blank rows are skipped.  For `moal plan` and the pretrain input, all labeled rows (`<`, `>=`, `==`) become training records; unqueried rows (empty) are inference targets or skipped with a warning, respectively.
 
 **Pretrain warm-starting:** `moal simulate` accepts a pretrain CSV (`data.simulate.pretrain.input_csv`) in the same mixed-fidelity format. Pretrain records are merged with oracle-acquired records before each `model.refit()` call. Oracle records always win on a same-fidelity duplicate; pretrain PS INTERVAL records are automatically dropped when the oracle upgrades that compound to DRC. See `data.simulate.pretrain.*` in the config reference for all fields.
 
@@ -187,9 +187,9 @@ Unknown named strings and non-existent paths raise `ValueError` at model constru
 - Primary screen hit threshold T (`ps_threshold`): pEC50 ≈ 5.0
 - Optimization target (`activity_threshold`): pEC50 = 7.0
 
-**Acquisition strategy (plate-budget greedy):** Each iteration scores two pools — unqueried compounds (eligible for PS or DRC) and PS-INTERVAL-labeled hits (eligible for DRC upgrade only) — on the same cost-normalised scale:
-- `score(x, DRC) = sigmoid((ŷ - 7.0) / τ) / cost_DRC` — exploits likely actives; applies equally to first-pass DRC and upgrade-DRC candidates
-- `score(x, PS) = H_binary(sigmoid((ŷ - T) / τ)) / cost_PS` — cheaply resolves threshold ambiguity; only generated for unqueried compounds
+**Acquisition strategy (plate-budget greedy):** Each iteration scores two pools, unqueried compounds (eligible for PS or DRC) and PS-INTERVAL-labeled hits (eligible for DRC upgrade only), on the same cost-normalised scale:
+- `score(x, DRC) = sigmoid((ŷ - 7.0) / τ) / cost_DRC`: exploits likely actives; applies equally to first-pass DRC and upgrade-DRC candidates
+- `score(x, PS) = H_binary(sigmoid((ŷ - T) / τ)) / cost_PS`: cheaply resolves threshold ambiguity; only generated for unqueried compounds
 
 Candidates are selected in score order until adding the next would exceed `active_learning_loop.plate_size` wells (each PS query costs `wells_per_ps`, each DRC costs `wells_per_drc`). When the next candidate overflows the plate the loop hard-stops; remaining candidates are deferred to the next iteration and rescored on the updated model. To replicate a flat query count of k, set `plate_size=k`, `wells_per_ps=1`, `wells_per_drc=1`.
 
