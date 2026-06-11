@@ -132,6 +132,24 @@ class TestSelect:
         selected = acq.select(smiles, preds, plate_size=100, wells_per_ps=1, wells_per_drc=1)
         assert len(selected) == 2  # limited by pool size
 
+    def test_oversize_ps_well_cost_disables_ps_not_drc(self):
+        """A wells_per_ps above plate_size disables PS without starving DRC.
+
+        Regression: a modality whose unit well-cost exceeds the whole plate must
+        be skipped, not halt the greedy fill.  Previously the top-ranked PS
+        candidate (which cannot fit) terminated selection and returned [].
+        """
+        acq = CostAwareGreedyAcquisition(
+            cost_ps=1.0, cost_drc=10.0, ps_threshold=5.0, target_threshold=7.0, tau=0.5
+        )
+        smiles = [f"C{i}" for i in range(20)]
+        # Predictions near ps_threshold make PS outrank DRC, so the unfittable
+        # PS candidates sit at the top of the ranked list.
+        preds = np.full(20, 6.5, dtype=np.float32)
+        selected = acq.select(smiles, preds, plate_size=5, wells_per_ps=6, wells_per_drc=1)
+        assert len(selected) == 5
+        assert all(qt == QueryType.DOSE_RESPONSE for _, qt in selected)
+
     def test_invalid_cost_raises(self):
         """Negative cost values must raise ValueError at construction time before any scoring occurs."""
         with pytest.raises(ValueError, match="positive"):
