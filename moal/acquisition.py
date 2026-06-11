@@ -205,6 +205,12 @@ class CostAwareGreedyAcquisition:
         candidates — unused wells are deferred to the next iteration, where all
         candidates will be rescored on the updated labeled pool.
 
+        A candidate whose unit well-cost on its own exceeds ``plate_size`` can
+        never be placed and is skipped without halting the fill.  Setting a
+        modality's wells-per-query above ``plate_size`` (e.g. ``wells_per_ps =
+        plate_size + 1``) therefore disables that modality cleanly while leaving
+        the other free to fill the plate.
+
         Parameters
         ----------
         unlabeled_smiles : list[str]
@@ -292,6 +298,12 @@ class CostAwareGreedyAcquisition:
             if smi in selected_smiles:
                 continue
             cost = wells_per_drc if qt == QueryType.DOSE_RESPONSE else wells_per_ps
+            # A query type whose unit well-cost exceeds the entire plate can never
+            # be placed; skip it rather than terminating the fill. This lets a
+            # caller disable a modality by setting its wells-per-query above
+            # plate_size without starving the other (still-placeable) modality.
+            if cost > plate_size:
+                continue
             if wells_used + cost > plate_size:
                 break
             selected.append((smi, qt))
