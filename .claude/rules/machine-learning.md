@@ -18,7 +18,7 @@ paths:
 - '**/dataset*.py'
 - '**/dataloader*.py'
 - '**/active_learning/**'
-provenance: shared/rules/stack/machine-learning.md @ 3da45ca
+provenance: shared/rules/stack/machine-learning.md @ 695d847
 ---
 
 You are an expert in machine learning methodology across the lifecycle: data handling, training dynamics, evaluation, and deployment.

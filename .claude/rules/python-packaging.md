@@ -8,8 +8,7 @@ paths:
 - '**/setup.cfg'
 - '**/environment.yml'
 - '**/pixi.toml'
-provenance: shared/rules/lang/python/packaging.md @ 3da45ca
-diverged: true
+provenance: shared/rules/lang/python/packaging.md @ 695d847
 ---
 
 You are an expert in modern Python packaging and project structure.
@@ -22,17 +21,17 @@ You are an expert in modern Python packaging and project structure.
 
 ## Environment and dependencies
 
-- This project builds with setuptools (the `[build-system]` table in `pyproject.toml`) and installs editable with `pip install -e .[dev]`; there is no uv project or committed lockfile. The catalog default is uv, hence this rule's `diverged` flag: follow the discipline below under setuptools, do not migrate the build backend.
-- As a library, moal declares ranged dependencies (sensible lower and upper bounds, e.g. `lightning>=2.0,<2.6.2`) in `[project.dependencies]` rather than pinning through a lockfile; tighten a bound only with a stated reason.
-- Dev tooling (pytest, ruff, pyright, pre-commit) lives in `[project.optional-dependencies].dev`, never mixed into runtime dependencies.
-- Declare a new dependency in `pyproject.toml` first, then reinstall; never let an ad-hoc `pip install` into the active environment stand in for the manifest.
+- Default manager for new projects: uv (`uv venv` to create, `uv add` / `uv remove` to manage, `uv run` to execute, `uv sync` to reproduce). A repo that declares another manager (pixi, conda) in its `AGENTS.md` follows that declaration; the discipline below applies under any manager.
+- Dependencies declared in one manifest (`pyproject.toml` by default; `pixi.toml` or `environment.yml` where declared) with sensible lower bounds; exact pins live in a committed lockfile (`uv.lock`, `pixi.lock`, or conda-lock output).
+- Dev tooling (pytest, ruff, pyright, pre-commit) in a dev dependency group, never mixed into runtime dependencies.
+- Never install into a project environment ad hoc (`pip install`, `conda install`); declare in the manifest first, then sync.
 
 ## Layout
 
 - Flat layout: the importable package lives at `<package>/` in the repo root beside `pyproject.toml`, with tests in `tests/` at the root, never inside the package.
-- The package is installed editable (`pip install -e .`); imports resolve through the environment, never by relying on the current working directory.
-- All project metadata lives in `pyproject.toml` (setuptools reads the PEP 621 `[project]` table); do not reintroduce `setup.py` or `setup.cfg`.
-- Entry points declared in `[project.scripts]` (moal exposes `moal = "moal.cli:main"`), never as loose top-level scripts.
+- The package is installed editable into the environment (`uv sync`); imports resolve through the environment, never by relying on the current working directory.
+- `setup.py` and `setup.cfg` do not appear in new projects; existing ones migrate to `pyproject.toml` when touched.
+- Entry points declared in `[project.scripts]`, never as loose top-level scripts.
 
 ## Standing gate
 
@@ -43,8 +42,8 @@ You are an expert in modern Python packaging and project structure.
 
 | Banned | Correct |
 |---|---|
-| `requirements.txt` as the source of truth | `[project.dependencies]` in `pyproject.toml` |
-| ad-hoc `pip install X` into the env as the dependency record | declare in `pyproject.toml`, then reinstall |
-| reintroducing `setup.py` / `setup.cfg` | keep all metadata in the PEP 621 `[project]` table (setuptools reads it) |
-| dev tools in runtime `[project.dependencies]` | the `[project.optional-dependencies].dev` group |
-| `[tool.poetry]` sections | PEP 621 `[project]` table |
+| `requirements.txt` as the source of truth | the repo's declared manifest + committed lockfile (default `pyproject.toml` + `uv.lock`) |
+| `python -m venv` + `pip` in new projects | `uv venv` + `uv add` (or the repo's declared manager) |
+| ad-hoc `pip install` / `conda install` into a shared env | declare in the manifest, then sync |
+| `setup.py develop` / `pip install -e .` | `uv sync` (or `uv pip install -e .` only when an editable install is genuinely required) |
+| `[tool.poetry]` sections in new projects | PEP 621 `[project]` table |

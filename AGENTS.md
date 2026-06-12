@@ -51,7 +51,7 @@ A campaign assembles these components, all configured from one YAML mapped onto 
 
 ## Coding rules
 
-Scoped coding rules are committed under `.claude/rules/`. Before editing files matching a rule's `paths` frontmatter, read that rule. They cover Python core idioms, NumPy-style documentation, pytest discipline, packaging, prose writing conventions for Markdown (`writing-conventions`: no em-dashes or filler), security on the checkpoint-loading surface (`model.py`), machine learning methodology, cheminformatics data pipelines, medicinal chemistry and SAR interpretation, experimental biology and assay interpretation, and this repository's own pipeline conventions (`moal.md`: frozen-dataclass config, `LabelRecord`, interval-censored labels and the Tobit loss, the trainer/datamodule kwarg split).
+Scoped coding rules are committed under `.claude/rules/`. Before editing files matching a rule's `paths` frontmatter, read that rule. They cover Python core idioms, NumPy-style documentation, pytest discipline, packaging, prose writing conventions for Markdown (`writing-conventions`: no em-dashes or filler), security on the checkpoint-loading surface (`model.py`), machine learning methodology, medicinal chemistry and SAR interpretation, and this repository's own pipeline conventions (`moal.md`: frozen-dataclass config, `LabelRecord`, interval-censored labels and the Tobit loss, the trainer/datamodule kwarg split).
 
 ## Review personas
 
@@ -59,5 +59,3 @@ Adversarial, read-only reviewer subagents are committed under `.claude/agents/`;
 
 - **Machine Learning Expert**: splits, the active-learning loop, the censored loss, evaluation metrics (data leakage, train/serve skew).
 - **Medicinal Chemist**: pEC50 handling, potency thresholds, and SAR interpretation (units, log space, censored labels).
-- **Chemoinformatician**: SMILES handling, featurization, and scaffold-aware splitting (sanitization, stereochemistry preservation).
-- **Biologist**: pEC50 as assay data, primary-screen vs dose-response semantics, and activity thresholds (affinity vs potency, assay mechanism).

@@ -2,7 +2,7 @@
 description: 'Core Python conventions: typing, naming, control flow, error handling, logging, and data shapes. Apply when creating or modifying any Python source file.'
 paths:
 - '**/*.py'
-provenance: shared/rules/lang/python/core.md @ 3da45ca
+provenance: shared/rules/lang/python/core.md @ 695d847
 ---
 
 You are an expert in modern Python (3.11+) and idiomatic, production-quality code.
