@@ -239,46 +239,6 @@ class PipelineEvaluator:
                 n_found += 1
         return n_found / n_true_actives
 
-    def enrichment_factor(
-        self,
-        labeled: list[LabelRecord],
-        n_total: int,
-        n_true_actives: int,
-        fraction: float = 0.1,
-    ) -> float:
-        """Compute the enrichment factor at a given fraction of the compound pool.
-
-        EF@fraction = (actives in top-fraction) / (expected actives by random).
-
-        Parameters
-        ----------
-        labeled : list[LabelRecord]
-            Labeled records in acquisition order.
-        n_total : int
-            Total number of compounds in the pool (labeled + unlabeled).
-        n_true_actives : int
-            Ground-truth count of actives in the full pool.
-        fraction : float, optional
-            Fraction of the pool to consider for the top set. Default is 0.1.
-
-        Returns
-        -------
-        float
-            Enrichment factor. Returns 0.0 when the pool or active count is 0.
-
-        Notes
-        -----
-        The top-N subset is taken as the first ``int(n_total * fraction)``
-        records in ``labeled`` (i.e., those acquired earliest). At least one
-        compound is always included regardless of rounding.
-        """
-        if n_true_actives == 0 or n_total == 0:
-            return 0.0
-        n_top = max(1, int(n_total * fraction))
-        actives_in_top = sum(1 for r in labeled[:n_top] if self._is_confirmed_active(r))
-        expected_random = n_true_actives * fraction
-        return actives_in_top / expected_random if expected_random > 0 else 0.0
-
     def cumulative_actives_curve(self, labeled: list[LabelRecord]) -> pd.DataFrame:
         """Build a DataFrame tracking actives and cost cumulatively.
 
@@ -348,7 +308,6 @@ class PipelineEvaluator:
     def evaluate(
         self,
         labeled: list[LabelRecord],
-        n_total: int,
         n_true_actives: int,
         iteration: int,
     ) -> dict[str, float]:
@@ -358,8 +317,6 @@ class PipelineEvaluator:
         ----------
         labeled : list[LabelRecord]
             All labeled records accumulated so far.
-        n_total : int
-            Total number of compounds in the pool (labeled + unlabeled).
         n_true_actives : int
             Ground-truth count of actives in the full pool.
         iteration : int
@@ -370,8 +327,8 @@ class PipelineEvaluator:
         dict[str, float]
             Scalar metrics including ``iteration``, ``n_labeled``,
             ``n_confirmed_actives``, ``total_cost``, ``actives_per_dollar``,
-            ``recall``, ``enrichment_factor_10pct``, ``n_drc_queries``,
-            ``n_ps_queries``, and ``n_ps_to_drc_upgrades``.
+            ``recall``, ``n_drc_queries``, ``n_ps_queries``, and
+            ``n_ps_to_drc_upgrades``.
         """
         total_cost = sum(r.cost for r in labeled)
         n_confirmed = sum(1 for r in labeled if self._is_confirmed_active(r))
@@ -384,9 +341,6 @@ class PipelineEvaluator:
             "total_cost": total_cost,
             "actives_per_dollar": self.actives_per_dollar(labeled),
             "recall": n_confirmed / n_true_actives if n_true_actives > 0 else 0.0,
-            "enrichment_factor_10pct": self.enrichment_factor(
-                labeled, n_total, n_true_actives, fraction=0.1
-            ),
             "n_drc_queries": float(breakdown["DRC"]),
             "n_ps_queries": float(breakdown["PS"]),
             "n_ps_to_drc_upgrades": float(breakdown["upgrades"]),

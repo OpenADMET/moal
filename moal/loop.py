@@ -496,7 +496,6 @@ class ActiveLearningLoop:
                     # ---- Metrics & dashboard update -------------------------
                     metrics = self.evaluator.evaluate(
                         labeled=self.oracle.labeled_records,
-                        n_total=n_total,
                         n_true_actives=n_true_actives,
                         iteration=iteration,
                     )
@@ -538,7 +537,6 @@ class ActiveLearningLoop:
 
         results.final_metrics = self.evaluator.evaluate(
             labeled=self.oracle.labeled_records,
-            n_total=n_total,
             n_true_actives=n_true_actives,
             iteration=len(results.iterations) - 1,
         )

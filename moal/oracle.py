@@ -444,10 +444,10 @@ class CostAwareOracle:
 
         Within each iteration PS records precede DRC records, reflecting the
         order in which assays were physically run.  Chronological ordering is
-        required for ``cumulative_actives_curve``, ``recall_at_budget``, and
-        ``enrichment_factor`` to produce correct values when PS→DRC upgrades
-        are present — without sorting, upgrade records would appear at the
-        wrong position in the running totals.
+        required for ``cumulative_actives_curve`` and ``recall_at_budget`` to
+        produce correct values when PS→DRC upgrades are present — without
+        sorting, upgrade records would appear at the wrong position in the
+        running totals.
 
         Returns
         -------

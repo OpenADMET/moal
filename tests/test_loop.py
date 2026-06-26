@@ -122,7 +122,7 @@ def acquisition():
 
 @pytest.fixture
 def evaluator():
-    """PipelineEvaluator with activity_threshold=7.0 for loop-level recall and enrichment metrics."""
+    """PipelineEvaluator with activity_threshold=7.0 for loop-level recall metrics."""
     return PipelineEvaluator(activity_threshold=7.0, upper_bound=11.0)
 
 
