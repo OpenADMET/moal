@@ -107,17 +107,27 @@ class ChemPropLightningModule(L.LightningModule):
 
     Parameters
     ----------
-    ffn_hidden_size : int, optional
+    ffn_hidden_dim : int, optional
         FFN head hidden dimension. Default is 300.
     ffn_num_layers : int, optional
         Number of FFN layers. Default is 2.
+    message_hidden_dim : int, optional
+        Message-passing hidden width (``d_h``) for the random-init encoder.
+        Applies only when ``from_foundation=False``; for a foundation
+        checkpoint the width is read from the checkpoint. Default is 300
+        (ChemProp's native default).
+    depth : int, optional
+        Number of message-passing steps for the random-init encoder. Applies
+        only when ``from_foundation=False``; for a foundation checkpoint the
+        depth is read from the checkpoint. Default is 3 (ChemProp's native
+        default).
     freeze_epochs : int, optional
         Number of epochs to train only the FFN head before unfreezing the
         encoder. Default is 10.
-    lr_encoder : float, optional
+    mpnn_lr : float, optional
         Learning rate for the message-passing encoder after unfreezing.
         Default is 1e-5.
-    lr_head : float, optional
+    ffn_lr : float, optional
         Learning rate for the FFN head. Default is 1e-3.
     sigma : float, optional
         Fixed noise scale for ``CensoredRegressionLoss``. Default is 0.5.
@@ -137,11 +147,13 @@ class ChemPropLightningModule(L.LightningModule):
 
     def __init__(
         self,
-        ffn_hidden_size: int = 300,
+        ffn_hidden_dim: int = 300,
         ffn_num_layers: int = 2,
+        message_hidden_dim: int = 300,
+        depth: int = 3,
         freeze_epochs: int = 10,
-        lr_encoder: float = 1e-5,
-        lr_head: float = 1e-3,
+        mpnn_lr: float = 1e-5,
+        ffn_lr: float = 1e-3,
         sigma: float = 0.5,
         w_drc: float = 1.0,
         w_ps: float = 0.3,
@@ -154,17 +166,30 @@ class ChemPropLightningModule(L.LightningModule):
         self.save_hyperparameters()
 
         self.freeze_epochs = freeze_epochs
-        self.lr_encoder = lr_encoder
-        self.lr_head = lr_head
+        self.mpnn_lr = mpnn_lr
+        self.ffn_lr = ffn_lr
         self._encoder_frozen = True
+
+        # Per-epoch accumulators for fidelity-resolved losses, reset each epoch.
+        # Emitting both fidelity keys together at epoch end keeps the CSV logger
+        # header fixed even when individual batches contain only one fidelity, so
+        # the metrics columns never shift mid-run and trip the CSV writer
+        self._epoch_losses: dict[str, list[Tensor]] = {
+            "train_drc": [],
+            "train_ps": [],
+            "val_drc": [],
+            "val_ps": [],
+        }
 
         self.loss_fn = CensoredRegressionLoss(
             sigma=sigma, w_drc=w_drc, w_ps=w_ps, learnable_sigma=learnable_sigma
         )
 
         self.model = self._build_model(
-            ffn_hidden_size=ffn_hidden_size,
+            ffn_hidden_dim=ffn_hidden_dim,
             ffn_num_layers=ffn_num_layers,
+            message_hidden_dim=message_hidden_dim,
+            depth=depth,
         )
         self._freeze_encoder()
 
@@ -174,26 +199,48 @@ class ChemPropLightningModule(L.LightningModule):
 
     def _build_model(
         self,
-        ffn_hidden_size: int,
+        ffn_hidden_dim: int,
         ffn_num_layers: int,
+        message_hidden_dim: int,
+        depth: int,
     ) -> nn.Module:
         """Construct the MPNN, dispatching on ``self._from_foundation``.
 
         Parameters
         ----------
-        ffn_hidden_size : int
+        ffn_hidden_dim : int
             Hidden dimension of the FFN predictor head.
         ffn_num_layers : int
             Number of layers in the FFN predictor head.
+        message_hidden_dim : int
+            Message-passing hidden width (``d_h``) for the random-init encoder.
+            Ignored when a foundation checkpoint supplies the architecture.
+        depth : int
+            Number of message-passing steps for the random-init encoder.
+            Ignored when a foundation checkpoint supplies the architecture.
 
         Returns
         -------
         nn.Module
             Fully assembled ``chemprop.models.MPNN``.
+
+        Notes
+        -----
+        ``message_hidden_dim`` and ``depth`` apply only on the
+        ``from_foundation=False`` branch; for a foundation checkpoint the
+        encoder architecture is read from the checkpoint's stored
+        ``hyper_parameters`` so the pretrained weights load with ``strict=True``.
         """
         if self._from_foundation is False:
-            logger.info("Building ChemProp encoder with random weights (from_foundation=False).")
-            mp: nn.Module = BondMessagePassing()  # pyright: ignore[reportAbstractUsage]
+            logger.info(
+                "Building ChemProp encoder with random weights "
+                "(from_foundation=False, d_h=%d, depth=%d).",
+                message_hidden_dim,
+                depth,
+            )
+            mp: nn.Module = BondMessagePassing(  # pyright: ignore[reportAbstractUsage]
+                d_h=message_hidden_dim, depth=depth
+            )
         else:
             foundation_weights = self._load_foundation_weights()
             mp = BondMessagePassing(**foundation_weights["hyper_parameters"])  # pyright: ignore[reportAbstractUsage]
@@ -202,7 +249,7 @@ class ChemPropLightningModule(L.LightningModule):
         agg = MeanAggregation()
         ffn = RegressionFFN(  # pyright: ignore[reportAbstractUsage]
             input_dim=cast(BondMessagePassing, mp).output_dim,
-            hidden_dim=ffn_hidden_size,
+            hidden_dim=ffn_hidden_dim,
             n_layers=ffn_num_layers,
         )
         return cast(nn.Module, MPNN(message_passing=mp, agg=agg, predictor=ffn))
@@ -287,7 +334,7 @@ class ChemPropLightningModule(L.LightningModule):
         When ``current_epoch`` first reaches ``freeze_epochs`` and the encoder
         is still frozen, :meth:`_unfreeze_encoder` is called and the
         optimizers are rebuilt so that the newly unfrozen parameters receive
-        ``lr_encoder``.
+        ``mpnn_lr``.
 
         Notes
         -----
@@ -298,7 +345,7 @@ class ChemPropLightningModule(L.LightningModule):
         """
         if self._encoder_frozen and self.current_epoch >= self.freeze_epochs:
             self._unfreeze_encoder()
-            # Rebuild optimizers so the newly unfrozen params get lr_encoder
+            # Rebuild optimizers so the newly unfrozen params get mpnn_lr
             self.trainer.strategy.setup_optimizers(self.trainer)
 
     # ------------------------------------------------------------------
@@ -388,8 +435,8 @@ class ChemPropLightningModule(L.LightningModule):
         -------
         Adam
             When the encoder is frozen, a single-group Adam optimizer for
-            the FFN head at ``lr_head``.  After the encoder is unfrozen, a
-            two-group Adam with an additional encoder group at ``lr_encoder``.
+            the FFN head at ``ffn_lr``.  After the encoder is unfrozen, a
+            two-group Adam with an additional encoder group at ``mpnn_lr``.
 
         Notes
         -----
@@ -397,9 +444,9 @@ class ChemPropLightningModule(L.LightningModule):
         calls ``setup_optimizers`` so that newly unfrozen encoder parameters
         are registered at the correct learning rate.
         """
-        param_groups = [{"params": self._head_params(), "lr": self.lr_head}]
+        param_groups = [{"params": self._head_params(), "lr": self.ffn_lr}]
         if not self._encoder_frozen:
-            param_groups.append({"params": self._encoder_params(), "lr": self.lr_encoder})
+            param_groups.append({"params": self._encoder_params(), "lr": self.mpnn_lr})
         return Adam(param_groups)
 
     # ------------------------------------------------------------------
@@ -510,8 +557,10 @@ class ChemPropLightningModule(L.LightningModule):
         """
         if reset_weights:
             self.model = self._build_model(
-                ffn_hidden_size=self.hparams["ffn_hidden_size"],
+                ffn_hidden_dim=self.hparams["ffn_hidden_dim"],
                 ffn_num_layers=self.hparams["ffn_num_layers"],
+                message_hidden_dim=self.hparams["message_hidden_dim"],
+                depth=self.hparams["depth"],
             )
             self._freeze_encoder()
 

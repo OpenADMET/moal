@@ -47,15 +47,23 @@ class ModelConfig:
 
     Attributes
     ----------
-    ffn_hidden_size : int
+    ffn_hidden_dim : int
         Hidden layer size of the FFN prediction head.
     ffn_num_layers : int
         Number of layers in the FFN prediction head.
+    message_hidden_dim : int
+        Message-passing hidden width (``d_h``) for the random-init encoder.
+        Used only when ``from_foundation=False``; a foundation checkpoint
+        supplies its own width.
+    depth : int
+        Number of message-passing steps for the random-init encoder. Used only
+        when ``from_foundation=False``; a foundation checkpoint supplies its own
+        depth.
     freeze_epochs : int
         Number of warm-up epochs to train only the FFN head.
-    lr_encoder : float
+    mpnn_lr : float
         Learning rate for the message-passing encoder after unfreezing.
-    lr_head : float
+    ffn_lr : float
         Learning rate for the FFN head throughout training.
     sigma : float
         Fixed noise scale for the Tobit loss (pEC50 log-units).
@@ -90,11 +98,13 @@ class ModelConfig:
         and random weights (no checkpoint required).
     """
 
-    ffn_hidden_size: int = 300
+    ffn_hidden_dim: int = 300
     ffn_num_layers: int = 2
+    message_hidden_dim: int = 300
+    depth: int = 3
     freeze_epochs: int = 10
-    lr_encoder: float = 1e-5
-    lr_head: float = 1e-3
+    mpnn_lr: float = 1e-5
+    ffn_lr: float = 1e-3
     sigma: float = 0.5
     w_drc: float = 1.0
     w_ps: float = 0.3

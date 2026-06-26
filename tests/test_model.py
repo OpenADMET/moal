@@ -39,12 +39,12 @@ def _patch_chemeleon_download(monkeypatch):
     network download or require the cached checkpoint file.
     """
 
-    def _fake_build_model(self, ffn_hidden_size, ffn_num_layers):
-        mp = BondMessagePassing()
+    def _fake_build_model(self, ffn_hidden_dim, ffn_num_layers, message_hidden_dim, depth):
+        mp = BondMessagePassing(d_h=message_hidden_dim, depth=depth)
         agg = MeanAggregation()
         ffn = RegressionFFN(
             input_dim=mp.output_dim,
-            hidden_dim=ffn_hidden_size,
+            hidden_dim=ffn_hidden_dim,
             n_layers=ffn_num_layers,
         )
         return MPNN(message_passing=mp, agg=agg, predictor=ffn)
@@ -89,11 +89,13 @@ class TestDefaultInit:
     def test_hparams_contains_architecture_keys(self, model):
         """save_hyperparameters must record all architecture and training params."""
         expected = {
-            "ffn_hidden_size",
+            "ffn_hidden_dim",
             "ffn_num_layers",
+            "message_hidden_dim",
+            "depth",
             "freeze_epochs",
-            "lr_encoder",
-            "lr_head",
+            "mpnn_lr",
+            "ffn_lr",
             "sigma",
             "w_drc",
             "w_ps",
@@ -104,8 +106,10 @@ class TestDefaultInit:
 
     def test_hparams_default_values(self, model):
         """Default hyperparameters must match the documented defaults."""
-        assert model.hparams["ffn_hidden_size"] == 300
+        assert model.hparams["ffn_hidden_dim"] == 300
         assert model.hparams["ffn_num_layers"] == 2
+        assert model.hparams["message_hidden_dim"] == 300
+        assert model.hparams["depth"] == 3
         assert model.hparams["freeze_epochs"] == 10
         assert model.hparams["sigma"] == pytest.approx(0.5)
         assert model.hparams["w_drc"] == pytest.approx(1.0)
@@ -130,12 +134,29 @@ class TestArchitectureParams:
         m = ChemPropLightningModule(ffn_num_layers=ffn_num_layers)
         assert len(m.model.predictor.ffn) == ffn_num_layers + 1
 
-    @pytest.mark.parametrize("ffn_hidden_size", [64, 128, 512])
-    def test_ffn_hidden_size_sets_predictor_width(self, ffn_hidden_size):
-        """The hidden linear layers in the FFN predictor must match ffn_hidden_size."""
-        m = ChemPropLightningModule(ffn_hidden_size=ffn_hidden_size)
+    @pytest.mark.parametrize("ffn_hidden_dim", [64, 128, 512])
+    def test_ffn_hidden_dim_sets_predictor_width(self, ffn_hidden_dim):
+        """The hidden linear layers in the FFN predictor must match ffn_hidden_dim."""
+        m = ChemPropLightningModule(ffn_hidden_dim=ffn_hidden_dim)
         # Block 1 is the first hidden layer; index [2] is the Linear within the Sequential.
-        assert m.model.predictor.ffn[1][2].in_features == ffn_hidden_size
+        assert m.model.predictor.ffn[1][2].in_features == ffn_hidden_dim
+
+    @pytest.mark.parametrize("message_hidden_dim,depth", [(128, 2), (2048, 6)])
+    def test_random_init_encoder_uses_message_hidden_dim_and_depth(
+        self, message_hidden_dim, depth, monkeypatch
+    ):
+        """from_foundation=False must build the encoder at the requested d_h and depth.
+
+        Restores the real _build_model so the random-init branch runs against a
+        real BondMessagePassing, then checks the encoder width (output_dim == d_h)
+        and the number of message-passing weight matrices (one per step).
+        """
+        monkeypatch.setattr(ChemPropLightningModule, "_build_model", _REAL_BUILD_MODEL)
+        m = ChemPropLightningModule(
+            from_foundation=False, message_hidden_dim=message_hidden_dim, depth=depth
+        )
+        assert m.model.message_passing.output_dim == message_hidden_dim
+        assert m.model.message_passing.depth == depth
 
 
 # ---------------------------------------------------------------------------
@@ -152,22 +173,22 @@ class TestTrainingHyperparams:
         m = ChemPropLightningModule(freeze_epochs=freeze_epochs)
         assert m.freeze_epochs == freeze_epochs
 
-    @pytest.mark.parametrize("lr_head", [1e-4, 1e-3, 5e-3])
-    def test_lr_head_in_optimizer(self, lr_head):
-        """The head optimizer param group must use the configured lr_head."""
-        m = ChemPropLightningModule(lr_head=lr_head)
+    @pytest.mark.parametrize("ffn_lr", [1e-4, 1e-3, 5e-3])
+    def test_ffn_lr_in_optimizer(self, ffn_lr):
+        """The head optimizer param group must use the configured ffn_lr."""
+        m = ChemPropLightningModule(ffn_lr=ffn_lr)
         opt = m.configure_optimizers()
         # When frozen, only the head param group is present.
-        assert opt.param_groups[0]["lr"] == pytest.approx(lr_head)
+        assert opt.param_groups[0]["lr"] == pytest.approx(ffn_lr)
 
-    @pytest.mark.parametrize("lr_encoder", [1e-6, 1e-5, 1e-4])
-    def test_lr_encoder_in_optimizer_after_unfreeze(self, lr_encoder):
-        """After unfreezing, the encoder param group must use the configured lr_encoder."""
-        m = ChemPropLightningModule(lr_encoder=lr_encoder)
+    @pytest.mark.parametrize("mpnn_lr", [1e-6, 1e-5, 1e-4])
+    def test_mpnn_lr_in_optimizer_after_unfreeze(self, mpnn_lr):
+        """After unfreezing, the encoder param group must use the configured mpnn_lr."""
+        m = ChemPropLightningModule(mpnn_lr=mpnn_lr)
         m._unfreeze_encoder()
         opt = m.configure_optimizers()
-        encoder_lrs = [g["lr"] for g in opt.param_groups if g["lr"] != m.lr_head]
-        assert encoder_lrs == [pytest.approx(lr_encoder)]
+        encoder_lrs = [g["lr"] for g in opt.param_groups if g["lr"] != m.ffn_lr]
+        assert encoder_lrs == [pytest.approx(mpnn_lr)]
 
 
 # ---------------------------------------------------------------------------
@@ -421,19 +442,19 @@ class TestFromFoundation:
         assert m.hparams["from_foundation"] is False
         assert isinstance(m.model, nn.Module)
 
-    def test_false_encoder_uses_chemprop_defaults(self, monkeypatch):
-        """from_foundation=False must call BondMessagePassing() with no args (ChemProp defaults).
+    def test_false_encoder_passes_arch_to_bond_message_passing(self, monkeypatch):
+        """from_foundation=False must call BondMessagePassing with d_h/depth, not load weights.
 
         We temporarily restore the real _build_model so the False-branch dispatch
-        runs, then verify BondMessagePassing() is called with no args and
-        _load_foundation_weights is never invoked.
+        runs, then verify BondMessagePassing is called once with the configured
+        d_h and depth and _load_foundation_weights is never invoked.
         """
-        called_with_no_args = []
+        calls = []
 
         original_bmp = BondMessagePassing
 
         def tracking_bmp(*args, **kwargs):
-            called_with_no_args.append((args, kwargs))
+            calls.append((args, kwargs))
             return original_bmp(*args, **kwargs)
 
         monkeypatch.setattr("moal.model.BondMessagePassing", tracking_bmp)
@@ -448,10 +469,10 @@ class TestFromFoundation:
             ),
         )
 
-        m = ChemPropLightningModule(from_foundation=False)
-        # BondMessagePassing must have been called once with no positional/keyword args
-        assert len(called_with_no_args) == 1
-        assert called_with_no_args[0] == ((), {})
+        m = ChemPropLightningModule(from_foundation=False, message_hidden_dim=512, depth=4)
+        # BondMessagePassing must have been called once with the configured architecture
+        assert len(calls) == 1
+        assert calls[0] == ((), {"d_h": 512, "depth": 4})
         assert m._from_foundation is False
 
     def test_nonexistent_path_raises_value_error(self):

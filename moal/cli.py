@@ -706,11 +706,13 @@ def _build_simulation_model(
         return NoisyOracleModel(ground_truth=ground_truth, seed=cfg.seed)
 
     return ChemPropLightningModule(
-        ffn_hidden_size=cfg.model.ffn_hidden_size,
+        ffn_hidden_dim=cfg.model.ffn_hidden_dim,
         ffn_num_layers=cfg.model.ffn_num_layers,
+        message_hidden_dim=cfg.model.message_hidden_dim,
+        depth=cfg.model.depth,
         freeze_epochs=cfg.model.freeze_epochs,
-        lr_encoder=cfg.model.lr_encoder,
-        lr_head=cfg.model.lr_head,
+        mpnn_lr=cfg.model.mpnn_lr,
+        ffn_lr=cfg.model.ffn_lr,
         sigma=cfg.model.sigma,
         w_drc=cfg.model.w_drc,
         w_ps=cfg.model.w_ps,
@@ -745,11 +747,13 @@ def _build_plan_model(cfg: PipelineConfig) -> ChemPropLightningModule:
         )
 
     return ChemPropLightningModule(
-        ffn_hidden_size=cfg.model.ffn_hidden_size,
+        ffn_hidden_dim=cfg.model.ffn_hidden_dim,
         ffn_num_layers=cfg.model.ffn_num_layers,
+        message_hidden_dim=cfg.model.message_hidden_dim,
+        depth=cfg.model.depth,
         freeze_epochs=cfg.model.freeze_epochs,
-        lr_encoder=cfg.model.lr_encoder,
-        lr_head=cfg.model.lr_head,
+        mpnn_lr=cfg.model.mpnn_lr,
+        ffn_lr=cfg.model.ffn_lr,
         sigma=cfg.model.sigma,
         w_drc=cfg.model.w_drc,
         w_ps=cfg.model.w_ps,

@@ -90,11 +90,13 @@ active_learning_loop:
 # ChemProp / CheMeleon model
 # --------------------------------------------------------------------------
 model:
-  ffn_hidden_size: 512                # Hidden layer size for the FFN head
+  ffn_hidden_dim: 512                 # Hidden layer size for the FFN head
   ffn_num_layers: 3                   # Number of layers in the FFN head (not counting the input layer)
+  message_hidden_dim: 300             # MPNN hidden width for random init only (ignored when from_foundation loads a checkpoint)
+  depth: 3                            # MPNN message-passing steps for random init only (ignored when from_foundation loads a checkpoint)
   freeze_epochs: 1                    # Epochs to train only the FFN head before unfreezing the encoder
-  lr_encoder: 1.0e-4                  # Learning rate for the message-passing encoder (after unfreezing)
-  lr_head: 1.0e-3                     # Learning rate for the FFN head throughout training
+  mpnn_lr: 1.0e-4                     # Learning rate for the message-passing encoder (after unfreezing)
+  ffn_lr: 1.0e-3                      # Learning rate for the FFN head throughout training
   sigma: 0.5                          # Tobit loss noise scale (pEC50 log-units); typical intra-assay CV
   w_drc: 1.0                          # Loss weight for DRC (exact) labels
   w_ps: 0.3                           # Loss weight for PS (inequality) labels
