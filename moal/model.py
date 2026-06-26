@@ -129,6 +129,12 @@ class ChemPropLightningModule(L.LightningModule):
         Default is 1e-5.
     ffn_lr : float, optional
         Learning rate for the FFN head. Default is 1e-3.
+    mpnn_weight_decay : float, optional
+        L2 weight decay for the message-passing encoder param group. Default
+        is 0.0 (no regularisation).
+    ffn_weight_decay : float, optional
+        L2 weight decay for the FFN head param group. Default is 0.0 (no
+        regularisation).
     sigma : float, optional
         Fixed noise scale for ``CensoredRegressionLoss``. Default is 0.5.
     w_drc : float, optional
@@ -154,6 +160,8 @@ class ChemPropLightningModule(L.LightningModule):
         freeze_epochs: int = 10,
         mpnn_lr: float = 1e-5,
         ffn_lr: float = 1e-3,
+        mpnn_weight_decay: float = 0.0,
+        ffn_weight_decay: float = 0.0,
         sigma: float = 0.5,
         w_drc: float = 1.0,
         w_ps: float = 0.3,
@@ -168,6 +176,8 @@ class ChemPropLightningModule(L.LightningModule):
         self.freeze_epochs = freeze_epochs
         self.mpnn_lr = mpnn_lr
         self.ffn_lr = ffn_lr
+        self.mpnn_weight_decay = mpnn_weight_decay
+        self.ffn_weight_decay = ffn_weight_decay
         self._encoder_frozen = True
 
         # Per-epoch accumulators for fidelity-resolved losses, reset each epoch.
@@ -472,8 +482,9 @@ class ChemPropLightningModule(L.LightningModule):
         -------
         Adam
             When the encoder is frozen, a single-group Adam optimizer for
-            the FFN head at ``ffn_lr``.  After the encoder is unfrozen, a
-            two-group Adam with an additional encoder group at ``mpnn_lr``.
+            the FFN head at ``ffn_lr`` with ``ffn_weight_decay``.  After the
+            encoder is unfrozen, a two-group Adam with an additional encoder
+            group at ``mpnn_lr`` with ``mpnn_weight_decay``.
 
         Notes
         -----
@@ -481,9 +492,21 @@ class ChemPropLightningModule(L.LightningModule):
         calls ``setup_optimizers`` so that newly unfrozen encoder parameters
         are registered at the correct learning rate.
         """
-        param_groups = [{"params": self._head_params(), "lr": self.ffn_lr}]
+        param_groups = [
+            {
+                "params": self._head_params(),
+                "lr": self.ffn_lr,
+                "weight_decay": self.ffn_weight_decay,
+            }
+        ]
         if not self._encoder_frozen:
-            param_groups.append({"params": self._encoder_params(), "lr": self.mpnn_lr})
+            param_groups.append(
+                {
+                    "params": self._encoder_params(),
+                    "lr": self.mpnn_lr,
+                    "weight_decay": self.mpnn_weight_decay,
+                }
+            )
         return Adam(param_groups)
 
     # ------------------------------------------------------------------

@@ -96,6 +96,8 @@ class TestDefaultInit:
             "freeze_epochs",
             "mpnn_lr",
             "ffn_lr",
+            "mpnn_weight_decay",
+            "ffn_weight_decay",
             "sigma",
             "w_drc",
             "w_ps",
@@ -189,6 +191,28 @@ class TestTrainingHyperparams:
         opt = m.configure_optimizers()
         encoder_lrs = [g["lr"] for g in opt.param_groups if g["lr"] != m.ffn_lr]
         assert encoder_lrs == [pytest.approx(mpnn_lr)]
+
+    def test_weight_decay_defaults_to_zero(self, model):
+        """Both param groups must default to zero weight decay (no regularisation)."""
+        model._unfreeze_encoder()
+        opt = model.configure_optimizers()
+        assert all(g["weight_decay"] == 0.0 for g in opt.param_groups)
+
+    @pytest.mark.parametrize("ffn_wd", [1e-4, 1e-2])
+    def test_ffn_weight_decay_in_head_group(self, ffn_wd):
+        """The FFN head param group (group 0) must use the configured ffn_weight_decay."""
+        m = ChemPropLightningModule(ffn_weight_decay=ffn_wd)
+        opt = m.configure_optimizers()
+        assert opt.param_groups[0]["weight_decay"] == pytest.approx(ffn_wd)
+
+    @pytest.mark.parametrize("mpnn_wd", [1e-4, 1e-2])
+    def test_mpnn_weight_decay_in_encoder_group_after_unfreeze(self, mpnn_wd):
+        """After unfreezing, the encoder param group must use the configured mpnn_weight_decay."""
+        m = ChemPropLightningModule(mpnn_weight_decay=mpnn_wd, ffn_weight_decay=0.0)
+        m._unfreeze_encoder()
+        opt = m.configure_optimizers()
+        encoder_wd = [g["weight_decay"] for g in opt.param_groups if g["weight_decay"] != 0.0]
+        assert encoder_wd == [pytest.approx(mpnn_wd)]
 
 
 # ---------------------------------------------------------------------------

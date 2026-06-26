@@ -65,6 +65,10 @@ class ModelConfig:
         Learning rate for the message-passing encoder after unfreezing.
     ffn_lr : float
         Learning rate for the FFN head throughout training.
+    mpnn_weight_decay : float
+        L2 weight decay for the message-passing encoder param group.
+    ffn_weight_decay : float
+        L2 weight decay for the FFN head param group.
     sigma : float
         Fixed noise scale for the Tobit loss (pEC50 log-units).
     w_drc : float
@@ -105,6 +109,8 @@ class ModelConfig:
     freeze_epochs: int = 10
     mpnn_lr: float = 1e-5
     ffn_lr: float = 1e-3
+    mpnn_weight_decay: float = 0.0
+    ffn_weight_decay: float = 0.0
     sigma: float = 0.5
     w_drc: float = 1.0
     w_ps: float = 0.3
@@ -169,6 +175,14 @@ class TrainerConfig:
         pools are small: even late in a campaign the number of training
         batches per epoch is typically well below 50, which would trigger a
         ``UserWarning`` from Lightning and suppress all step-level logs.
+    gradient_clip_val : float or None
+        Gradient clipping threshold passed to ``lightning.Trainer``. None
+        (default) disables clipping. Useful for stabilising training when the
+        censored mixed-fidelity loss produces large gradients.
+    gradient_clip_algorithm : str
+        Clipping algorithm passed to ``lightning.Trainer`` when
+        ``gradient_clip_val`` is set: ``"norm"`` (default) or ``"value"``.
+        Ignored when ``gradient_clip_val`` is None.
     """
 
     max_epochs: int = 30
@@ -179,6 +193,8 @@ class TrainerConfig:
     split_seed: int = 42
     num_workers: int = 1
     log_every_n_steps: int = 1
+    gradient_clip_val: float | None = None
+    gradient_clip_algorithm: str = "norm"
 
     def to_dict(self) -> dict[str, Any]:
         """Return only the kwargs that ``lightning.Trainer`` accepts.
@@ -192,15 +208,23 @@ class TrainerConfig:
         dict[str, Any]
             Dictionary with keys ``max_epochs``, ``accelerator``,
             ``enable_progress_bar``, ``enable_model_summary``, and
-            ``log_every_n_steps``.
+            ``log_every_n_steps``.  ``gradient_clip_val`` (and
+            ``gradient_clip_algorithm``) are added only when clipping is
+            enabled, so the default (None) leaves Lightning's clipping off.
         """
-        return {
+        kwargs: dict[str, Any] = {
             "max_epochs": self.max_epochs,
             "accelerator": self.accelerator,
             "enable_progress_bar": self.enable_progress_bar,
             "enable_model_summary": self.enable_model_summary,
             "log_every_n_steps": self.log_every_n_steps,
         }
+        # Forward clipping only when enabled; passing gradient_clip_algorithm
+        # with gradient_clip_val=None raises in lightning.Trainer
+        if self.gradient_clip_val is not None:
+            kwargs["gradient_clip_val"] = self.gradient_clip_val
+            kwargs["gradient_clip_algorithm"] = self.gradient_clip_algorithm
+        return kwargs
 
     def to_datamodule_kwargs(self) -> dict[str, Any]:
         """Return kwargs for ``MixedFidelityDataModule``.
