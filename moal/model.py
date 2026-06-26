@@ -389,18 +389,18 @@ class ChemPropLightningModule(L.LightningModule):
 
         Notes
         -----
-        ``drc_loss`` and ``ps_loss`` are logged only when the batch
-        contains at least one sample of the respective fidelity; ``nan``
-        values are silently skipped by Lightning's logging machinery.
+        Fidelity-resolved losses are accumulated per epoch (see
+        ``_epoch_losses``) and emitted in :meth:`on_train_epoch_end` rather than
+        logged per step, so the metrics column set stays fixed across the run.
         """
         mol_graph, records = batch
         predictions = self(mol_graph)
         breakdown = self.loss_fn.forward_with_breakdown(predictions, records)
         self.log("train_loss", breakdown.total, prog_bar=True, batch_size=len(records))
         if not breakdown.drc_loss.isnan():
-            self.log("train_drc_loss", breakdown.drc_loss, batch_size=len(records))
+            self._epoch_losses["train_drc"].append(breakdown.drc_loss.detach())
         if not breakdown.ps_loss.isnan():
-            self.log("train_ps_loss", breakdown.ps_loss, batch_size=len(records))
+            self._epoch_losses["train_ps"].append(breakdown.ps_loss.detach())
         return breakdown.total
 
     def validation_step(self, batch: tuple[Any, list[LabelRecord]], batch_idx: int) -> None:
@@ -416,17 +416,54 @@ class ChemPropLightningModule(L.LightningModule):
 
         Notes
         -----
-        ``drc_loss`` and ``ps_loss`` are logged only when the batch
-        contains at least one sample of the respective fidelity.
+        Fidelity-resolved losses are accumulated per epoch (see
+        ``_epoch_losses``) and emitted in :meth:`on_validation_epoch_end` rather
+        than logged per step, so the metrics column set stays fixed across the
+        run.
         """
         mol_graph, records = batch
         predictions = self(mol_graph)
         breakdown = self.loss_fn.forward_with_breakdown(predictions, records)
         self.log("val_loss", breakdown.total, prog_bar=True, batch_size=len(records))
         if not breakdown.drc_loss.isnan():
-            self.log("val_drc_loss", breakdown.drc_loss, batch_size=len(records))
+            self._epoch_losses["val_drc"].append(breakdown.drc_loss.detach())
         if not breakdown.ps_loss.isnan():
-            self.log("val_ps_loss", breakdown.ps_loss, batch_size=len(records))
+            self._epoch_losses["val_ps"].append(breakdown.ps_loss.detach())
+
+    def on_train_epoch_end(self) -> None:
+        """Emit epoch-mean DRC and PS training losses with a fixed key set.
+
+        Both ``train_drc_loss`` and ``train_ps_loss`` are logged every epoch,
+        using ``nan`` for a fidelity that appeared in no batch this epoch. Always
+        emitting both keys keeps the CSV logger header stable, which the previous
+        per-step conditional logging did not, causing intermittent
+        ``dict contains fields not in fieldnames`` crashes on runs where a
+        fidelity was sparse across batches.
+        """
+        self._log_epoch_fidelity_means("train")
+
+    def on_validation_epoch_end(self) -> None:
+        """Emit epoch-mean DRC and PS validation losses with a fixed key set.
+
+        See :meth:`on_train_epoch_end`; the same fixed-key-set rationale applies
+        to the validation metrics.
+        """
+        self._log_epoch_fidelity_means("val")
+
+    def _log_epoch_fidelity_means(self, stage: str) -> None:
+        """Log epoch-mean fidelity losses for ``stage`` and reset accumulators.
+
+        Parameters
+        ----------
+        stage : str
+            Either ``"train"`` or ``"val"``; selects which accumulators to
+            reduce and the metric-key prefix to log under.
+        """
+        for fidelity in ("drc", "ps"):
+            values = self._epoch_losses[f"{stage}_{fidelity}"]
+            mean = torch.stack(values).mean() if values else torch.tensor(float("nan"))
+            self.log(f"{stage}_{fidelity}_loss", mean)
+            self._epoch_losses[f"{stage}_{fidelity}"] = []
 
     def configure_optimizers(self) -> Adam:
         """Build and return the Adam optimizer for the current freeze state.
