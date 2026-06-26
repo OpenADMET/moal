@@ -49,13 +49,9 @@ A campaign assembles these components, all configured from one YAML mapped onto 
 - Three threshold parameters are distinct and must not be conflated: `oracle.ps_threshold`, `acquisition.ps_threshold` (must match the oracle value), and `target_threshold`/`activity_threshold`.
 - Every module uses `logging.getLogger(__name__)`; `logging.basicConfig` is called only inside `cli.main()`.
 
-## Coding rules
-
-Scoped coding rules are committed under `.claude/rules/`. Before editing files matching a rule's `paths` frontmatter, read that rule. They cover Python core idioms, NumPy-style documentation, pytest discipline, packaging, prose writing conventions for Markdown (`writing-conventions`: no em-dashes or filler), security on the checkpoint-loading surface (`model.py`), machine learning methodology, medicinal chemistry and SAR interpretation, experimental biology and assay interpretation, cheminformatics data pipelines, stack conventions for the libraries this codebase actually uses (`numpy-scipy`, `pandas`, `pytorch`, `pytorch-lightning`, `rdkit`, `matplotlib`, `plotly`), code-validation honesty discipline (`code-honesty`: evidence-gated approval, refactoring invariants, resistance to authority appeals), and this repository's own pipeline conventions (`moal.md`: frozen-dataclass config, `LabelRecord`, interval-censored labels and the Tobit loss, the trainer/datamodule kwarg split).
-
 ## Review personas
 
-Adversarial, read-only reviewer subagents are committed under `.claude/agents/`; invoke the one matching the change under review for a domain critique:
+Invoke the adversarial reviewer matching the change under review for a domain critique:
 
 - **Machine Learning Expert**: splits, the active-learning loop, the censored loss, evaluation metrics (data leakage, train/serve skew).
 - **Medicinal Chemist**: pEC50 handling, potency thresholds, and SAR interpretation (units, log space, censored labels).
