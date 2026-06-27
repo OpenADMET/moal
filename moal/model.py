@@ -24,7 +24,6 @@ from chemprop.data import MoleculeDatapoint, MoleculeDataset
 from chemprop.data.dataloader import build_dataloader
 from chemprop.models import MPNN
 from chemprop.nn import BondMessagePassing, MeanAggregation, RegressionFFN
-from lightning.pytorch.loggers import CSVLogger
 from torch import Tensor
 from torch.optim import Adam
 
@@ -604,11 +603,13 @@ class ChemPropLightningModule(L.LightningModule):
             from pretrained). Default is False (continue fine-tuning from
             current weights).
         output_dir : str or Path, optional
-            Directory where Lightning should write its default logs
-            (``lightning_logs/``). When provided and ``default_root_dir`` is
-            not already present in ``trainer_kwargs``, it is injected as
-            ``default_root_dir`` into the ``L.Trainer`` constructor. If None
-            (default), Lightning writes to the current working directory.
+            Directory used as Lightning's ``default_root_dir`` (checkpoints and
+            any opt-in logger output). When provided and ``default_root_dir`` is
+            not already present in ``trainer_kwargs``, it is injected into the
+            ``L.Trainer`` constructor. If None (default), Lightning writes to the
+            current working directory. Note the logger is disabled by default,
+            so no ``lightning_logs/`` CSVs are written unless a caller opts in
+            via ``trainer_kwargs["logger"]``.
 
         Returns
         -------
@@ -638,7 +639,13 @@ class ChemPropLightningModule(L.LightningModule):
         if output_dir is not None and "default_root_dir" not in kwargs:
             kwargs["default_root_dir"] = str(output_dir)
 
-        kwargs["logger"] = CSVLogger(save_dir=kwargs["default_root_dir"])
+        # Disable Lightning's logger by default: the campaign reads metrics from
+        # LoopResults, never from the lightning_logs CSVs, and Lightning's
+        # CSVLogger header-rewrite path crashes intermittently on the
+        # fidelity-dependent metric keys (train_ps_loss/train_drc_loss appearing
+        # or going all-nan across refits). A caller can still opt in by passing
+        # logger in trainer_kwargs
+        kwargs.setdefault("logger", False)
         trainer = L.Trainer(**kwargs)
         trainer.fit(self, datamodule=dm)
         return self
