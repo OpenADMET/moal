@@ -646,6 +646,14 @@ class ChemPropLightningModule(L.LightningModule):
         # or going all-nan across refits). A caller can still opt in by passing
         # logger in trainer_kwargs
         kwargs.setdefault("logger", False)
+        # Disable checkpointing by default: refit trains a fixed number of epochs
+        # and the campaign never reloads a checkpoint (each iteration refits from
+        # scratch and evaluates in-process). Lightning's default ModelCheckpoint
+        # writes via a temp file that it then renames onto the target directory,
+        # which raises OSError(EXDEV) "Invalid cross-device link" on nodes whose
+        # temp dir is a different filesystem from output_dir. A caller can still
+        # opt in by passing enable_checkpointing or a ModelCheckpoint callback.
+        kwargs.setdefault("enable_checkpointing", False)
         trainer = L.Trainer(**kwargs)
         trainer.fit(self, datamodule=dm)
         return self
