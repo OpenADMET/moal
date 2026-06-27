@@ -159,6 +159,14 @@ class ActiveLearningLoop:
         Directory for Lightning default logs (``lightning_logs/``). Forwarded
         as ``output_dir`` to every ``model.refit()`` call. When None (default),
         Lightning writes to the current working directory.
+    stop_when_all_actives_found : bool, optional
+        When True, terminate the campaign as soon as every true active in the
+        pool has been confirmed (``n_confirmed_actives`` reaches the pool's
+        ``n_true_actives``), in addition to the existing stop on pool
+        exhaustion. Default is False, which runs until ``n_iterations`` or pool
+        exhaustion regardless of how many actives remain. Use with a generous
+        ``n_iterations`` to let convergence, rather than the iteration count,
+        end the run.
 
     """
 
@@ -179,6 +187,7 @@ class ActiveLearningLoop:
         reset_weights_on_refit: bool = False,
         pretrain_records: list[LabelRecord] | None = None,
         output_dir: str | Path | None = None,
+        stop_when_all_actives_found: bool = False,
     ) -> None:
         """Initialise the loop and store all campaign components."""
         self.oracle = oracle
@@ -196,6 +205,7 @@ class ActiveLearningLoop:
         self.reset_weights_on_refit = reset_weights_on_refit
         self.pretrain_records: list[LabelRecord] = pretrain_records or []
         self.output_dir = output_dir
+        self.stop_when_all_actives_found = stop_when_all_actives_found
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -532,6 +542,17 @@ class ActiveLearningLoop:
                         progress.update(
                             task,
                             description="[green]All compounds queried — stopping early.",
+                        )
+                        break
+
+                    # Optional convergence stop: every true active confirmed
+                    if (
+                        self.stop_when_all_actives_found
+                        and metrics.get("n_confirmed_actives", 0) >= n_true_actives
+                    ):
+                        progress.update(
+                            task,
+                            description="[green]All actives confirmed — stopping early.",
                         )
                         break
 

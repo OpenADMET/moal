@@ -337,6 +337,81 @@ class TestEarlyStop:
         # Loop must have stopped early (well before 100 × 5 iterations)
         assert results.total_cost < 10 * 11  # upper bound: 10 DRCs
 
+    @staticmethod
+    def _controlled_pool(n_actives: int = 3) -> tuple[pd.DataFrame, dict[str, float]]:
+        """Build a deduped canonical pool with exactly ``n_actives`` true actives.
+
+        Returns the ground-truth DataFrame and a canonical-SMILES -> pEC50 map.
+        Keying truth by canonical SMILES matches what the oracle hands back to
+        the model, which otherwise receives canonicalized SMILES the raw fixture
+        keys would miss.
+        """
+        from rdkit import Chem
+
+        canonical = list(dict.fromkeys(Chem.MolToSmiles(Chem.MolFromSmiles(s)) for s in _SMILES))
+        truth = {smiles: 5.0 for smiles in canonical}
+        for smiles in canonical[:n_actives]:
+            truth[smiles] = 8.0
+        df = pd.DataFrame({"smiles": canonical, "pec50": [truth[s] for s in canonical]})
+        return df, truth
+
+    def _truth_model(self, truth: dict[str, float]):
+        """Mock model that predicts ground-truth pEC50 (perfect ranking)."""
+        mock = create_autospec(ChemPropLightningModule, instance=True)
+        mock.predict_smiles.side_effect = lambda s, **kw: np.array(
+            [truth[x] for x in s], dtype=np.float32
+        )
+        mock.refit.return_value = mock
+        return mock
+
+    def test_stops_when_all_actives_found(self):
+        """With the flag set, the loop ends once every active is confirmed."""
+        df, truth = self._controlled_pool(n_actives=3)
+        oracle = CostAwareOracle(
+            ground_truth_df=df, cost_ps=1.0, cost_drc=10.0, ps_threshold=5.0, upper_bound=11.0
+        )
+        acq = CostAwareGreedyAcquisition(
+            cost_ps=1.0, cost_drc=10.0, ps_threshold=5.0, target_threshold=7.0, tau=0.5
+        )
+        ev = PipelineEvaluator(activity_threshold=7.0, upper_bound=11.0)
+        loop = ActiveLearningLoop(
+            oracle=oracle,
+            model=self._truth_model(truth),
+            acquisition=acq,
+            evaluator=ev,
+            stop_when_all_actives_found=True,
+        )
+
+        results = loop.run(n_iterations=100, plate_size=6, wells_per_ps=7, wells_per_drc=2)
+
+        assert results.final_metrics["n_confirmed_actives"] >= 3
+        # Stopped on convergence, not exhaustion: most of the pool stays unlabeled
+        assert len(oracle._labeled) < len(df)
+        # And well before the iteration cap
+        assert len(results.iterations) < 100
+
+    def test_runs_past_all_actives_without_convergence_flag(self):
+        """Default behavior keeps querying after all actives are found."""
+        df, truth = self._controlled_pool(n_actives=3)
+        oracle = CostAwareOracle(
+            ground_truth_df=df, cost_ps=1.0, cost_drc=10.0, ps_threshold=5.0, upper_bound=11.0
+        )
+        acq = CostAwareGreedyAcquisition(
+            cost_ps=1.0, cost_drc=10.0, ps_threshold=5.0, target_threshold=7.0, tau=0.5
+        )
+        ev = PipelineEvaluator(activity_threshold=7.0, upper_bound=11.0)
+        loop = ActiveLearningLoop(
+            oracle=oracle, model=self._truth_model(truth), acquisition=acq, evaluator=ev
+        )
+
+        # Few iterations so the run ends by the cap, not exhaustion; the point is
+        # that it does not stop the moment the 3 actives are confirmed.
+        results = loop.run(n_iterations=4, plate_size=6, wells_per_ps=7, wells_per_drc=2)
+
+        confirmed_first = results.iterations[0].metrics["n_confirmed_actives"]
+        assert confirmed_first >= 3  # all actives found in iteration 0
+        assert len(results.iterations) == 4  # yet the loop kept going
+
 
 class TestDashboardIntegration:
     """Tests that the dashboard receives the correct calls and cost breakdowns from the loop."""
