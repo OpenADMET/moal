@@ -208,6 +208,88 @@ class ActiveLearningLoop:
         self.stop_when_all_actives_found = stop_when_all_actives_found
 
     # ------------------------------------------------------------------
+    # Seed evaluation
+    # ------------------------------------------------------------------
+
+    def _record_seed_iteration(
+        self,
+        results: LoopResults,
+        n_true_actives: int,
+        noise_scale: float | None,
+        superseded_tracker: set[str],
+    ) -> bool:
+        """Evaluate and record the seed/initial state as iteration 0.
+
+        Triggered automatically whenever the campaign starts from any labeled
+        data: a costed warm-start already queried into the oracle and/or free
+        pretrain records. The model is refit on that seed and evaluated, and the
+        result is appended as iteration 0 at the seed's cumulative cost. Training
+        here also makes the first acquisition model-informed rather than selected
+        from an untrained model.
+
+        Parameters
+        ----------
+        results : LoopResults
+            Results accumulator; the seed iteration is appended when present.
+        n_true_actives : int
+            Active count in the pool, for the recall/confirmed-active metrics.
+        noise_scale : float or None
+            Noise scale for :class:`NoisyOracleModel` evaluation; ``None`` for
+            real models.
+        superseded_tracker : set[str]
+            Shared set recording pretrain records superseded by oracle queries.
+
+        Returns
+        -------
+        bool
+            ``True`` when a seed state existed and was recorded as iteration 0,
+            so the caller offsets subsequent acquisition indices by one.
+        """
+        seed_records = _merge_pretrain_with_oracle(
+            self.pretrain_records, self.oracle.training_records, superseded_tracker
+        )
+        if not seed_records:
+            return False
+
+        self.model.refit(
+            records=seed_records,
+            trainer_kwargs=self.trainer_kwargs,
+            datamodule_kwargs=self.datamodule_kwargs,
+            reset_weights=self.reset_weights_on_refit,
+            output_dir=self.output_dir,
+        )
+
+        model_metric_value: float | None = None
+        if self.test_set is not None:
+            test_smiles, test_pec50 = self.test_set
+            model_metric_value = self.evaluator.evaluate_model(
+                self.model, test_smiles, test_pec50, self.model_metric, noise_scale=noise_scale
+            )
+
+        metrics = self.evaluator.evaluate(
+            labeled=self.oracle.labeled_records,
+            n_true_actives=n_true_actives,
+            iteration=0,
+        )
+        if model_metric_value is not None:
+            metrics[f"model_{self.model_metric.value}"] = model_metric_value
+
+        results.iterations.append(
+            IterationResults(
+                iteration=0,
+                queries=[],
+                new_records=[],
+                metrics=metrics,
+                cumulative_cost=self.oracle.total_cost,
+                cumulative_labeled=len(self.oracle.labeled_records),
+                model_metric_value=model_metric_value,
+            )
+        )
+        results.total_cost = self.oracle.total_cost
+        results.total_labeled = len(self.oracle.labeled_records)
+        return True
+
+    # ------------------------------------------------------------------
     # Main entry point
     # ------------------------------------------------------------------
 
@@ -289,6 +371,19 @@ class ActiveLearningLoop:
                 f"  [dim]Pretrain pool: [bold]{len(self.pretrain_records)}[/bold] records[/dim]"
             )
 
+        # Evaluate the initial state as iteration 0 whenever the campaign starts
+        # from labeled data (a costed warm-start and/or free pretrain records).
+        # Acquisition iterations are then offset to start at 1. The seed refit
+        # also trains the model before the first candidate selection below.
+        _superseded_tracker: set[str] = set()
+        seed_recorded = self._record_seed_iteration(
+            results,
+            n_true_actives,
+            noise_schedule[0] if noise_schedule is not None else None,
+            _superseded_tracker,
+        )
+        iteration_offset = 1 if seed_recorded else 0
+
         # Pre-compute first iteration's candidate queries before entering the
         # progress bar so Step 3 of iteration i prepares for iteration i+1.
         # Both the unqueried pool and PS-labeled INTERVAL hits are scorable
@@ -318,7 +413,6 @@ class ActiveLearningLoop:
         )
 
         total_steps = n_iterations * 3
-        _superseded_tracker: set[str] = set()
         with temporary_log_level(logging.WARNING, ["moal"]):
             with Progress(
                 SpinnerColumn(),
@@ -507,13 +601,13 @@ class ActiveLearningLoop:
                     metrics = self.evaluator.evaluate(
                         labeled=self.oracle.labeled_records,
                         n_true_actives=n_true_actives,
-                        iteration=iteration,
+                        iteration=iteration + iteration_offset,
                     )
                     if model_metric_value is not None:
                         metrics[f"model_{self.model_metric.value}"] = model_metric_value
 
                     iter_result = IterationResults(
-                        iteration=iteration,
+                        iteration=iteration + iteration_offset,
                         queries=queries,
                         new_records=new_records,
                         metrics=metrics,

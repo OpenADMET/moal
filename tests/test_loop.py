@@ -160,6 +160,38 @@ class TestLoopExecution:
         )
         assert len(results.iterations) == N_ITERATIONS
 
+    def test_seeded_oracle_records_leading_iteration_zero(
+        self, oracle, mock_model, acquisition, evaluator
+    ):
+        """A pre-seeded oracle prepends an iteration-0 evaluation of the seed state."""
+        # Warm-start the oracle with two DRC queries before the loop runs
+        seed_queries = [
+            (_SMILES[0], QueryType.DOSE_RESPONSE),
+            (_SMILES[1], QueryType.DOSE_RESPONSE),
+        ]
+        oracle.query_batch(seed_queries, iteration=0)
+        seed_cost = oracle.total_cost
+        loop = ActiveLearningLoop(
+            oracle=oracle, model=mock_model, acquisition=acquisition, evaluator=evaluator
+        )
+        results = loop.run(
+            n_iterations=N_ITERATIONS,
+            plate_size=PLATE_SIZE,
+            wells_per_ps=WELLS_PS,
+            wells_per_drc=WELLS_DRC,
+        )
+        # The seed evaluation is one extra leading iteration ahead of the N acquisitions
+        assert len(results.iterations) == N_ITERATIONS + 1
+        seed_iter = results.iterations[0]
+        assert seed_iter.iteration == 0
+        assert seed_iter.queries == []
+        assert seed_iter.new_records == []
+        assert seed_iter.cumulative_cost == seed_cost
+        assert seed_iter.cumulative_labeled == 2
+        # Acquisition iterations are indexed from 1 and actually query the oracle
+        assert [r.iteration for r in results.iterations[1:]] == [1, 2, 3]
+        assert results.iterations[1].queries
+
     def test_labeled_pool_grows(self, loop, oracle):
         """The cumulative labeled count must be non-decreasing and total k × n_iterations compounds at the end."""
         results = loop.run(
@@ -878,14 +910,23 @@ class TestPretrainRecords:
         assert not missing, f"Pretrain SMILES not forwarded to refit: {missing}"
 
     def test_empty_pretrain_reproduces_no_pretrain_behaviour(
-        self, oracle, mock_model, acquisition, evaluator
+        self, ground_truth_df, oracle, mock_model, acquisition, evaluator
     ):
         """With pretrain_records=[], loop behaviour must be identical to not passing the arg."""
+        # Independent oracle for the empty-pretrain loop: a shared oracle would leave
+        # the second run pre-labeled by the first and trigger an extra seed iteration.
+        oracle_empty = CostAwareOracle(
+            ground_truth_df=ground_truth_df,
+            cost_ps=1.0,
+            cost_drc=10.0,
+            ps_threshold=5.0,
+            upper_bound=11.0,
+        )
         loop_no_pretrain = ActiveLearningLoop(
             oracle=oracle, model=mock_model, acquisition=acquisition, evaluator=evaluator
         )
         loop_empty = ActiveLearningLoop(
-            oracle=oracle,
+            oracle=oracle_empty,
             model=mock_model,
             acquisition=acquisition,
             evaluator=evaluator,
