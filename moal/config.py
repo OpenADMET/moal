@@ -299,11 +299,12 @@ class PretrainDataConfig:
         Optional column name for per-sample loss weights. When set, each
         labeled row's weight is read from this column (NaN / missing cells
         default to 1.0). When None (default), all records receive weight=1.0.
-    log2fc_column : str or None
-        Optional column name for the observed continuous log2FC primary-screen
-        readout. When set, populates ``LabelRecord.raw_ps_readout`` for PS
-        rows. When None (default), ``raw_ps_readout`` is ``None`` for every
-        record.
+    log2fc_columns : list[str] or None
+        Optional column names for observed continuous auxiliary readouts
+        (e.g. log2FC at one or more primary-screen concentrations, a direct
+        pIC50). When set, populates ``LabelRecord.raw_ps_readouts`` keyed by
+        column name. When None (default), ``raw_ps_readouts`` is empty for
+        every record.
     is_canonical : bool
         When False (default), SMILES are canonicalized via RDKit during
         parsing.
@@ -314,7 +315,7 @@ class PretrainDataConfig:
     relation_column: str = "relation"
     value_column: str = "value"
     weight_column: str | None = None
-    log2fc_column: str | None = None
+    log2fc_columns: list[str] | None = None
     is_canonical: bool = False
 
 
@@ -395,12 +396,13 @@ class PlanDataConfig:
         Optional column name for per-sample loss weights. When set, each
         labeled row's weight is read from this column (NaN / missing cells
         default to 1.0). When None (default), all records receive weight=1.0.
-    log2fc_column : str or None
-        Optional column name for the observed continuous log2FC primary-screen
-        readout. When set, populates ``LabelRecord.raw_ps_readout`` for PS
-        rows (and DRC rows for upgraded compounds, when the CSV carries the
-        readout on that row). When None (default), ``raw_ps_readout`` is
-        ``None`` for every record.
+    log2fc_columns : list[str] or None
+        Optional column names for observed continuous auxiliary readouts
+        (e.g. log2FC at one or more primary-screen concentrations, a direct
+        pIC50). When set, populates ``LabelRecord.raw_ps_readouts`` keyed by
+        column name for PS rows (and DRC rows for upgraded compounds, when
+        the CSV carries the readout on that row). When None (default),
+        ``raw_ps_readouts`` is empty for every record.
     is_canonical : bool
         When False (default), SMILES are canonicalized via RDKit during
         parsing.
@@ -412,7 +414,7 @@ class PlanDataConfig:
     relation_column: str = "relation"
     value_column: str = "value"
     weight_column: str | None = None
-    log2fc_column: str | None = None
+    log2fc_columns: list[str] | None = None
     is_canonical: bool = False
 
 

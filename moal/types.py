@@ -80,13 +80,14 @@ class LabelRecord:
         Normalized to mean=1.0 within each fidelity class by
         :func:`~moal.planning.normalize_record_weights` before training.
         Defaults to 1.0 (uniform weighting).
-    raw_ps_readout : float or None
-        The compound's observed continuous log2 fold-change from a
-        single-concentration primary screen, independent of the LEFT/INTERVAL
-        censoring derived from it against ``oracle.ps_threshold``. Retained on
-        the surviving DRC record after a PS-to-DRC upgrade so the auxiliary
-        log2FC encoder (see ``AuxiliaryEncoderConfig``) can still use it.
-        ``None`` when the compound has never been PS-screened.
+    raw_ps_readouts : dict[str, float]
+        The compound's observed continuous auxiliary readouts (e.g. log2 fold-
+        change at one or more primary-screen concentrations, a direct pIC50),
+        keyed by source column name, independent of the LEFT/INTERVAL
+        censoring derived from ``value`` against ``oracle.ps_threshold``.
+        Retained on the surviving DRC record after a PS-to-DRC upgrade so the
+        auxiliary encoder (see ``AuxiliaryEncoderConfig``) can still use it.
+        Empty when the compound has never been PS-screened.
     """
 
     smiles: str
@@ -102,10 +103,11 @@ class LabelRecord:
     :func:`~moal.planning.normalize_record_weights` before training so the
     global ``w_drc`` / ``w_ps`` scale relationship is preserved. Default 1.0
     is a no-op and preserves backward compatibility."""
-    raw_ps_readout: float | None = None
-    """Observed log2FC from the primary screen, kept separate from the
-    censored ``value``/``censoring_type`` pair so it survives a PS-to-DRC
-    upgrade for use as an auxiliary-encoder training input."""
+    raw_ps_readouts: dict[str, float] = field(default_factory=dict)
+    """Observed auxiliary readouts (log2FC per concentration, direct pIC50,
+    etc.), keyed by source column name and kept separate from the censored
+    ``value``/``censoring_type`` pair so they survive a PS-to-DRC upgrade for
+    use as auxiliary-encoder training inputs."""
 
 
 @dataclass

@@ -348,11 +348,11 @@ class TestParseCampaignState:
             for r in fit_records
         )
 
-    def test_log2fc_column_populates_raw_ps_readout_on_ps_rows(self, preprocessor):
-        """log2fc_column values must land on LabelRecord.raw_ps_readout for PS rows."""
+    def test_log2fc_columns_populate_raw_ps_readouts_on_ps_rows(self, preprocessor):
+        """log2fc_columns values must land on LabelRecord.raw_ps_readouts keyed by column name."""
         df = _state_df(
-            {"smiles": "CCO", "relation": "<", "value": 5.0, "log2fc": -1.2},
-            {"smiles": "CCN", "relation": ">=", "value": 5.0, "log2fc": 3.4},
+            {"smiles": "CCO", "relation": "<", "value": 5.0, "log2fc_1um": -1.2, "pic50": ""},
+            {"smiles": "CCN", "relation": ">=", "value": 5.0, "log2fc_1um": 3.4, "pic50": 6.8},
         )
 
         state = parse_campaign_state(
@@ -361,16 +361,16 @@ class TestParseCampaignState:
             cost_drc=10.0,
             upper_bound=11.0,
             preprocessor=preprocessor,
-            log2fc_column="log2fc",
+            log2fc_columns=["log2fc_1um", "pic50"],
             expected_ps_threshold=5.0,
         )
 
-        readouts = {r.canonical_smiles: r.raw_ps_readout for r in state.training_records}
-        assert readouts[preprocessor.canonicalize("CCO")] == -1.2
-        assert readouts[preprocessor.canonicalize("CCN")] == 3.4
+        readouts = {r.canonical_smiles: r.raw_ps_readouts for r in state.training_records}
+        assert readouts[preprocessor.canonicalize("CCO")] == {"log2fc_1um": -1.2}
+        assert readouts[preprocessor.canonicalize("CCN")] == {"log2fc_1um": 3.4, "pic50": 6.8}
 
-    def test_log2fc_column_blank_cell_leaves_raw_ps_readout_none(self, preprocessor):
-        """An empty log2fc cell must leave raw_ps_readout as None rather than raising."""
+    def test_log2fc_columns_blank_cell_omits_key(self, preprocessor):
+        """An empty log2fc cell must be omitted from raw_ps_readouts rather than raising."""
         df = _state_df({"smiles": "CCO", "relation": "<", "value": 5.0, "log2fc": ""})
 
         state = parse_campaign_state(
@@ -379,28 +379,28 @@ class TestParseCampaignState:
             cost_drc=10.0,
             upper_bound=11.0,
             preprocessor=preprocessor,
-            log2fc_column="log2fc",
+            log2fc_columns=["log2fc"],
             expected_ps_threshold=5.0,
         )
 
-        assert state.training_records[0].raw_ps_readout is None
+        assert state.training_records[0].raw_ps_readouts == {}
 
     def test_missing_log2fc_column_raises(self, preprocessor):
-        """Requesting a log2fc_column absent from the CSV must raise ValueError."""
+        """Requesting a log2fc_columns entry absent from the CSV must raise ValueError."""
         df = _state_df({"smiles": "CCO", "relation": "<", "value": 5.0})
 
-        with pytest.raises(ValueError, match="log2fc_column"):
+        with pytest.raises(ValueError, match="log2fc_columns"):
             parse_campaign_state(
                 df,
                 cost_ps=1.0,
                 cost_drc=10.0,
                 upper_bound=11.0,
                 preprocessor=preprocessor,
-                log2fc_column="log2fc",
+                log2fc_columns=["log2fc"],
             )
 
-    def test_refit_records_carry_raw_ps_readout_onto_surviving_drc_record(self, preprocessor):
-        """When a DRC-upgrade record has no log2FC of its own, the dropped PS record's readout must be copied onto it."""
+    def test_refit_records_merge_raw_ps_readouts_onto_surviving_drc_record(self, preprocessor):
+        """When a DRC-upgrade record lacks readouts of its own, the dropped PS record's readouts must be merged onto it."""
         upgraded_smiles = preprocessor.canonicalize("CCO")
         ps_record = LabelRecord(
             smiles="CCO",
@@ -411,7 +411,7 @@ class TestParseCampaignState:
             fidelity=QueryType.PRIMARY_SCREEN,
             cost=1.0,
             iteration=0,
-            raw_ps_readout=3.4,
+            raw_ps_readouts={"log2fc_1um": 3.4},
         )
         drc_record = LabelRecord(
             smiles="CCO",
@@ -422,14 +422,13 @@ class TestParseCampaignState:
             fidelity=QueryType.DOSE_RESPONSE,
             cost=10.0,
             iteration=1,
-            raw_ps_readout=None,
         )
 
         fit_records = training_records_for_refit([ps_record, drc_record])
 
         assert len(fit_records) == 1
         assert fit_records[0].fidelity == QueryType.DOSE_RESPONSE
-        assert fit_records[0].raw_ps_readout == 3.4
+        assert fit_records[0].raw_ps_readouts == {"log2fc_1um": 3.4}
 
     def test_custom_column_names_are_supported(self, preprocessor):
         """Non-default smiles, relation, and value column names must be mapped correctly throughout parsing."""

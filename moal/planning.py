@@ -54,7 +54,7 @@ def parse_campaign_state(
     relation_column: str = "relation",
     value_column: str = "value",
     weight_column: str | None = None,
-    log2fc_column: str | None = None,
+    log2fc_columns: list[str] | None = None,
     is_canonical: bool = False,
     expected_ps_threshold: float | None = None,
 ) -> CampaignState:
@@ -88,13 +88,13 @@ def parse_campaign_state(
         each labeled row's weight is read from this column (NaN / empty cells
         default to 1.0). Must be a finite positive float when present. When
         None (default), all records receive ``weight=1.0``.
-    log2fc_column : str or None
-        Optional column name for the compound's observed continuous log2FC
-        readout from a primary-screen assay. When provided, populates
-        ``LabelRecord.raw_ps_readout`` for PS rows (NaN / empty cells leave
-        it ``None``). Ignored for DRC-only (``==``) rows, since a compound
-        with no PS row has no observed log2FC. When None (default),
-        ``raw_ps_readout`` is ``None`` for every record.
+    log2fc_columns : list[str] or None
+        Optional column names for the compound's observed continuous
+        auxiliary readouts (e.g. log2FC at one or more primary-screen
+        concentrations, a direct pIC50). When provided, each column's value
+        is read into ``LabelRecord.raw_ps_readouts`` keyed by column name
+        (NaN / empty cells are omitted rather than stored). When None
+        (default), ``raw_ps_readouts`` is empty for every record.
     is_canonical : bool
         When True, skip RDKit canonicalization.
     expected_ps_threshold : float or None
@@ -113,10 +113,12 @@ def parse_campaign_state(
         raise ValueError(
             f"weight_column {weight_column!r} not found in state CSV, got {sorted(df.columns)}"
         )
-    if log2fc_column is not None and log2fc_column not in df.columns:
-        raise ValueError(
-            f"log2fc_column {log2fc_column!r} not found in state CSV, got {sorted(df.columns)}"
-        )
+    if log2fc_columns is not None:
+        missing = [col for col in log2fc_columns if col not in df.columns]
+        if missing:
+            raise ValueError(
+                f"log2fc_columns {missing!r} not found in state CSV, got {sorted(df.columns)}"
+            )
 
     training_records: list[LabelRecord] = []
     unqueried_rows: list[tuple[int, str]] = []
@@ -188,19 +190,23 @@ def parse_campaign_state(
                         f"Row {csv_row}: weight must be finite and positive, got {weight}."
                     )
 
-        raw_ps_readout: float | None = None
-        if log2fc_column is not None:
-            log2fc_raw = row.get(log2fc_column, None)
-            if not (pd.isna(log2fc_raw) or str(log2fc_raw).strip() == ""):
-                try:
-                    raw_ps_readout = float(log2fc_raw)
-                except (TypeError, ValueError) as exc:
-                    raise ValueError(
-                        f"Row {csv_row}: log2FC must be a finite numeric readout,"
-                        f" got {log2fc_raw!r}."
-                    ) from exc
-                if not math.isfinite(raw_ps_readout):
-                    raise ValueError(f"Row {csv_row}: log2FC must be finite, got {log2fc_raw!r}.")
+        raw_ps_readouts: dict[str, float] = {}
+        for col in log2fc_columns or ():
+            readout_raw = row.get(col, None)
+            if pd.isna(readout_raw) or str(readout_raw).strip() == "":
+                continue
+            try:
+                readout = float(readout_raw)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Row {csv_row}: column {col!r} must be a finite numeric readout,"
+                    f" got {readout_raw!r}."
+                ) from exc
+            if not math.isfinite(readout):
+                raise ValueError(
+                    f"Row {csv_row}: column {col!r} must be finite, got {readout_raw!r}."
+                )
+            raw_ps_readouts[col] = readout
 
         if relation == "==":
             record = LabelRecord(
@@ -213,7 +219,7 @@ def parse_campaign_state(
                 cost=cost_drc,
                 iteration=_PLAN_MODE_ITERATION,
                 weight=weight,
-                raw_ps_readout=raw_ps_readout,
+                raw_ps_readouts=raw_ps_readouts,
             )
         else:
             if expected_ps_threshold is not None and not math.isclose(
@@ -233,7 +239,7 @@ def parse_campaign_state(
                 cost=cost_ps,
                 iteration=_PLAN_MODE_ITERATION,
                 weight=weight,
-                raw_ps_readout=raw_ps_readout,
+                raw_ps_readouts=raw_ps_readouts,
             )
             # PS hits are DRC-upgrade inference targets in addition to training records
             if relation == ">=":
@@ -276,7 +282,7 @@ def parse_pretrain_records(
     relation_column: str = "relation",
     value_column: str = "value",
     weight_column: str | None = None,
-    log2fc_column: str | None = None,
+    log2fc_columns: list[str] | None = None,
     is_canonical: bool = False,
     expected_ps_threshold: float | None = None,
 ) -> list[LabelRecord]:
@@ -307,10 +313,10 @@ def parse_pretrain_records(
         Optional column name for per-sample loss weights. Forwarded to
         :func:`parse_campaign_state`. When None (default), all records
         receive ``weight=1.0``.
-    log2fc_column : str or None
-        Optional column name for the observed log2FC readout. Forwarded to
-        :func:`parse_campaign_state`. When None (default), ``raw_ps_readout``
-        is ``None`` for every record.
+    log2fc_columns : list[str] or None
+        Optional column names for observed auxiliary readouts. Forwarded to
+        :func:`parse_campaign_state`. When None (default),
+        ``raw_ps_readouts`` is empty for every record.
     is_canonical : bool
         When True, skip RDKit canonicalization.
     expected_ps_threshold : float or None
@@ -333,7 +339,7 @@ def parse_pretrain_records(
         relation_column=relation_column,
         value_column=value_column,
         weight_column=weight_column,
-        log2fc_column=log2fc_column,
+        log2fc_columns=log2fc_columns,
         is_canonical=is_canonical,
         expected_ps_threshold=expected_ps_threshold,
     )
@@ -352,11 +358,11 @@ def training_records_for_refit(records: list[LabelRecord]) -> list[LabelRecord]:
     When a compound has both a PS INTERVAL record (``>=`` hit) and a DRC
     EXACT record, the PS record is excluded to prevent double-weighting
     during model training.  PS LEFT records (``<`` misses) are always
-    retained regardless of DRC coverage.  If the excluded PS record carries
-    an observed ``raw_ps_readout`` that the surviving DRC record lacks (e.g.
-    a DRC upgrade acquired directly through the oracle, with no log2FC of
-    its own), the readout is copied onto the surviving DRC record so it is
-    not lost for the auxiliary log2FC encoder.
+    retained regardless of DRC coverage.  Any ``raw_ps_readouts`` entries on
+    the excluded PS record are merged onto the surviving DRC record (e.g. a
+    DRC upgrade acquired directly through the oracle, with no readouts of its
+    own) so they are not lost for the auxiliary encoder; a key already present
+    on the DRC record's own readouts takes precedence.
 
     Parameters
     ----------
@@ -375,12 +381,12 @@ def training_records_for_refit(records: list[LabelRecord]) -> list[LabelRecord]:
         rec.canonical_smiles for rec in records if rec.fidelity == QueryType.DOSE_RESPONSE
     }
     upgrade_readouts = {
-        rec.canonical_smiles: rec.raw_ps_readout
+        rec.canonical_smiles: rec.raw_ps_readouts
         for rec in records
         if rec.fidelity == QueryType.PRIMARY_SCREEN
         and rec.censoring_type == CensoringType.INTERVAL
         and rec.canonical_smiles in upgraded_smiles
-        and rec.raw_ps_readout is not None
+        and rec.raw_ps_readouts
     }
 
     result = []
@@ -391,12 +397,10 @@ def training_records_for_refit(records: list[LabelRecord]) -> list[LabelRecord]:
             and rec.canonical_smiles in upgraded_smiles
         ):
             continue
-        if (
-            rec.fidelity == QueryType.DOSE_RESPONSE
-            and rec.raw_ps_readout is None
-            and rec.canonical_smiles in upgrade_readouts
-        ):
-            rec = replace(rec, raw_ps_readout=upgrade_readouts[rec.canonical_smiles])
+        if rec.fidelity == QueryType.DOSE_RESPONSE and rec.canonical_smiles in upgrade_readouts:
+            merged = {**upgrade_readouts[rec.canonical_smiles], **rec.raw_ps_readouts}
+            if merged != rec.raw_ps_readouts:
+                rec = replace(rec, raw_ps_readouts=merged)
         result.append(rec)
     return result
 
