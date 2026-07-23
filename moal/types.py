@@ -80,6 +80,13 @@ class LabelRecord:
         Normalized to mean=1.0 within each fidelity class by
         :func:`~moal.planning.normalize_record_weights` before training.
         Defaults to 1.0 (uniform weighting).
+    raw_ps_readout : float or None
+        The compound's observed continuous log2 fold-change from a
+        single-concentration primary screen, independent of the LEFT/INTERVAL
+        censoring derived from it against ``oracle.ps_threshold``. Retained on
+        the surviving DRC record after a PS-to-DRC upgrade so the auxiliary
+        log2FC encoder (see ``AuxiliaryEncoderConfig``) can still use it.
+        ``None`` when the compound has never been PS-screened.
     """
 
     smiles: str
@@ -95,6 +102,10 @@ class LabelRecord:
     :func:`~moal.planning.normalize_record_weights` before training so the
     global ``w_drc`` / ``w_ps`` scale relationship is preserved. Default 1.0
     is a no-op and preserves backward compatibility."""
+    raw_ps_readout: float | None = None
+    """Observed log2FC from the primary screen, kept separate from the
+    censored ``value``/``censoring_type`` pair so it survives a PS-to-DRC
+    upgrade for use as an auxiliary-encoder training input."""
 
 
 @dataclass

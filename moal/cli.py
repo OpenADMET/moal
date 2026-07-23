@@ -335,6 +335,7 @@ def plan(config: Path, output_dir: Path | None, verbose: bool) -> None:
                     relation_column=cfg.data.plan.relation_column,
                     value_column=cfg.data.plan.value_column,
                     weight_column=cfg.data.plan.weight_column,
+                    log2fc_column=cfg.data.plan.log2fc_column,
                     is_canonical=cfg.data.plan.is_canonical,
                     expected_ps_threshold=cfg.oracle.ps_threshold,
                 )
@@ -508,6 +509,7 @@ def _load_pretrain_records(
             relation_column=pretrain_cfg.relation_column,
             value_column=pretrain_cfg.value_column,
             weight_column=pretrain_cfg.weight_column,
+            log2fc_column=pretrain_cfg.log2fc_column,
             is_canonical=pretrain_cfg.is_canonical,
             expected_ps_threshold=cfg.oracle.ps_threshold,
         )
