@@ -29,6 +29,11 @@ from rich.progress import (
 )
 
 from moal.acquisition import CostAwareGreedyAcquisition
+from moal.auxiliary_encoder import AuxiliaryEncoderModule, pretrain_auxiliary_encoder
+from moal.concatenation_model import (
+    ConcatenationChemPropLightningModule,
+    concatenation_feature_dim,
+)
 from moal.config import PipelineConfig
 from moal.dashboard import LiveDashboard
 from moal.evaluation import ModelMetric, PipelineEvaluator, scaffold_split
@@ -37,6 +42,7 @@ from moal.loop import ActiveLearningLoop
 from moal.model import ChemPropLightningModule, NoisyOracleModel
 from moal.oracle import CostAwareOracle
 from moal.planning import (
+    CampaignState,
     annotate_campaign_state,
     parse_campaign_state,
     parse_pretrain_records,
@@ -392,32 +398,66 @@ def plan(config: Path, output_dir: Path | None, verbose: bool) -> None:
                 # Setting all seeds
                 L.seed_everything(cfg.seed, workers=True, verbose=False)
 
-                # Build model
-                model = _build_plan_model(cfg)
-
-                # Train model
-                model.refit(
-                    records=fit_records,
-                    trainer_kwargs=cfg.trainer.to_dict(),
-                    datamodule_kwargs=cfg.trainer.to_datamodule_kwargs(),
-                    reset_weights=cfg.model.reset_weights_on_refit,
-                    output_dir=out_dir,
-                )
-                progress.advance(task)
-
-                progress.update(task, description=scoring_description)
-
                 # Collect SMILES for inference: unqueried compounds and PS hits eligible for upgrade
                 inference_smiles = [smi for _, smi in state.unqueried_rows] + [
                     smi for _, smi in state.ps_upgrade_rows
                 ]
 
-                # Make predictions
-                predictions = model.predict_smiles(inference_smiles)
+                if cfg.auxiliary_encoder is not None:
+                    # Concatenation architecture (issue #36 Phase 2): pretrain the
+                    # auxiliary encoder on this run's raw_ps_readouts, then train
+                    # the main model with its structural embedding concatenated in
+                    # for compounds that were never PS-screened.
+                    progress.update(
+                        task, description="[yellow]Pretraining auxiliary encoder[/yellow]"
+                    )
+                    try:
+                        aux_encoder = pretrain_auxiliary_encoder(fit_records, cfg.auxiliary_encoder)
+                    except ValueError as exc:
+                        raise click.ClickException(str(exc)) from exc
+
+                    progress.update(task, description=retraining_description)
+                    model = _build_concatenation_model(cfg, aux_encoder)
+                    model.refit(
+                        fit_records,
+                        aux_encoder=aux_encoder,
+                        trainer_kwargs=cfg.trainer.to_dict(),
+                        datamodule_kwargs=cfg.trainer.to_datamodule_kwargs(),
+                        output_dir=out_dir,
+                    )
+                    progress.advance(task)
+
+                    progress.update(task, description=scoring_description)
+                    inference_readouts = _inference_readouts(state, fit_records)
+                    predictions = model.predict_smiles(
+                        inference_smiles, inference_readouts, aux_encoder
+                    )
+                    # embedding_derived == True wherever the compound had no observed
+                    # readout, mirroring build_concatenation_features's own routing rule
+                    provenance = np.array(
+                        [not readout for readout in inference_readouts], dtype=bool
+                    )
+                else:
+                    # Build model
+                    model = _build_plan_model(cfg)
+
+                    # Train model
+                    model.refit(
+                        records=fit_records,
+                        trainer_kwargs=cfg.trainer.to_dict(),
+                        datamodule_kwargs=cfg.trainer.to_datamodule_kwargs(),
+                        reset_weights=cfg.model.reset_weights_on_refit,
+                        output_dir=out_dir,
+                    )
+                    progress.advance(task)
+
+                    progress.update(task, description=scoring_description)
+                    predictions = model.predict_smiles(inference_smiles)
+                    provenance = None
 
                 try:
                     annotated_df = annotate_campaign_state(
-                        state_df, state, predictions, acquisition
+                        state_df, state, predictions, acquisition, provenance=provenance
                     )
                 except ValueError as exc:
                     raise click.ClickException(str(exc)) from exc
@@ -672,6 +712,7 @@ def _build_acquisition(cfg: PipelineConfig) -> CostAwareGreedyAcquisition:
         ps_threshold=cfg.acquisition.ps_threshold,
         target_threshold=cfg.acquisition.target_threshold,
         tau=cfg.acquisition.tau,
+        embedding_provenance_discount=cfg.acquisition.embedding_provenance_discount,
     )
 
 
@@ -766,6 +807,75 @@ def _build_plan_model(cfg: PipelineConfig) -> ChemPropLightningModule:
         learnable_sigma=cfg.model.learnable_sigma,
         from_foundation=cfg.model.from_foundation,
     )
+
+
+def _build_concatenation_model(
+    cfg: PipelineConfig, aux_encoder: AuxiliaryEncoderModule
+) -> ConcatenationChemPropLightningModule:
+    """Instantiate a ``ConcatenationChemPropLightningModule`` for offline planning.
+
+    Parameters
+    ----------
+    cfg : PipelineConfig
+        Active campaign configuration. Reuses ``cfg.model``'s backbone and
+        optimization hyperparameters, same as :func:`_build_plan_model`.
+    aux_encoder : AuxiliaryEncoderModule
+        Pretrained auxiliary encoder; supplies ``task_names`` and
+        ``embedding_dim`` to size the concatenation feature width.
+
+    Returns
+    -------
+    ConcatenationChemPropLightningModule
+        Configured model ready for ``refit()`` and ``predict_smiles()``.
+    """
+    feature_dim = concatenation_feature_dim(len(aux_encoder.task_names), aux_encoder.embedding_dim)
+    return ConcatenationChemPropLightningModule(
+        concat_feature_dim=feature_dim,
+        ffn_hidden_dim=cfg.model.ffn_hidden_dim,
+        ffn_num_layers=cfg.model.ffn_num_layers,
+        message_hidden_dim=cfg.model.message_hidden_dim,
+        depth=cfg.model.depth,
+        freeze_epochs=cfg.model.freeze_epochs,
+        mpnn_lr=cfg.model.mpnn_lr,
+        ffn_lr=cfg.model.ffn_lr,
+        mpnn_weight_decay=cfg.model.mpnn_weight_decay,
+        ffn_weight_decay=cfg.model.ffn_weight_decay,
+        sigma=cfg.model.sigma,
+        w_drc=cfg.model.w_drc,
+        w_ps=cfg.model.w_ps,
+        learnable_sigma=cfg.model.learnable_sigma,
+        from_foundation=cfg.model.from_foundation,
+    )
+
+
+def _inference_readouts(
+    state: CampaignState, fit_records: list[LabelRecord]
+) -> list[dict[str, float]]:
+    """Build the per-inference-target readout dict list for the concatenation architecture.
+
+    Unqueried compounds have never been PS-screened by definition, so they
+    always route through the auxiliary encoder's embedding fallback (empty
+    dict). PS-upgrade candidates already carry their own observed readouts on
+    the corresponding training record.
+
+    Parameters
+    ----------
+    state : CampaignState
+        Parsed campaign state.
+    fit_records : list[LabelRecord]
+        Training records used to fit the model, keyed by canonical SMILES to
+        recover each PS-upgrade candidate's ``raw_ps_readouts``.
+
+    Returns
+    -------
+    list[dict[str, float]]
+        Aligned with ``state.unqueried_rows + state.ps_upgrade_rows``, same
+        ordering ``model.predict_smiles`` expects.
+    """
+    readouts_by_smiles = {rec.canonical_smiles: rec.raw_ps_readouts for rec in fit_records}
+    unqueried_readouts: list[dict[str, float]] = [{} for _ in state.unqueried_rows]
+    upgrade_readouts = [readouts_by_smiles.get(smi, {}) for _, smi in state.ps_upgrade_rows]
+    return unqueried_readouts + upgrade_readouts
 
 
 if __name__ == "__main__":

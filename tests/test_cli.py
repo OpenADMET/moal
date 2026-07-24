@@ -367,6 +367,80 @@ class TestPlanCommand:
         # inference_smiles = [unqueried...] + [ps_upgrade...]
         model.predict_smiles.assert_called_once_with(["CCN", "CCCC", "CCO"])
 
+    def test_plan_uses_concatenation_architecture_when_auxiliary_encoder_configured(
+        self, tmp_path, monkeypatch
+    ):
+        """When auxiliary_encoder is set, plan must pretrain it, build the concatenation model, and annotate embedding_derived."""
+        state_csv = tmp_path / "state.csv"
+        state_csv.write_text(
+            "smiles,relation,value,log2fc_1um\nCCO,>=,5.0,3.1\nc1ccccc1,==,8.1,\nCCN,,,\nCCCC,,,\n"
+        )
+        output_csv = tmp_path / "state_out.csv"
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            "oracle:\n"
+            "  cost_ps: 1.0\n"
+            "  cost_drc: 10.0\n"
+            "  ps_threshold: 5.0\n"
+            "acquisition:\n"
+            "  ps_threshold: 5.0\n"
+            "  target_threshold: 7.0\n"
+            "  tau: 0.5\n"
+            + _plan_config(
+                input_csv=str(state_csv),
+                output_csv=str(output_csv),
+                extra="    log2fc_columns: [log2fc_1um]\n",
+            )
+            + "model:\n"
+            "  fast: false\n"
+            "trainer:\n"
+            "  max_epochs: 1\n"
+            "dashboard:\n"
+            "  enabled: false\n"
+            "auxiliary_encoder:\n"
+            "  freeze_epochs: 0\n"
+        )
+
+        fake_aux_encoder = Mock(spec_set=["task_names", "embedding_dim"])
+        fake_aux_encoder.task_names = ["log2fc_1um"]
+        fake_aux_encoder.embedding_dim = 8
+
+        pretrain_mock = Mock(return_value=fake_aux_encoder)
+        monkeypatch.setattr("moal.cli.pretrain_auxiliary_encoder", pretrain_mock)
+
+        concat_model = Mock(spec_set=["refit", "predict_smiles"])
+        # unqueried: CCN, CCCC (2); ps upgrade: CCO (1) -> 3 total predictions
+        concat_model.predict_smiles.return_value = np.array([5.0, 8.0, 6.5], dtype=np.float32)
+        monkeypatch.setattr(
+            "moal.cli._build_concatenation_model", lambda cfg, aux_encoder: concat_model
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["plan", "--config", str(cfg), "--output-dir", str(tmp_path / "out")],
+        )
+
+        assert result.exit_code == 0, _result_text(result)
+        pretrain_mock.assert_called_once()
+        concat_model.refit.assert_called_once()
+        assert concat_model.refit.call_args.kwargs["aux_encoder"] is fake_aux_encoder
+
+        # predict_smiles must receive per-compound readouts: empty for unqueried,
+        # the observed reading for the PS-upgrade candidate
+        call_args = concat_model.predict_smiles.call_args
+        smiles_arg, readouts_arg, aux_arg = call_args[0]
+        assert smiles_arg == ["CCN", "CCCC", "CCO"]
+        assert readouts_arg == [{}, {}, {"log2fc_1um": 3.1}]
+        assert aux_arg is fake_aux_encoder
+
+        written = pd.read_csv(output_csv)
+        assert "embedding_derived" in written.columns
+        unqueried_rows = written[written["smiles"].isin(["CCN", "CCCC"])]
+        assert unqueried_rows["embedding_derived"].astype(bool).all()
+        upgrade_row = written[written["smiles"] == "CCO"]
+        assert not upgrade_row["embedding_derived"].astype(bool).any()
+
     def test_plan_suppresses_noisy_third_party_warnings(self, tmp_path, monkeypatch):
         """suppress_noisy_loggers must be called exactly once so third-party warnings do not pollute plan output."""
         state_csv = tmp_path / "state.csv"
