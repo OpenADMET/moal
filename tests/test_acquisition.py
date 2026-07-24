@@ -301,3 +301,94 @@ class TestPSUpgradeCandidates:
                 ps_labeled_smiles=["A", "B"],
                 ps_labeled_predictions=np.array([1.0]),
             )
+
+
+class TestProvenanceDiscount:
+    """Tests for embedding_provenance_discount: constructor validation and select()/score_summary() effects."""
+
+    def test_default_discount_is_noop(self, acq):
+        """The default discount of 1.0 must leave select() output unchanged whether or not provenance is passed."""
+        smiles = ["A", "B", "C"]
+        preds = np.array([9.0, 8.0, 7.5], dtype=np.float32)
+        provenance = np.array([True, False, True])
+
+        without_provenance = acq.select(
+            smiles, preds, plate_size=2, wells_per_ps=1, wells_per_drc=1
+        )
+        with_provenance = acq.select(
+            smiles, preds, plate_size=2, wells_per_ps=1, wells_per_drc=1, provenance=provenance
+        )
+
+        assert without_provenance == with_provenance
+
+    def test_discount_below_one_can_flip_ranking(self):
+        """A strong discount on an embedding-derived candidate must let an otherwise-lower-scoring observed candidate outrank it."""
+        acq = CostAwareGreedyAcquisition(
+            cost_ps=1.0,
+            cost_drc=1.0,
+            ps_threshold=5.0,
+            target_threshold=7.0,
+            tau=0.5,
+            embedding_provenance_discount=0.01,
+        )
+        smiles = ["A", "B"]
+        preds = np.array([9.0, 7.1], dtype=np.float32)  # A scores higher on raw prediction alone
+        provenance = np.array([True, False])  # A is embedding-derived, B is observed
+
+        selected = acq.select(
+            smiles,
+            preds,
+            plate_size=1,
+            wells_per_ps=10,
+            wells_per_drc=1,
+            provenance=provenance,
+        )
+
+        assert selected[0][0] == "B"
+
+    def test_score_summary_reports_discounted_scores_and_embedding_flag(self):
+        """score_summary must discount score_drc/score_ps for embedding-derived rows and report embedding_derived."""
+        acq = CostAwareGreedyAcquisition(
+            cost_ps=1.0,
+            cost_drc=1.0,
+            ps_threshold=5.0,
+            target_threshold=7.0,
+            tau=0.5,
+            embedding_provenance_discount=0.5,
+        )
+        smiles = ["A", "B"]
+        preds = np.array([8.0, 8.0], dtype=np.float32)
+        provenance = np.array([True, False])
+
+        rows = acq.score_summary(smiles, preds, provenance=provenance)
+
+        assert rows[0]["embedding_derived"] is True
+        assert rows[1]["embedding_derived"] is False
+        assert rows[0]["score_drc"] == pytest.approx(rows[1]["score_drc"] * 0.5)
+        assert rows[0]["score_ps"] == pytest.approx(rows[1]["score_ps"] * 0.5)
+
+    def test_score_summary_without_provenance_marks_all_rows_not_embedding_derived(self, acq):
+        """Omitting provenance must set embedding_derived=False for every row and apply no discount."""
+        rows = acq.score_summary(["A"], np.array([8.0], dtype=np.float32))
+
+        assert rows[0]["embedding_derived"] is False
+
+    @pytest.mark.parametrize("discount", [0.0, 1.5, -0.1])
+    def test_out_of_range_discount_raises(self, discount):
+        """embedding_provenance_discount outside (0.0, 1.0] must raise ValueError at construction."""
+        with pytest.raises(ValueError, match="embedding_provenance_discount"):
+            CostAwareGreedyAcquisition(
+                cost_ps=1.0, cost_drc=1.0, embedding_provenance_discount=discount
+            )
+
+    def test_provenance_shape_mismatch_raises(self, acq):
+        """A provenance array of the wrong length must raise ValueError rather than silently misaligning."""
+        with pytest.raises(ValueError, match="provenance"):
+            acq.select(
+                ["A", "B"],
+                np.array([8.0, 7.0], dtype=np.float32),
+                plate_size=2,
+                wells_per_ps=1,
+                wells_per_drc=1,
+                provenance=np.array([True]),
+            )

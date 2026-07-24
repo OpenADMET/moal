@@ -104,11 +104,22 @@ class CostAwareGreedyAcquisition:
     tau : float, optional
         Sigmoid temperature controlling exploitation sharpness. Smaller τ
         means more sharply exploit the highest-scoring compounds. Default is 0.5.
+    embedding_provenance_discount : float, optional
+        Multiplicative discount applied to a candidate's score when its
+        prediction is flagged as embedding-derived (see ``provenance``
+        arguments on :meth:`select` and :meth:`score_summary`) — the
+        concatenation architecture's (issue #36 Phase 2) fallback path for
+        compounds never PS-screened, which rests on strictly more layers of
+        inference than a prediction from an observed input. Must be in
+        ``(0.0, 1.0]``. Default is 1.0 (no discount); callers that never pass
+        a ``provenance`` array see no behavior change regardless of this
+        value.
 
     Raises
     ------
     ValueError
-        If ``cost_ps`` or ``cost_drc`` is not strictly positive.
+        If ``cost_ps`` or ``cost_drc`` is not strictly positive, or if
+        ``embedding_provenance_discount`` is not in ``(0.0, 1.0]``.
     """
 
     def __init__(
@@ -118,14 +129,21 @@ class CostAwareGreedyAcquisition:
         ps_threshold: float = 5.0,
         target_threshold: float = 7.0,
         tau: float = 0.5,
+        embedding_provenance_discount: float = 1.0,
     ) -> None:
         if cost_ps <= 0 or cost_drc <= 0:
             raise ValueError("Costs must be positive.")
+        if not (0.0 < embedding_provenance_discount <= 1.0):
+            raise ValueError(
+                "embedding_provenance_discount must be in (0.0, 1.0], "
+                f"got {embedding_provenance_discount}."
+            )
         self.cost_ps = cost_ps
         self.cost_drc = cost_drc
         self.ps_threshold = ps_threshold
         self.target_threshold = target_threshold
         self.tau = tau
+        self.embedding_provenance_discount = embedding_provenance_discount
 
     # ------------------------------------------------------------------
     # Scoring
@@ -173,6 +191,40 @@ class CostAwareGreedyAcquisition:
         h = _binary_entropy(p_cross)
         return h / self.cost_ps
 
+    def _apply_provenance_discount(
+        self, scores: np.ndarray, provenance: np.ndarray | None
+    ) -> np.ndarray:
+        """Apply ``embedding_provenance_discount`` to embedding-derived candidates.
+
+        Parameters
+        ----------
+        scores : np.ndarray
+            Raw acquisition scores, shape ``(N,)``.
+        provenance : np.ndarray or None
+            Boolean (or 0/1 float) array, shape ``(N,)``, True/1 where the
+            prediction is embedding-derived (concatenation architecture,
+            never-PS-screened fallback). ``None`` means no provenance
+            information was supplied — every candidate is treated as
+            observed-input, matching current behavior with no discount.
+
+        Returns
+        -------
+        np.ndarray
+            ``scores`` unchanged where ``provenance`` is False/0 or where
+            ``provenance is None``; multiplied by
+            ``embedding_provenance_discount`` where ``provenance`` is
+            True/1.
+        """
+        if provenance is None:
+            return scores
+        provenance = np.asarray(provenance)
+        if provenance.shape != scores.shape:
+            raise ValueError(
+                f"provenance shape {provenance.shape} must match scores shape {scores.shape}."
+            )
+        discount = np.where(provenance.astype(bool), self.embedding_provenance_discount, 1.0)
+        return scores * discount
+
     # ------------------------------------------------------------------
     # Selection
     # ------------------------------------------------------------------
@@ -186,6 +238,8 @@ class CostAwareGreedyAcquisition:
         wells_per_drc: int,
         ps_labeled_smiles: list[str] | None = None,
         ps_labeled_predictions: np.ndarray | None = None,
+        provenance: np.ndarray | None = None,
+        ps_labeled_provenance: np.ndarray | None = None,
     ) -> list[tuple[str, QueryType]]:
         """Greedily select queries that fit within a plate well budget.
 
@@ -233,6 +287,16 @@ class CostAwareGreedyAcquisition:
             Model pEC50 estimates, shape ``(M,)``, aligned with
             ``ps_labeled_smiles``. Required when ``ps_labeled_smiles`` is
             non-empty.
+        provenance : np.ndarray, optional
+            Boolean (or 0/1 float) array, shape ``(N,)``, aligned with
+            ``unlabeled_smiles``. True/1 marks a prediction as
+            embedding-derived (concatenation architecture, issue #36 Phase 2);
+            its DRC and PS scores are multiplied by
+            ``embedding_provenance_discount``. ``None`` (default) applies no
+            discount, matching current behavior.
+        ps_labeled_provenance : np.ndarray, optional
+            Same semantics as ``provenance``, aligned with
+            ``ps_labeled_smiles`` instead.
 
         Returns
         -------
@@ -271,8 +335,8 @@ class CostAwareGreedyAcquisition:
         candidates: list[tuple[float, str, QueryType]] = []
 
         if unlabeled_smiles:
-            scores_drc = self._score_drc(predictions)
-            scores_ps = self._score_ps(predictions)
+            scores_drc = self._apply_provenance_discount(self._score_drc(predictions), provenance)
+            scores_ps = self._apply_provenance_discount(self._score_ps(predictions), provenance)
             for i, smi in enumerate(unlabeled_smiles):
                 candidates.append((float(scores_drc[i]), smi, QueryType.DOSE_RESPONSE))
                 candidates.append((float(scores_ps[i]), smi, QueryType.PRIMARY_SCREEN))
@@ -285,7 +349,9 @@ class CostAwareGreedyAcquisition:
                     f"ps_labeled_smiles length ({len(ps_labeled_smiles)}) must match "
                     f"ps_labeled_predictions length ({len(psl_preds)})."
                 )
-            scores_drc_upgrade = self._score_drc(psl_preds)
+            scores_drc_upgrade = self._apply_provenance_discount(
+                self._score_drc(psl_preds), ps_labeled_provenance
+            )
             for j, smi in enumerate(ps_labeled_smiles):
                 candidates.append((float(scores_drc_upgrade[j]), smi, QueryType.DOSE_RESPONSE))
 
@@ -325,7 +391,12 @@ class CostAwareGreedyAcquisition:
     # Diagnostics
     # ------------------------------------------------------------------
 
-    def score_summary(self, unlabeled_smiles: list[str], predictions: np.ndarray) -> list[dict]:
+    def score_summary(
+        self,
+        unlabeled_smiles: list[str],
+        predictions: np.ndarray,
+        provenance: np.ndarray | None = None,
+    ) -> list[dict]:
         """Return per-compound score breakdown for inspection and logging.
 
         Parameters
@@ -335,26 +406,50 @@ class CostAwareGreedyAcquisition:
         predictions : np.ndarray
             Model pEC50 point estimates, shape ``(N,)``, aligned with
             ``unlabeled_smiles``.
+        provenance : np.ndarray, optional
+            Boolean (or 0/1 float) array, shape ``(N,)``, aligned with
+            ``unlabeled_smiles``. True/1 marks a prediction as
+            embedding-derived (concatenation architecture, issue #36 Phase 2);
+            ``score_drc``/``score_ps`` are multiplied by
+            ``embedding_provenance_discount`` for that row, matching
+            :meth:`select`'s ranking. ``None`` (default) applies no discount.
 
         Returns
         -------
         list[dict]
             One dict per compound with keys ``smiles``, ``y_hat``,
-            ``p_active``, ``p_cross_threshold``, ``score_drc``, ``score_ps``.
+            ``p_active``, ``p_cross_threshold``, ``score_drc``, ``score_ps``,
+            ``embedding_derived`` (bool, always present; False when
+            ``provenance`` is None).
         """
         predictions = np.asarray(predictions, dtype=np.float32)
+        provenance_arr = (
+            np.zeros(len(predictions), dtype=bool)
+            if provenance is None
+            else np.asarray(provenance, dtype=bool)
+        )
+        if provenance_arr.shape != predictions.shape:
+            raise ValueError(
+                f"provenance shape {provenance_arr.shape} must match "
+                f"predictions shape {predictions.shape}."
+            )
         rows = []
-        for smi, y_hat in zip(unlabeled_smiles, predictions, strict=False):
+        for smi, y_hat, is_embedding in zip(
+            unlabeled_smiles, predictions, provenance_arr, strict=False
+        ):
             p_active = float(_sigmoid(np.array([y_hat - self.target_threshold]), self.tau)[0])
             p_cross = float(_sigmoid(np.array([y_hat - self.ps_threshold]), self.tau)[0])
+            discount = self.embedding_provenance_discount if is_embedding else 1.0
             rows.append(
                 {
                     "smiles": smi,
                     "y_hat": float(y_hat),
                     "p_active": p_active,
                     "p_cross_threshold": p_cross,
-                    "score_drc": p_active / self.cost_drc,
-                    "score_ps": float(_binary_entropy(np.array([p_cross]))[0]) / self.cost_ps,
+                    "score_drc": (p_active / self.cost_drc) * discount,
+                    "score_ps": (float(_binary_entropy(np.array([p_cross]))[0]) / self.cost_ps)
+                    * discount,
+                    "embedding_derived": bool(is_embedding),
                 }
             )
         return rows

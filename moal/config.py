@@ -218,11 +218,23 @@ class AcquisitionConfig:
         Optimization target threshold used by the DRC exploitation score.
     tau : float
         Sigmoid temperature. Lower = more exploitative.
+    embedding_provenance_discount : float
+        Multiplicative discount applied to a candidate's acquisition score
+        when its prediction rests on the concatenation architecture's
+        (issue #36 Phase 2) auxiliary-embedding path rather than an observed
+        readout — i.e. a compound never PS-screened, scored through one more
+        layer of inference than an observed-input prediction. Must be in
+        ``(0.0, 1.0]``; 1.0 (default) is a no-op, so acquisition behavior is
+        unchanged unless a caller explicitly passes per-candidate provenance
+        to :meth:`~moal.acquisition.CostAwareGreedyAcquisition.select` or
+        :meth:`~moal.acquisition.CostAwareGreedyAcquisition.score_summary`
+        *and* sets this below 1.0.
     """
 
     ps_threshold: float = 5.0
     target_threshold: float = 7.0
     tau: float = 0.5
+    embedding_provenance_discount: float = 1.0
 
 
 @dataclass(frozen=True)
