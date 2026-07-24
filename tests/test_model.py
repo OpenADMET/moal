@@ -471,7 +471,7 @@ class TestFromFoundation:
 
         We temporarily restore the real _build_model so the False-branch dispatch
         runs, then verify BondMessagePassing is called once with the configured
-        d_h and depth and _load_foundation_weights is never invoked.
+        d_h and depth and load_foundation_weights is never invoked.
         """
         calls = []
 
@@ -484,11 +484,10 @@ class TestFromFoundation:
         monkeypatch.setattr("moal.model.BondMessagePassing", tracking_bmp)
         monkeypatch.setattr(ChemPropLightningModule, "_build_model", _REAL_BUILD_MODEL)
         monkeypatch.setattr(
-            ChemPropLightningModule,
-            "_load_foundation_weights",
-            lambda self: (_ for _ in ()).throw(
+            "moal.model.load_foundation_weights",
+            lambda from_foundation: (_ for _ in ()).throw(
                 AssertionError(
-                    "_load_foundation_weights must not be called when from_foundation=False"
+                    "load_foundation_weights must not be called when from_foundation=False"
                 )
             ),
         )
