@@ -70,6 +70,112 @@ def _validate_from_foundation(value: str | bool) -> None:
     )
 
 
+def load_foundation_weights(from_foundation: str | bool) -> dict:
+    """Load pretrained message-passing weights from a named model or local path.
+
+    Factored out of :class:`ChemPropLightningModule` so callers share an
+    identical checkpoint-loading path.
+
+    Parameters
+    ----------
+    from_foundation : str or bool
+        ``"chemeleon"`` downloads (or reuses the cached copy of) the
+        CheMeleon checkpoint from Zenodo. Any other string is treated as a
+        local filesystem path. Must not be ``False``; validate with
+        :func:`_validate_from_foundation` first.
+
+    Returns
+    -------
+    dict
+        Checkpoint dictionary with ``hyper_parameters`` and ``state_dict``
+        keys.
+    """
+    if from_foundation == "chemeleon":
+        download_chemeleon()
+        ckpt_path = Path().home() / ".chemprop" / "chemeleon_mp.pt"
+    else:
+        ckpt_path = Path(str(from_foundation))
+        logger.info("Loading foundation weights from local path: %s", ckpt_path)
+    return cast(dict[str, Any], torch.load(ckpt_path, weights_only=True))
+
+
+def build_mpnn(
+    from_foundation: str | bool,
+    ffn_hidden_dim: int,
+    ffn_num_layers: int,
+    message_hidden_dim: int,
+    depth: int,
+    n_tasks: int = 1,
+) -> nn.Module:
+    """Construct a ChemProp MPNN, dispatching on ``from_foundation``.
+
+    Factored out of :class:`ChemPropLightningModule` so encoder construction
+    lives in one place rather than being hand-rolled per caller.
+
+    Parameters
+    ----------
+    from_foundation : str or bool
+        ``False`` builds the message-passing encoder with random weights at
+        ``message_hidden_dim`` / ``depth``. Any other value loads foundation
+        weights via :func:`load_foundation_weights`, which also supplies the
+        encoder's architecture (``message_hidden_dim`` and ``depth`` are
+        ignored in that case).
+    ffn_hidden_dim : int
+        Hidden dimension of the FFN predictor head.
+    ffn_num_layers : int
+        Number of layers in the FFN predictor head.
+    message_hidden_dim : int
+        Message-passing hidden width (``d_h``) for the random-init encoder.
+        Ignored when a foundation checkpoint supplies the architecture.
+    depth : int
+        Number of message-passing steps for the random-init encoder. Ignored
+        when a foundation checkpoint supplies the architecture.
+    n_tasks : int, optional
+        Number of regression targets predicted per compound. Default is 1,
+        the model's single pEC50 target.
+
+    Returns
+    -------
+    nn.Module
+        Fully assembled ``chemprop.models.MPNN``. Aggregation is always
+        ``MeanAggregation``: CheMeleon's own pretraining used a mean readout,
+        so any foundation-weights branch is constrained to match it; the
+        random-init branch keeps the same readout for consistency between
+        the two initialisation paths rather than introducing an
+        undocumented behavioural difference.
+
+    Notes
+    -----
+    ``message_hidden_dim`` and ``depth`` apply only on the
+    ``from_foundation=False`` branch; for a foundation checkpoint the
+    encoder architecture is read from the checkpoint's stored
+    ``hyper_parameters`` so the pretrained weights load with ``strict=True``.
+    """
+    if from_foundation is False:
+        logger.info(
+            "Building ChemProp encoder with random weights "
+            "(from_foundation=False, d_h=%d, depth=%d).",
+            message_hidden_dim,
+            depth,
+        )
+        mp: nn.Module = BondMessagePassing(  # pyright: ignore[reportAbstractUsage]
+            d_h=message_hidden_dim, depth=depth
+        )
+    else:
+        foundation_weights = load_foundation_weights(from_foundation)
+        mp = BondMessagePassing(**foundation_weights["hyper_parameters"])  # pyright: ignore[reportAbstractUsage]
+        mp.load_state_dict(foundation_weights["state_dict"])
+
+    agg = MeanAggregation()
+    ffn = RegressionFFN(  # pyright: ignore[reportAbstractUsage]
+        n_tasks=n_tasks,
+        input_dim=cast(BondMessagePassing, mp).output_dim,
+        hidden_dim=ffn_hidden_dim,
+        n_layers=ffn_num_layers,
+    )
+    return cast(nn.Module, MPNN(message_passing=mp, agg=agg, predictor=ffn))
+
+
 def download_chemeleon() -> None:
     """Download the CheMeleon checkpoint if not already cached locally.
 
@@ -215,6 +321,9 @@ class ChemPropLightningModule(L.LightningModule):
     ) -> nn.Module:
         """Construct the MPNN, dispatching on ``self._from_foundation``.
 
+        Thin wrapper around the shared :func:`build_mpnn`; see that function
+        for the full construction contract.
+
         Parameters
         ----------
         ffn_hidden_dim : int
@@ -231,58 +340,16 @@ class ChemPropLightningModule(L.LightningModule):
         Returns
         -------
         nn.Module
-            Fully assembled ``chemprop.models.MPNN``.
-
-        Notes
-        -----
-        ``message_hidden_dim`` and ``depth`` apply only on the
-        ``from_foundation=False`` branch; for a foundation checkpoint the
-        encoder architecture is read from the checkpoint's stored
-        ``hyper_parameters`` so the pretrained weights load with ``strict=True``.
+            Fully assembled ``chemprop.models.MPNN`` with a single-task
+            (``n_tasks=1``) predictor head.
         """
-        if self._from_foundation is False:
-            logger.info(
-                "Building ChemProp encoder with random weights "
-                "(from_foundation=False, d_h=%d, depth=%d).",
-                message_hidden_dim,
-                depth,
-            )
-            mp: nn.Module = BondMessagePassing(  # pyright: ignore[reportAbstractUsage]
-                d_h=message_hidden_dim, depth=depth
-            )
-        else:
-            foundation_weights = self._load_foundation_weights()
-            mp = BondMessagePassing(**foundation_weights["hyper_parameters"])  # pyright: ignore[reportAbstractUsage]
-            mp.load_state_dict(foundation_weights["state_dict"])
-
-        agg = MeanAggregation()
-        ffn = RegressionFFN(  # pyright: ignore[reportAbstractUsage]
-            input_dim=cast(BondMessagePassing, mp).output_dim,
-            hidden_dim=ffn_hidden_dim,
-            n_layers=ffn_num_layers,
+        return build_mpnn(
+            from_foundation=self._from_foundation,
+            ffn_hidden_dim=ffn_hidden_dim,
+            ffn_num_layers=ffn_num_layers,
+            message_hidden_dim=message_hidden_dim,
+            depth=depth,
         )
-        return cast(nn.Module, MPNN(message_passing=mp, agg=agg, predictor=ffn))
-
-    def _load_foundation_weights(self) -> dict:
-        """Load pretrained message-passing weights from a named model or local path.
-
-        When ``self._from_foundation == "chemeleon"`` the checkpoint is
-        downloaded from Zenodo if not already cached.  For any other string
-        value it is treated as a local filesystem path.
-
-        Returns
-        -------
-        dict
-            Checkpoint dictionary with ``hyper_parameters`` and
-            ``state_dict`` keys.
-        """
-        if self._from_foundation == "chemeleon":
-            download_chemeleon()
-            ckpt_path = Path().home() / ".chemprop" / "chemeleon_mp.pt"
-        else:
-            ckpt_path = Path(str(self._from_foundation))
-            logger.info("Loading foundation weights from local path: %s", ckpt_path)
-        return cast(dict[str, Any], torch.load(ckpt_path, weights_only=True))
 
     # ------------------------------------------------------------------
     # Freeze / unfreeze schedule
