@@ -151,10 +151,33 @@ class AuxiliaryEncoderConfig:
 
     Attributes
     ----------
+    from_foundation : str or bool
+        Encoder initialisation, forwarded to :func:`moal.model.build_mpnn`.
+        Same semantics as ``ModelConfig.from_foundation``. Default
+        ``"chemeleon"`` shares the main model's foundation checkpoint.
+    ffn_hidden_dim : int
+        Hidden dimension of the multi-task FFN predictor head.
+    ffn_num_layers : int
+        Number of layers in the multi-task FFN predictor head.
+    message_hidden_dim : int
+        Message-passing hidden width (``d_h``) for the random-init encoder.
+        Used only when ``from_foundation=False``.
+    depth : int
+        Number of message-passing steps for the random-init encoder. Used
+        only when ``from_foundation=False``.
     freeze_epochs : int
         Number of warm-up epochs to train only the multi-task FFN head,
         analogous to ``ModelConfig.freeze_epochs`` but scheduled
         independently for the auxiliary encoder.
+    lr : float
+        Learning rate for the multi-task FFN head, and for the message-passing
+        encoder after unfreezing (no separate discriminative rate, unlike the
+        main model's ``mpnn_lr`` / ``ffn_lr`` split).
+    weight_decay : float
+        L2 weight decay applied to all trainable parameters.
+    max_epochs : int
+        Number of pretraining epochs, scheduled independently from the main
+        model's ``TrainerConfig.max_epochs``.
     embedding_dim : int
         Dimensionality of the pooled molecular embedding exposed to the main
         model's concatenation architecture (Phase 2). Ignored by the
@@ -169,7 +192,15 @@ class AuxiliaryEncoderConfig:
         next run automatically.
     """
 
+    from_foundation: str | bool = "chemeleon"
+    ffn_hidden_dim: int = 300
+    ffn_num_layers: int = 2
+    message_hidden_dim: int = 300
+    depth: int = 3
     freeze_epochs: int = 5
+    lr: float = 1e-4
+    weight_decay: float = 0.0
+    max_epochs: int = 30
     embedding_dim: int = 300
     checkpoint_path: str | None = None
 
