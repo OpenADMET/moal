@@ -107,6 +107,7 @@ def build_mpnn(
     message_hidden_dim: int,
     depth: int,
     n_tasks: int = 1,
+    extra_input_dim: int = 0,
 ) -> nn.Module:
     """Construct a ChemProp MPNN, dispatching on ``from_foundation``.
 
@@ -137,6 +138,14 @@ def build_mpnn(
         Number of regression targets predicted per compound. Default is 1
         (the main model's single pEC50 target). The auxiliary encoder passes
         one task per distinct auxiliary readout key it was trained on.
+    extra_input_dim : int, optional
+        Width of an additional per-compound feature vector concatenated onto
+        the pooled graph embedding before the predictor head, via chemprop's
+        native ``MPNN.forward(bmg, X_d=...)`` support. Default is 0 (no
+        concatenation; the main model and auxiliary encoder both use this
+        default). The concatenation architecture (Phase 2) passes the
+        combined width of its observed-readout, readout-mask, auxiliary
+        embedding, and provenance-flag blocks.
 
     Returns
     -------
@@ -173,7 +182,7 @@ def build_mpnn(
     agg = MeanAggregation()
     ffn = RegressionFFN(  # pyright: ignore[reportAbstractUsage]
         n_tasks=n_tasks,
-        input_dim=cast(BondMessagePassing, mp).output_dim,
+        input_dim=cast(BondMessagePassing, mp).output_dim + extra_input_dim,
         hidden_dim=ffn_hidden_dim,
         n_layers=ffn_num_layers,
     )
