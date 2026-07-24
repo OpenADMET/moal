@@ -123,6 +123,58 @@ class ModelConfig:
 
 
 @dataclass(frozen=True)
+class AuxiliaryEncoderConfig:
+    """Auxiliary encoder for the primary-screen readouts in ``LabelRecord.raw_ps_readouts``.
+
+    ``moal plan``-only (see the ``moal simulate`` exclusion in the module
+    docstring reference, issue #36). Off by default: ``moal plan`` behaves
+    exactly as it does today unless this config is explicitly set.
+
+    Shares the main model's ChemProp/CheMeleon backbone construction
+    (``ModelConfig.from_foundation``, mean-pooling readout) rather than a
+    bespoke architecture, so its embeddings live in the same representation
+    space. When ``from_foundation="chemeleon"``, the readout is constrained
+    to mean aggregation to match CheMeleon's own pretraining; the paper's
+    recommended attentive readout is only reachable with
+    ``from_foundation=False``.
+
+    Trains a masked multi-task regression head, one output per distinct key
+    observed across ``raw_ps_readouts`` (e.g. one head per log2FC
+    concentration, plus a head for a direct pIC50 column when present).
+    Compounds missing a given key contribute no gradient to that head.
+
+    Readouts are used as-is, with no per-plate/per-batch normalization step.
+    The design this config implements (issue #36) specified that step as a
+    named, non-optional prerequisite for pretraining; it is not implemented
+    here and is a known, documented limitation until `moal`'s campaign-state
+    schema gains a plate/batch identifier.
+
+    Attributes
+    ----------
+    freeze_epochs : int
+        Number of warm-up epochs to train only the multi-task FFN head,
+        analogous to ``ModelConfig.freeze_epochs`` but scheduled
+        independently for the auxiliary encoder.
+    embedding_dim : int
+        Dimensionality of the pooled molecular embedding exposed to the main
+        model's concatenation architecture (Phase 2). Ignored by the
+        retrained-encoder architecture, which has no separate embedding
+        output at inference.
+    checkpoint_path : str or None
+        Explicit opt-in path to a cached auxiliary-encoder checkpoint. When
+        set, pretraining is skipped and this checkpoint is loaded instead.
+        When None (default), the auxiliary encoder is retrained from scratch
+        on every ``moal plan`` invocation using the current campaign-state
+        CSV's ``raw_ps_readouts``, so newly accumulated readouts improve the
+        next run automatically.
+    """
+
+    freeze_epochs: int = 5
+    embedding_dim: int = 300
+    checkpoint_path: str | None = None
+
+
+@dataclass(frozen=True)
 class AcquisitionConfig:
     """Acquisition function hyper-parameters.
 
@@ -487,6 +539,10 @@ class PipelineConfig:
         Command-specific dataset and I/O settings.
     active_learning_loop : ActiveLearningLoopConfig
         Parameters controlling the active learning iteration loop.
+    auxiliary_encoder : AuxiliaryEncoderConfig or None
+        Optional auxiliary log2FC/pIC50 encoder for ``moal plan`` (issue #36).
+        ``None`` (default) disables the feature entirely; ``moal plan``
+        behaves exactly as it does without this config.
     seed : int
         Global random seed for the campaign.
     """
@@ -498,6 +554,7 @@ class PipelineConfig:
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
     data: DataConfig = field(default_factory=DataConfig)
     active_learning_loop: ActiveLearningLoopConfig = field(default_factory=ActiveLearningLoopConfig)
+    auxiliary_encoder: AuxiliaryEncoderConfig | None = None
 
     seed: int = 42
 
@@ -520,6 +577,7 @@ class PipelineConfig:
         data_raw = raw.get("data", {})
         simulate_raw = data_raw.get("simulate", {})
         pretrain_raw = simulate_raw.pop("pretrain", {}) if isinstance(simulate_raw, dict) else {}
+        auxiliary_encoder_raw = raw.get("auxiliary_encoder", None)
         return cls(
             oracle=OracleConfig(**raw.get("oracle", {})),
             model=ModelConfig(**raw.get("model", {})),
@@ -535,6 +593,11 @@ class PipelineConfig:
                 plan=PlanDataConfig(**data_raw.get("plan", {})),
             ),
             active_learning_loop=ActiveLearningLoopConfig(**raw.get("active_learning_loop", {})),
+            auxiliary_encoder=(
+                AuxiliaryEncoderConfig(**auxiliary_encoder_raw)
+                if auxiliary_encoder_raw is not None
+                else None
+            ),
             seed=raw.get("seed", 42),
         )
 
