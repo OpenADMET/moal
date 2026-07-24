@@ -624,7 +624,7 @@ class TestAnnotateCampaignState:
         """Scores must come from acquisition.score_summary() to ensure the acquisition strategy drives recommendations."""
         acquisition = Mock(spec_set=["score_summary"])
         acquisition.score_summary.return_value = [
-            {"smiles": "CCO", "score_drc": 0.3, "score_ps": 0.7},
+            {"smiles": "CCO", "score_drc": 0.3, "score_ps": 0.7, "embedding_derived": False},
         ]
         df = _state_df({"smiles": "CCO", "relation": "", "value": ""})
         state = parse_campaign_state(

@@ -301,6 +301,21 @@ class AuxiliaryEncoderModule(L.LightningModule):
         )
         self._freeze_encoder()
 
+    @property
+    def embedding_dim(self) -> int:
+        """Width of the backbone's pooled structural embedding.
+
+        Returns
+        -------
+        int
+            The message-passing encoder's native output width (CheMeleon's
+            fixed width, or ``config.message_hidden_dim`` for a random-init
+            encoder) — the row width :meth:`embed_smiles` returns, and the
+            embedding block width the concatenation architecture (Phase 2)
+            needs from :func:`moal.concatenation_model.concatenation_feature_dim`.
+        """
+        return cast(int, cast(Any, self.model).message_passing.output_dim)
+
     # ------------------------------------------------------------------
     # Freeze / unfreeze schedule
     # ------------------------------------------------------------------

@@ -410,6 +410,7 @@ def annotate_campaign_state(
     state: CampaignState,
     predictions: np.ndarray,
     acquisition: CostAwareGreedyAcquisition,
+    provenance: np.ndarray | None = None,
 ) -> pd.DataFrame:
     """Annotate the campaign state DataFrame with acquisition scores.
 
@@ -417,7 +418,7 @@ def annotate_campaign_state(
     ``state.unqueried_rows + state.ps_upgrade_rows`` in that order — the same
     ordering used when calling ``model.predict_smiles``.
 
-    Four columns are appended to a copy of ``df``:
+    Five columns are appended to a copy of ``df``:
 
     - ``ps_score`` — PS exploration score; NaN for non-unqueried rows
     - ``drc_score`` — DRC exploitation score; NaN for training-only rows
@@ -425,6 +426,9 @@ def annotate_campaign_state(
       ``drc_score`` for PS upgrades, NaN for training-only rows
     - ``recommendation`` — ``"ps"`` or ``"drc"`` for inference targets; NaN for
       training-only rows
+    - ``embedding_derived`` — True where ``provenance`` flagged the prediction
+      as embedding-derived (see ``provenance`` below); NaN for training-only
+      rows; always False when ``provenance`` is None
 
     Parameters
     ----------
@@ -436,11 +440,17 @@ def annotate_campaign_state(
         Model pEC50 predictions aligned with unqueried + ps_upgrade rows.
     acquisition : CostAwareGreedyAcquisition
         Acquisition function used to compute per-compound scores.
+    provenance : np.ndarray, optional
+        Boolean (or 0/1 float) array aligned with ``predictions``, forwarded
+        to ``acquisition.score_summary`` so a discount (issue #36 Phase 3)
+        applies to embedding-derived predictions from the concatenation
+        architecture. ``None`` (default) applies no discount, matching
+        current behavior.
 
     Returns
     -------
     pd.DataFrame
-        Annotated copy with four new columns appended.
+        Annotated copy with five new columns appended.
     """
     predictions = np.asarray(predictions, dtype=np.float32)
     n_inference = len(state.unqueried_rows) + len(state.ps_upgrade_rows)
@@ -454,21 +464,32 @@ def annotate_campaign_state(
             "predictions must contain only finite values; NaN or inf values "
             "produce undefined acquisition scores."
         )
+    provenance_arr = None if provenance is None else np.asarray(provenance)
+    if provenance_arr is not None and len(provenance_arr) != n_inference:
+        raise ValueError(
+            f"provenance length ({len(provenance_arr)}) must match the number of "
+            f"inference targets ({n_inference})."
+        )
 
     result = df.copy()
     result["ps_score"] = np.nan
     result["drc_score"] = np.nan
     result["overall_score"] = np.nan
     result["recommendation"] = None  # Object dtype so string values can be assigned
+    result["embedding_derived"] = None  # Object dtype so bool values can be assigned
 
     n_unqueried = len(state.unqueried_rows)
     unqueried_preds = predictions[:n_unqueried]
     upgrade_preds = predictions[n_unqueried:]
+    unqueried_provenance = None if provenance_arr is None else provenance_arr[:n_unqueried]
+    upgrade_provenance = None if provenance_arr is None else provenance_arr[n_unqueried:]
 
     # Score unqueried compounds — both PS and DRC are valid next actions
     if state.unqueried_rows:
         unqueried_canonical = [smi for _, smi in state.unqueried_rows]
-        summaries = acquisition.score_summary(unqueried_canonical, unqueried_preds)
+        summaries = acquisition.score_summary(
+            unqueried_canonical, unqueried_preds, provenance=unqueried_provenance
+        )
         for (row_idx, _), summary in zip(state.unqueried_rows, summaries, strict=False):
             drc = float(summary["score_drc"])
             ps = float(summary["score_ps"])
@@ -478,16 +499,20 @@ def annotate_campaign_state(
             result.at[row_idx, "drc_score"] = drc
             result.at[row_idx, "overall_score"] = overall
             result.at[row_idx, "recommendation"] = rec
+            result.at[row_idx, "embedding_derived"] = summary["embedding_derived"]
 
     # Score PS hits — only DRC upgrade is a valid next action; ps_score stays NaN
     if state.ps_upgrade_rows:
         upgrade_canonical = [smi for _, smi in state.ps_upgrade_rows]
-        summaries = acquisition.score_summary(upgrade_canonical, upgrade_preds)
+        summaries = acquisition.score_summary(
+            upgrade_canonical, upgrade_preds, provenance=upgrade_provenance
+        )
         for (row_idx, _), summary in zip(state.ps_upgrade_rows, summaries, strict=False):
             drc = float(summary["score_drc"])
             result.at[row_idx, "drc_score"] = drc
             result.at[row_idx, "overall_score"] = drc
             result.at[row_idx, "recommendation"] = "drc"
+            result.at[row_idx, "embedding_derived"] = summary["embedding_derived"]
 
     return result
 

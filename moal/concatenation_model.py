@@ -132,8 +132,7 @@ def build_concatenation_features(
             embed_indices.append(i)
             embed_smiles.append(canonical_smiles[i])
 
-    embedding_dim = cast(int, cast(Any, aux_encoder.model).message_passing.output_dim)
-    embeddings = np.zeros((n, embedding_dim), dtype=np.float32)
+    embeddings = np.zeros((n, aux_encoder.embedding_dim), dtype=np.float32)
     if embed_smiles:
         computed = aux_encoder.embed_smiles(embed_smiles, batch_size=batch_size)
         for idx, row in zip(embed_indices, computed, strict=True):
