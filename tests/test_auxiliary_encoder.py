@@ -118,6 +118,15 @@ class TestAuxiliaryEncoderModule:
         with pytest.raises(ValueError, match="task_names"):
             AuxiliaryEncoderModule(task_names=[], config=_fast_config())
 
+    def test_embed_smiles_returns_backbone_width_aligned_with_input(self):
+        """embed_smiles must return one embedding row per input SMILES, at the backbone's native width."""
+        config = _fast_config(message_hidden_dim=24)
+        module = AuxiliaryEncoderModule(task_names=["log2fc_1um"], config=config)
+
+        embeddings = module.embed_smiles(["CCO", "CCN", "CCC"])
+
+        assert embeddings.shape == (3, 24)
+
 
 class TestPretrainAuxiliaryEncoder:
     """Tests for pretrain_auxiliary_encoder: training end-to-end and checkpoint opt-in."""

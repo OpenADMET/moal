@@ -18,9 +18,12 @@ from pathlib import Path
 from typing import Any, cast
 
 import lightning as L
+import numpy as np
 import torch
 import torch.nn as nn
 from chemprop.data import BatchMolGraph, MoleculeDatapoint, MoleculeDataset
+from chemprop.data.dataloader import build_dataloader
+from chemprop.models import MPNN
 from torch import Tensor
 from torch.optim import Adam
 from torch.utils.data import DataLoader, Dataset, random_split
@@ -426,6 +429,52 @@ class AuxiliaryEncoderModule(L.LightningModule):
                 }
             )
         return Adam(param_groups)
+
+    # ------------------------------------------------------------------
+    # Inference helpers
+    # ------------------------------------------------------------------
+
+    @torch.no_grad()
+    def embed_smiles(self, smiles_list: list[str], batch_size: int = 256) -> np.ndarray:
+        """Return pooled structural embeddings (pre-predictor) for a list of SMILES.
+
+        Used by the concatenation architecture (Phase 2) to supply a
+        structural fallback for compounds with no observed auxiliary
+        readout. Uses ``chemprop.models.MPNN.fingerprint``, which applies
+        message-passing, mean pooling, and batch-norm but stops short of the
+        multi-task predictor head.
+
+        Parameters
+        ----------
+        smiles_list : list[str]
+            **Must be RDKit-canonical, salt-stripped SMILES**, matching
+            :meth:`moal.model.ChemPropLightningModule.predict_smiles`'s
+            contract.
+        batch_size : int, optional
+            Number of molecules processed per forward pass. Default is 256.
+
+        Returns
+        -------
+        np.ndarray
+            Array of shape ``(N, embedding_dim)``, aligned with
+            ``smiles_list``. ``embedding_dim`` is the backbone's native
+            output width (CheMeleon's fixed width, or ``message_hidden_dim``
+            for a random-init encoder), not
+            ``AuxiliaryEncoderConfig.embedding_dim``.
+        """
+        dataset = MoleculeDataset([MoleculeDatapoint.from_smi(s) for s in smiles_list])  # pyright: ignore[reportArgumentType]
+        dataloader = build_dataloader(
+            dataset, batch_size=batch_size, shuffle=False, drop_last=False
+        )
+
+        all_embeddings = []
+        with torch.inference_mode():
+            for batch in dataloader:
+                batch.bmg.to(self.device)
+                embedding = cast(MPNN, self.model).fingerprint(batch.bmg)
+                all_embeddings.append(embedding.cpu().numpy())
+
+        return np.concatenate(all_embeddings, axis=0).astype(np.float32)
 
 
 def pretrain_auxiliary_encoder(
