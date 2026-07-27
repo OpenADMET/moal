@@ -359,7 +359,7 @@ def annotate_campaign_state(
     ``state.unqueried_rows + state.ps_upgrade_rows`` in that order — the same
     ordering used when calling ``model.predict_smiles``.
 
-    Four columns are appended to a copy of ``df``:
+    Five columns are appended to a copy of ``df``:
 
     - ``ps_score`` — PS exploration score; NaN for non-unqueried rows
     - ``drc_score`` — DRC exploitation score; NaN for training-only rows
@@ -367,6 +367,8 @@ def annotate_campaign_state(
       ``drc_score`` for PS upgrades, NaN for training-only rows
     - ``recommendation`` — ``"ps"`` or ``"drc"`` for inference targets; NaN for
       training-only rows
+    - ``predicted_pec50`` — the raw model prediction from ``predictions``,
+      unmodified by acquisition scoring; NaN for training-only rows
 
     Parameters
     ----------
@@ -382,7 +384,7 @@ def annotate_campaign_state(
     Returns
     -------
     pd.DataFrame
-        Annotated copy with four new columns appended.
+        Annotated copy with five new columns appended.
     """
     predictions = np.asarray(predictions, dtype=np.float32)
     n_inference = len(state.unqueried_rows) + len(state.ps_upgrade_rows)
@@ -402,6 +404,7 @@ def annotate_campaign_state(
     result["drc_score"] = np.nan
     result["overall_score"] = np.nan
     result["recommendation"] = None  # Object dtype so string values can be assigned
+    result["predicted_pec50"] = np.nan
 
     n_unqueried = len(state.unqueried_rows)
     unqueried_preds = predictions[:n_unqueried]
@@ -411,7 +414,9 @@ def annotate_campaign_state(
     if state.unqueried_rows:
         unqueried_canonical = [smi for _, smi in state.unqueried_rows]
         summaries = acquisition.score_summary(unqueried_canonical, unqueried_preds)
-        for (row_idx, _), summary in zip(state.unqueried_rows, summaries, strict=False):
+        for (row_idx, _), summary, pred in zip(
+            state.unqueried_rows, summaries, unqueried_preds, strict=False
+        ):
             drc = float(summary["score_drc"])
             ps = float(summary["score_ps"])
             overall = max(drc, ps)
@@ -420,16 +425,20 @@ def annotate_campaign_state(
             result.at[row_idx, "drc_score"] = drc
             result.at[row_idx, "overall_score"] = overall
             result.at[row_idx, "recommendation"] = rec
+            result.at[row_idx, "predicted_pec50"] = float(pred)
 
     # Score PS hits — only DRC upgrade is a valid next action; ps_score stays NaN
     if state.ps_upgrade_rows:
         upgrade_canonical = [smi for _, smi in state.ps_upgrade_rows]
         summaries = acquisition.score_summary(upgrade_canonical, upgrade_preds)
-        for (row_idx, _), summary in zip(state.ps_upgrade_rows, summaries, strict=False):
+        for (row_idx, _), summary, pred in zip(
+            state.ps_upgrade_rows, summaries, upgrade_preds, strict=False
+        ):
             drc = float(summary["score_drc"])
             result.at[row_idx, "drc_score"] = drc
             result.at[row_idx, "overall_score"] = drc
             result.at[row_idx, "recommendation"] = "drc"
+            result.at[row_idx, "predicted_pec50"] = float(pred)
 
     return result
 
