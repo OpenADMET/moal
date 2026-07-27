@@ -429,6 +429,8 @@ def annotate_campaign_state(
     - ``embedding_derived`` — True where ``provenance`` flagged the prediction
       as embedding-derived (see ``provenance`` below); NaN for training-only
       rows; always False when ``provenance`` is None
+    - ``predicted_pec50`` — the raw model prediction from ``predictions``,
+      unmodified by acquisition scoring; NaN for training-only rows
 
     Parameters
     ----------
@@ -477,6 +479,7 @@ def annotate_campaign_state(
     result["overall_score"] = np.nan
     result["recommendation"] = None  # Object dtype so string values can be assigned
     result["embedding_derived"] = None  # Object dtype so bool values can be assigned
+    result["predicted_pec50"] = np.nan
 
     n_unqueried = len(state.unqueried_rows)
     unqueried_preds = predictions[:n_unqueried]
@@ -490,7 +493,9 @@ def annotate_campaign_state(
         summaries = acquisition.score_summary(
             unqueried_canonical, unqueried_preds, provenance=unqueried_provenance
         )
-        for (row_idx, _), summary in zip(state.unqueried_rows, summaries, strict=False):
+        for (row_idx, _), summary, pred in zip(
+            state.unqueried_rows, summaries, unqueried_preds, strict=False
+        ):
             drc = float(summary["score_drc"])
             ps = float(summary["score_ps"])
             overall = max(drc, ps)
@@ -500,6 +505,7 @@ def annotate_campaign_state(
             result.at[row_idx, "overall_score"] = overall
             result.at[row_idx, "recommendation"] = rec
             result.at[row_idx, "embedding_derived"] = summary["embedding_derived"]
+            result.at[row_idx, "predicted_pec50"] = float(pred)
 
     # Score PS hits — only DRC upgrade is a valid next action; ps_score stays NaN
     if state.ps_upgrade_rows:
@@ -507,12 +513,15 @@ def annotate_campaign_state(
         summaries = acquisition.score_summary(
             upgrade_canonical, upgrade_preds, provenance=upgrade_provenance
         )
-        for (row_idx, _), summary in zip(state.ps_upgrade_rows, summaries, strict=False):
+        for (row_idx, _), summary, pred in zip(
+            state.ps_upgrade_rows, summaries, upgrade_preds, strict=False
+        ):
             drc = float(summary["score_drc"])
             result.at[row_idx, "drc_score"] = drc
             result.at[row_idx, "overall_score"] = drc
             result.at[row_idx, "recommendation"] = "drc"
             result.at[row_idx, "embedding_derived"] = summary["embedding_derived"]
+            result.at[row_idx, "predicted_pec50"] = float(pred)
 
     return result
 
