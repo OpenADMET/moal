@@ -851,6 +851,9 @@ def _build_concatenation_model(
     cfg : PipelineConfig
         Active campaign configuration. Reuses ``cfg.model``'s backbone and
         optimization hyperparameters, same as :func:`_build_plan_model`.
+        ``cfg.model.w_drc``/``w_ps`` are not forwarded: the concatenation
+        architecture always trains on DRC records only (see the ``plan``
+        command), so that fidelity weighting has nothing to differentiate.
     aux_encoder : AuxiliaryEncoderModule
         Pretrained auxiliary encoder; supplies ``task_names`` and
         ``embedding_dim`` to size the concatenation feature width.
@@ -859,10 +862,17 @@ def _build_concatenation_model(
     -------
     ConcatenationChemPropLightningModule
         Configured model ready for ``refit()`` and ``predict_smiles()``.
+        ``use_observed_readout`` is fixed here at construction (from
+        ``cfg.auxiliary_model.use_observed_readout``) rather than passed
+        separately to each call, so training and inference routing cannot
+        drift apart.
     """
+    if cfg.auxiliary_model is None:
+        raise ValueError("_build_concatenation_model requires cfg.auxiliary_model to be set")
     feature_dim = concatenation_feature_dim(len(aux_encoder.task_names), aux_encoder.embedding_dim)
     return ConcatenationChemPropLightningModule(
         concat_feature_dim=feature_dim,
+        use_observed_readout=cfg.auxiliary_model.use_observed_readout,
         ffn_hidden_dim=cfg.model.ffn_hidden_dim,
         ffn_num_layers=cfg.model.ffn_num_layers,
         message_hidden_dim=cfg.model.message_hidden_dim,
@@ -873,8 +883,6 @@ def _build_concatenation_model(
         mpnn_weight_decay=cfg.model.mpnn_weight_decay,
         ffn_weight_decay=cfg.model.ffn_weight_decay,
         sigma=cfg.model.sigma,
-        w_drc=cfg.model.w_drc,
-        w_ps=cfg.model.w_ps,
         learnable_sigma=cfg.model.learnable_sigma,
         from_foundation=cfg.model.from_foundation,
     )

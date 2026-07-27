@@ -18,7 +18,7 @@ from moal.concatenation_model import (
     build_concatenation_features,
     concatenation_feature_dim,
 )
-from moal.config import AuxiliaryEncoderConfig
+from moal.config import AuxiliaryModelConfig
 from moal.types import CensoringType, LabelRecord, QueryType
 
 _EMBEDDING_DIM = 16
@@ -27,7 +27,7 @@ _EMBEDDING_DIM = 16
 @pytest.fixture
 def aux_encoder() -> AuxiliaryEncoderModule:
     """Small random-init auxiliary encoder with two tasks."""
-    config = AuxiliaryEncoderConfig(
+    config = AuxiliaryModelConfig(
         from_foundation=False,
         message_hidden_dim=_EMBEDDING_DIM,
         ffn_hidden_dim=16,
@@ -80,8 +80,8 @@ class TestConcatenationFeatureDim:
 class TestBuildConcatenationFeatures:
     """Tests for build_concatenation_features: observed vs embedding routing and shape."""
 
-    def test_observed_readout_routes_to_readout_block_not_embedding(self, aux_encoder):
-        """A compound with a non-empty readout dict must populate the readout/mask block and leave the embedding block zero, with flag=0."""
+    def test_observed_readout_also_gets_embedding(self, aux_encoder):
+        """A compound with a readout must populate readout/mask AND the embedding block, with flag=1."""
         features = build_concatenation_features(["CCO"], [{"log2fc_1um": 2.5}], aux_encoder)
         n_tasks = 2
 
@@ -92,11 +92,11 @@ class TestBuildConcatenationFeatures:
 
         assert readout_block[0] == 2.5
         assert list(mask_block) == [1.0, 0.0]
-        assert np.all(embedding_block == 0.0)
-        assert flag == 0.0
+        assert not np.all(embedding_block == 0.0)
+        assert flag == 1.0
 
-    def test_missing_readout_routes_to_embedding_block(self, aux_encoder):
-        """A compound with an empty readout dict must leave the readout/mask block zero and populate the embedding block, with flag=1."""
+    def test_missing_readout_uses_embedding_only(self, aux_encoder):
+        """A compound with an empty readout dict must leave the readout/mask block zero, populate the embedding block, and flag=0."""
         features = build_concatenation_features(["CCO"], [{}], aux_encoder)
         n_tasks = 2
 
@@ -106,7 +106,24 @@ class TestBuildConcatenationFeatures:
 
         assert np.all(readout_mask_block == 0.0)
         assert not np.all(embedding_block == 0.0)
-        assert flag == 1.0
+        assert flag == 0.0
+
+    def test_use_observed_readout_false_zeroes_readout_block_but_keeps_embedding(self, aux_encoder):
+        """With use_observed_readout=False, every compound is embedding-only regardless of its own readout data."""
+        with_readout = build_concatenation_features(
+            ["CCO"], [{"log2fc_1um": 2.5}], aux_encoder, use_observed_readout=False
+        )
+        without_readout = build_concatenation_features(
+            ["CCO"], [{}], aux_encoder, use_observed_readout=False
+        )
+        n_tasks = 2
+
+        assert np.all(with_readout[0, : 2 * n_tasks] == 0.0)
+        assert with_readout[0, -1] == 0.0
+        np.testing.assert_allclose(
+            with_readout[0, 2 * n_tasks : 2 * n_tasks + _EMBEDDING_DIM],
+            without_readout[0, 2 * n_tasks : 2 * n_tasks + _EMBEDDING_DIM],
+        )
 
     def test_output_shape_matches_concatenation_feature_dim(self, aux_encoder):
         """Output width must equal concatenation_feature_dim(n_tasks, embedding_dim)."""
@@ -167,3 +184,21 @@ class TestConcatenationChemPropLightningModule:
         preds = model.predict_smiles(smiles, readouts, aux_encoder, batch_size=2)
 
         assert preds.shape == (5,)
+
+    def test_refit_rejects_non_drc_records(self, aux_encoder):
+        """refit() must reject any record whose fidelity is not DOSE_RESPONSE."""
+        feat_dim = concatenation_feature_dim(2, _EMBEDDING_DIM)
+        model = _fast_model(feat_dim)
+        ps_record = LabelRecord(
+            smiles="CCO",
+            canonical_smiles="CCO",
+            value=5.0,
+            upper_bound=11.0,
+            censoring_type=CensoringType.INTERVAL,
+            fidelity=QueryType.PRIMARY_SCREEN,
+            cost=1.0,
+            iteration=0,
+        )
+
+        with pytest.raises(ValueError, match="DOSE_RESPONSE"):
+            model.refit([ps_record], aux_encoder=aux_encoder, max_epochs=1)

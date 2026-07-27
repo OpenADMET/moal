@@ -14,6 +14,7 @@ from click.testing import CliRunner
 import moal.cli as cli
 from moal.cli import main
 from moal.config import PipelineConfig
+from moal.types import QueryType
 
 
 def _result_text(result) -> str:
@@ -397,7 +398,7 @@ class TestPlanCommand:
             "  max_epochs: 1\n"
             "dashboard:\n"
             "  enabled: false\n"
-            "auxiliary_encoder:\n"
+            "auxiliary_model:\n"
             "  freeze_epochs: 0\n"
         )
 
@@ -425,6 +426,14 @@ class TestPlanCommand:
         pretrain_mock.assert_called_once()
         concat_model.refit.assert_called_once()
         assert concat_model.refit.call_args.kwargs["aux_encoder"] is fake_aux_encoder
+
+        # The main model trains on DRC records only; the PS record (CCO, >=) must be
+        # excluded even though pretrain_auxiliary_encoder saw it via fit_records
+        refit_records = concat_model.refit.call_args.args[0]
+        assert len(refit_records) == 1
+        assert refit_records[0].fidelity == QueryType.DOSE_RESPONSE
+        pretrain_records = pretrain_mock.call_args.args[0]
+        assert any(rec.fidelity == QueryType.PRIMARY_SCREEN for rec in pretrain_records)
 
         # predict_smiles must receive per-compound readouts: empty for unqueried,
         # the observed reading for the PS-upgrade candidate

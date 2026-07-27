@@ -38,7 +38,7 @@ from moal.auxiliary_encoder import AuxiliaryEncoderModule
 from moal.loss import CensoredRegressionLoss
 from moal.model import _validate_from_foundation, build_mpnn
 from moal.planning import normalize_record_weights
-from moal.types import LabelRecord
+from moal.types import LabelRecord, QueryType
 
 logger = logging.getLogger(__name__)
 
@@ -68,17 +68,26 @@ def build_concatenation_features(
     canonical_smiles: list[str],
     readouts: list[dict[str, float]],
     aux_encoder: AuxiliaryEncoderModule,
+    *,
+    use_observed_readout: bool = True,
     batch_size: int = 256,
 ) -> np.ndarray:
     """Build the per-compound concatenation feature matrix.
 
-    For each compound: if ``readouts[i]`` is non-empty, the observed-readout
-    block is populated (per-task values where present, zero elsewhere) and
-    the mask block marks which tasks were actually observed; the embedding
-    block stays zero and the provenance flag is 0. If ``readouts[i]`` is
-    empty, the observed-readout and mask blocks stay zero, the embedding
-    block holds the auxiliary encoder's structural embedding for that
-    compound, and the provenance flag is 1.
+    The auxiliary encoder's structural embedding is always computed and
+    included, for every compound, regardless of whether it has an observed
+    readout — this keeps the main model's embedding-consuming input pathway
+    exercised by every training row, so training and inference always share
+    the same input distribution shape (a compound with an observed readout
+    at training time looks input-wise like any other compound, differing
+    only in whether its readout block is also populated).
+
+    When ``use_observed_readout`` is True and ``readouts[i]`` is non-empty,
+    the observed-readout block is additionally populated (per-task values
+    where present, zero elsewhere), the mask block marks which tasks were
+    observed, and the readout-used flag is 1. Otherwise the readout and mask
+    blocks stay zero and the flag is 0 — the compound is scored from its
+    structural embedding alone.
 
     Parameters
     ----------
@@ -89,10 +98,15 @@ def build_concatenation_features(
         with ``canonical_smiles``. An empty dict means "never PS-screened".
     aux_encoder : AuxiliaryEncoderModule
         Pretrained auxiliary encoder; supplies both ``task_names`` (readout
-        key order) and the structural embedding fallback.
+        key order) and the structural embedding.
+    use_observed_readout : bool, optional
+        When True (default), compounds with a non-empty readout also get
+        their raw value concatenated alongside the embedding. When False,
+        the readout and mask blocks are always zero and every compound is
+        scored from its embedding alone, matching
+        ``AuxiliaryModelConfig.use_observed_readout``.
     batch_size : int, optional
-        Batch size for the embedding forward pass over compounds lacking
-        readouts. Default is 256.
+        Batch size for the embedding forward pass. Default is 256.
 
     Returns
     -------
@@ -117,28 +131,21 @@ def build_concatenation_features(
 
     readout_vec = np.zeros((n, n_tasks), dtype=np.float32)
     readout_mask = np.zeros((n, n_tasks), dtype=np.float32)
-    embedding_used = np.zeros((n, 1), dtype=np.float32)
+    readout_used = np.zeros((n, 1), dtype=np.float32)
 
-    embed_indices: list[int] = []
-    embed_smiles: list[str] = []
-    for i, readout in enumerate(readouts):
-        if readout:
+    if use_observed_readout:
+        for i, readout in enumerate(readouts):
+            if not readout:
+                continue
             for j, name in enumerate(task_names):
                 if name in readout:
                     readout_vec[i, j] = readout[name]
                     readout_mask[i, j] = 1.0
-        else:
-            embedding_used[i, 0] = 1.0
-            embed_indices.append(i)
-            embed_smiles.append(canonical_smiles[i])
+            readout_used[i, 0] = 1.0
 
-    embeddings = np.zeros((n, aux_encoder.embedding_dim), dtype=np.float32)
-    if embed_smiles:
-        computed = aux_encoder.embed_smiles(embed_smiles, batch_size=batch_size)
-        for idx, row in zip(embed_indices, computed, strict=True):
-            embeddings[idx] = row
+    embeddings = aux_encoder.embed_smiles(canonical_smiles, batch_size=batch_size)
 
-    return np.concatenate([readout_vec, readout_mask, embeddings, embedding_used], axis=1)
+    return np.concatenate([readout_vec, readout_mask, embeddings, readout_used], axis=1)
 
 
 class _ConcatenatedDataset(Dataset):
@@ -224,15 +231,32 @@ class ConcatenationChemPropLightningModule(L.LightningModule):
         Width of the concatenation feature vector (see
         :func:`concatenation_feature_dim`); determines the predictor head's
         input width alongside the backbone's own pooled-embedding width.
+    use_observed_readout : bool, optional
+        Fixed at construction and used by both :meth:`refit` and
+        :meth:`predict_smiles` — this determines the input distribution the
+        model's weights are actually fit against (e.g. when False, the
+        readout/mask input dimensions are always exactly zero throughout
+        training, so their weights never receive gradient signal; feeding
+        them nonzero values at inference would exercise untrained weights).
+        Deliberately not a per-call parameter on either method, so
+        training-time and inference-time routing cannot drift apart. Default
+        is True.
     ffn_hidden_dim, ffn_num_layers, message_hidden_dim, depth, freeze_epochs,
-    mpnn_lr, ffn_lr, mpnn_weight_decay, ffn_weight_decay, sigma, w_drc, w_ps,
+    mpnn_lr, ffn_lr, mpnn_weight_decay, ffn_weight_decay, sigma,
     learnable_sigma, from_foundation
-        See :class:`moal.model.ChemPropLightningModule`.
+        See :class:`moal.model.ChemPropLightningModule`. Note ``w_drc``/``w_ps``
+        are deliberately absent here: :meth:`refit` requires every record to
+        be DOSE_RESPONSE (see below), so the DRC-vs-PS fidelity weighting
+        that parameter pair controls in
+        :class:`moal.model.ChemPropLightningModule` has nothing to
+        differentiate in this class and would be a redundant, no-op scalar
+        confounded with ``sigma``.
     """
 
     def __init__(
         self,
         concat_feature_dim: int,
+        use_observed_readout: bool = True,
         ffn_hidden_dim: int = 300,
         ffn_num_layers: int = 2,
         message_hidden_dim: int = 300,
@@ -243,8 +267,6 @@ class ConcatenationChemPropLightningModule(L.LightningModule):
         mpnn_weight_decay: float = 0.0,
         ffn_weight_decay: float = 0.0,
         sigma: float = 0.5,
-        w_drc: float = 1.0,
-        w_ps: float = 0.3,
         learnable_sigma: bool = False,
         from_foundation: str | bool = "chemeleon",
     ) -> None:
@@ -252,6 +274,7 @@ class ConcatenationChemPropLightningModule(L.LightningModule):
         _validate_from_foundation(from_foundation)
         self._from_foundation = from_foundation
         self.concat_feature_dim = concat_feature_dim
+        self.use_observed_readout = use_observed_readout
         self.save_hyperparameters()
 
         self.freeze_epochs = freeze_epochs
@@ -268,8 +291,12 @@ class ConcatenationChemPropLightningModule(L.LightningModule):
             "val_ps": [],
         }
 
+        # w_drc/w_ps are fixed equal (not exposed as parameters): refit()
+        # requires every record to be DOSE_RESPONSE, so the PS branch never
+        # fires and the two weights would otherwise be a redundant, no-op
+        # scalar confounded with sigma.
         self.loss_fn = CensoredRegressionLoss(
-            sigma=sigma, w_drc=w_drc, w_ps=w_ps, learnable_sigma=learnable_sigma
+            sigma=sigma, w_drc=1.0, w_ps=1.0, learnable_sigma=learnable_sigma
         )
 
         self.model = build_mpnn(
@@ -461,13 +488,11 @@ class ConcatenationChemPropLightningModule(L.LightningModule):
             **Must be RDKit-canonical, salt-stripped SMILES**; see
             :meth:`moal.model.ChemPropLightningModule.predict_smiles`.
         readouts : list[dict[str, float]]
-            Per-compound observed readouts, aligned with ``smiles_list``; an
-            empty dict routes that compound through the auxiliary encoder's
-            structural embedding. Forwarded to
-            :func:`build_concatenation_features`.
+            Per-compound observed readouts, aligned with ``smiles_list``.
+            Forwarded to :func:`build_concatenation_features`.
         aux_encoder : AuxiliaryEncoderModule
             Pretrained auxiliary encoder supplying both the readout-key
-            order and the structural-embedding fallback.
+            order and the structural embedding.
         batch_size : int, optional
             Number of molecules processed per forward pass. Default is 256.
 
@@ -478,7 +503,11 @@ class ConcatenationChemPropLightningModule(L.LightningModule):
             ``smiles_list``.
         """
         features = build_concatenation_features(
-            smiles_list, readouts, aux_encoder, batch_size=batch_size
+            smiles_list,
+            readouts,
+            aux_encoder,
+            use_observed_readout=self.use_observed_readout,
+            batch_size=batch_size,
         )
         x_d = torch.as_tensor(features, dtype=torch.float32)
 
@@ -541,12 +570,29 @@ class ConcatenationChemPropLightningModule(L.LightningModule):
         -------
         ConcatenationChemPropLightningModule
             self (for chaining).
+
+        Raises
+        ------
+        ValueError
+            If any record's fidelity is not ``QueryType.DOSE_RESPONSE``. The
+            loss weighting is fixed equal for DRC/PS (see class docstring),
+            so PS records would be silently mis-weighted rather than
+            differentiated; callers should train the concatenation
+            architecture on DRC records only.
         """
+        non_drc = [rec for rec in records if rec.fidelity != QueryType.DOSE_RESPONSE]
+        if non_drc:
+            raise ValueError(
+                f"ConcatenationChemPropLightningModule.refit() received {len(non_drc)} "
+                "non-DOSE_RESPONSE record(s); this class trains on DRC records only "
+                "(see class docstring for why PS/DRC loss weighting is unsupported here)."
+            )
         records = normalize_record_weights(records)
         features = build_concatenation_features(
             [rec.canonical_smiles for rec in records],
             [rec.raw_ps_readouts for rec in records],
             aux_encoder,
+            use_observed_readout=self.use_observed_readout,
         )
         dm = _ConcatenatedDataModule(records, features, **(datamodule_kwargs or {}))
         dm.setup()
