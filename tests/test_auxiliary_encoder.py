@@ -216,9 +216,9 @@ class TestAuxiliaryDataModule:
         assert mask.dtype == torch.bool
 
     def test_too_few_records_uses_all_for_training(self):
-        """When the record pool is too small for a val split, val_dataloader must return None."""
+        """When the record pool is too small for a val split, val_dataloader must be empty."""
         records = _records_with_readouts()[:1]
         dm = AuxiliaryDataModule(records, ["log2fc_1um"], val_fraction=0.1)
         dm.setup()
 
-        assert dm.val_dataloader() is None
+        assert len(dm.val_dataloader()) == 0
