@@ -86,7 +86,7 @@ class LabelRecord:
         keyed by source column name, independent of the LEFT/INTERVAL
         censoring derived from ``value`` against ``oracle.ps_threshold``.
         Retained on the surviving DRC record after a PS-to-DRC upgrade so the
-        auxiliary encoder (see ``AuxiliaryEncoderConfig``) can still use it.
+        auxiliary encoder (see ``AuxiliaryModelConfig``) can still use it.
         Empty when the compound has never been PS-screened.
     """
 

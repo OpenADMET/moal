@@ -19,6 +19,7 @@ import click
 import lightning as L
 import numpy as np
 import pandas as pd
+from lightning.pytorch.loggers import CSVLogger
 from rich.console import Console
 from rich.progress import (
     BarColumn,
@@ -403,28 +404,59 @@ def plan(config: Path, output_dir: Path | None, verbose: bool) -> None:
                     smi for _, smi in state.ps_upgrade_rows
                 ]
 
-                if cfg.auxiliary_encoder is not None:
+                if cfg.auxiliary_model is not None:
                     # Concatenation architecture (issue #36 Phase 2): pretrain the
-                    # auxiliary encoder on this run's raw_ps_readouts, then train
-                    # the main model with its structural embedding concatenated in
-                    # for compounds that were never PS-screened.
+                    # auxiliary encoder on this run's raw_ps_readouts (full PS + DRC
+                    # pool), then train the main model on DRC records only. PS records
+                    # have already contributed what they can via the frozen auxiliary
+                    # embedding/readout; re-supervising the main Tobit loss with PS's
+                    # noisier LEFT/INTERVAL labels on top of that would both duplicate
+                    # signal already distilled into the auxiliary encoder and dilute
+                    # the embedding-path training examples (the only ones representative
+                    # of never-screened inference targets) beneath the much larger
+                    # observed-readout-path population.
                     progress.update(
                         task, description="[yellow]Pretraining auxiliary encoder[/yellow]"
                     )
+                    aux_logger = CSVLogger(save_dir=str(out_dir), name="aux_encoder_logs")
                     try:
-                        aux_encoder = pretrain_auxiliary_encoder(fit_records, cfg.auxiliary_encoder)
+                        aux_encoder = pretrain_auxiliary_encoder(
+                            fit_records,
+                            cfg.auxiliary_model,
+                            trainer_kwargs={
+                                **cfg.auxiliary_trainer.to_dict(),
+                                "logger": aux_logger,
+                            },
+                            datamodule_kwargs=cfg.auxiliary_trainer.to_datamodule_kwargs(),
+                        )
                     except ValueError as exc:
                         raise click.ClickException(str(exc)) from exc
+                    logger.info("Auxiliary encoder loss curves written to %s", aux_logger.log_dir)
 
-                    progress.update(task, description=retraining_description)
+                    drc_records = [
+                        rec for rec in fit_records if rec.fidelity == QueryType.DOSE_RESPONSE
+                    ]
+                    if not drc_records:
+                        raise click.ClickException(
+                            "No DRC records available to train the main model; the "
+                            "concatenation architecture requires at least one DRC-labeled "
+                            "compound after auxiliary encoder pretraining."
+                        )
+                    concat_description = (
+                        f"[yellow]Training model[/yellow] — {len(drc_records)} DRC records "
+                        "(PS records used only for auxiliary encoder pretraining)"
+                    )
+                    progress.update(task, description=concat_description)
                     model = _build_concatenation_model(cfg, aux_encoder)
+                    main_logger = CSVLogger(save_dir=str(out_dir), name="main_model_logs")
                     model.refit(
-                        fit_records,
+                        drc_records,
                         aux_encoder=aux_encoder,
-                        trainer_kwargs=cfg.trainer.to_dict(),
+                        trainer_kwargs={**cfg.trainer.to_dict(), "logger": main_logger},
                         datamodule_kwargs=cfg.trainer.to_datamodule_kwargs(),
                         output_dir=out_dir,
                     )
+                    logger.info("Main model loss curves written to %s", main_logger.log_dir)
                     progress.advance(task)
 
                     progress.update(task, description=scoring_description)

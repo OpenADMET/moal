@@ -123,8 +123,8 @@ class ModelConfig:
 
 
 @dataclass(frozen=True)
-class AuxiliaryEncoderConfig:
-    """Auxiliary encoder for the primary-screen readouts in ``LabelRecord.raw_ps_readouts``.
+class AuxiliaryModelConfig:
+    """Auxiliary encoder architecture for the ``LabelRecord.raw_ps_readouts`` signal.
 
     ``moal plan``-only (see the ``moal simulate`` exclusion in the module
     docstring reference, issue #36). Off by default: ``moal plan`` behaves
@@ -175,9 +175,6 @@ class AuxiliaryEncoderConfig:
         main model's ``mpnn_lr`` / ``ffn_lr`` split).
     weight_decay : float
         L2 weight decay applied to all trainable parameters.
-    max_epochs : int
-        Number of pretraining epochs, scheduled independently from the main
-        model's ``TrainerConfig.max_epochs``.
     embedding_dim : int
         Dimensionality of the pooled molecular embedding exposed to the main
         model's concatenation architecture (Phase 2). Ignored by the
@@ -190,6 +187,18 @@ class AuxiliaryEncoderConfig:
         on every ``moal plan`` invocation using the current campaign-state
         CSV's ``raw_ps_readouts``, so newly accumulated readouts improve the
         next run automatically.
+    use_observed_readout : bool
+        Controls the concatenation architecture's main-model input, not the
+        auxiliary encoder's own pretraining (which always uses whatever
+        ``raw_ps_readouts`` exist, regardless of this flag). The auxiliary
+        encoder's structural embedding is always concatenated into the main
+        model for every compound. When True (default), a compound with an
+        observed readout *additionally* gets its raw value concatenated
+        alongside the embedding. When False, every compound is scored from
+        its embedding alone and the readout/mask blocks stay zero for all
+        compounds; a constant-zero input column is a mathematical no-op for
+        a plain linear layer (zero gradient, zero forward contribution), so
+        this does not degrade model capacity.
     """
 
     from_foundation: str | bool = "chemeleon"
@@ -200,9 +209,9 @@ class AuxiliaryEncoderConfig:
     freeze_epochs: int = 5
     lr: float = 1e-4
     weight_decay: float = 0.0
-    max_epochs: int = 30
     embedding_dim: int = 300
     checkpoint_path: str | None = None
+    use_observed_readout: bool = True
 
 
 @dataclass(frozen=True)
@@ -582,10 +591,14 @@ class PipelineConfig:
         Command-specific dataset and I/O settings.
     active_learning_loop : ActiveLearningLoopConfig
         Parameters controlling the active learning iteration loop.
-    auxiliary_encoder : AuxiliaryEncoderConfig or None
-        Optional auxiliary log2FC/pIC50 encoder for ``moal plan`` (issue #36).
-        ``None`` (default) disables the feature entirely; ``moal plan``
-        behaves exactly as it does without this config.
+    auxiliary_model : AuxiliaryModelConfig or None
+        Optional auxiliary log2FC/pIC50 encoder architecture for ``moal plan``
+        (issue #36). ``None`` (default) disables the feature entirely;
+        ``moal plan`` behaves exactly as it does without this config.
+    auxiliary_trainer : TrainerConfig
+        Keyword arguments forwarded to ``lightning.Trainer`` during auxiliary
+        encoder pretraining, scheduled independently from the main model's
+        ``trainer``. Unused when ``auxiliary_model`` is None.
     seed : int
         Global random seed for the campaign.
     """
@@ -597,7 +610,8 @@ class PipelineConfig:
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
     data: DataConfig = field(default_factory=DataConfig)
     active_learning_loop: ActiveLearningLoopConfig = field(default_factory=ActiveLearningLoopConfig)
-    auxiliary_encoder: AuxiliaryEncoderConfig | None = None
+    auxiliary_model: AuxiliaryModelConfig | None = None
+    auxiliary_trainer: TrainerConfig = field(default_factory=TrainerConfig)
 
     seed: int = 42
 
@@ -620,7 +634,7 @@ class PipelineConfig:
         data_raw = raw.get("data", {})
         simulate_raw = data_raw.get("simulate", {})
         pretrain_raw = simulate_raw.pop("pretrain", {}) if isinstance(simulate_raw, dict) else {}
-        auxiliary_encoder_raw = raw.get("auxiliary_encoder", None)
+        auxiliary_model_raw = raw.get("auxiliary_model", None)
         return cls(
             oracle=OracleConfig(**raw.get("oracle", {})),
             model=ModelConfig(**raw.get("model", {})),
@@ -636,11 +650,12 @@ class PipelineConfig:
                 plan=PlanDataConfig(**data_raw.get("plan", {})),
             ),
             active_learning_loop=ActiveLearningLoopConfig(**raw.get("active_learning_loop", {})),
-            auxiliary_encoder=(
-                AuxiliaryEncoderConfig(**auxiliary_encoder_raw)
-                if auxiliary_encoder_raw is not None
+            auxiliary_model=(
+                AuxiliaryModelConfig(**auxiliary_model_raw)
+                if auxiliary_model_raw is not None
                 else None
             ),
+            auxiliary_trainer=TrainerConfig(**raw.get("auxiliary_trainer", {})),
             seed=raw.get("seed", 42),
         )
 

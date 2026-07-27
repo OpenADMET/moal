@@ -18,7 +18,7 @@ from moal.auxiliary_encoder import (
     pretrain_auxiliary_encoder,
     save_auxiliary_encoder_checkpoint,
 )
-from moal.config import AuxiliaryEncoderConfig
+from moal.config import AuxiliaryModelConfig
 from moal.types import CensoringType, LabelRecord, QueryType
 
 _SMILES = ["CCO", "CCN", "CCC", "c1ccccc1", "CCCl", "CCBr", "CCOCC", "CCCC"]
@@ -53,17 +53,16 @@ def _batch(smiles_list: list[str]) -> BatchMolGraph:
     return BatchMolGraph([dataset[i].mg for i in range(len(dataset))])
 
 
-def _fast_config(**overrides) -> AuxiliaryEncoderConfig:
+def _fast_config(**overrides) -> AuxiliaryModelConfig:
     defaults = {
         "from_foundation": False,
         "message_hidden_dim": 16,
         "ffn_hidden_dim": 16,
         "depth": 1,
         "freeze_epochs": 0,
-        "max_epochs": 1,
     }
     defaults.update(overrides)
-    return AuxiliaryEncoderConfig(**defaults)
+    return AuxiliaryModelConfig(**defaults)
 
 
 class TestMaskedMSELoss:
@@ -136,7 +135,7 @@ class TestPretrainAuxiliaryEncoder:
         records = _records_with_readouts()
         config = _fast_config()
 
-        module = pretrain_auxiliary_encoder(records, config)
+        module = pretrain_auxiliary_encoder(records, config, max_epochs=1)
 
         assert module.task_names == ["log2fc_1um", "pic50"]
 
@@ -159,7 +158,7 @@ class TestPretrainAuxiliaryEncoder:
         """When checkpoint_path is set, pretrain_auxiliary_encoder must load the checkpoint rather than training."""
         records = _records_with_readouts()
         config = _fast_config()
-        trained = pretrain_auxiliary_encoder(records, config)
+        trained = pretrain_auxiliary_encoder(records, config, max_epochs=1)
         ckpt_path = tmp_path / "aux_encoder.pt"
         save_auxiliary_encoder_checkpoint(trained, ckpt_path)
 
@@ -181,7 +180,7 @@ class TestAuxiliaryEncoderCheckpoint:
         """A saved-then-loaded checkpoint must reproduce identical predictions and task_names."""
         records = _records_with_readouts()
         config = _fast_config()
-        trained = pretrain_auxiliary_encoder(records, config)
+        trained = pretrain_auxiliary_encoder(records, config, max_epochs=1)
         trained.eval()
 
         path = tmp_path / "aux_encoder.pt"

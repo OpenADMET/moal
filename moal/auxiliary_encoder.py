@@ -7,7 +7,7 @@ Trains a small ChemProp encoder via masked multi-task regression over
 construction (:func:`moal.model.build_mpnn`) rather than a bespoke
 architecture, so its embeddings live in the same representation space as the
 main pEC50 model. Readouts are used as-is: no per-plate/per-batch
-normalization is applied (see :class:`~moal.config.AuxiliaryEncoderConfig`
+normalization is applied (see :class:`~moal.config.AuxiliaryModelConfig`
 for why).
 """
 
@@ -28,7 +28,7 @@ from torch import Tensor
 from torch.optim import Adam
 from torch.utils.data import DataLoader, Dataset, random_split
 
-from moal.config import AuxiliaryEncoderConfig
+from moal.config import AuxiliaryModelConfig
 from moal.model import build_mpnn
 from moal.types import LabelRecord
 
@@ -286,12 +286,12 @@ class AuxiliaryEncoderModule(L.LightningModule):
     task_names : list[str]
         Fixed, ordered list of readout keys the model was (or will be)
         trained against; determines the predictor head's output width.
-    config : AuxiliaryEncoderConfig
+    config : AuxiliaryModelConfig
         Backbone architecture, freeze schedule, and optimization
         hyperparameters.
     """
 
-    def __init__(self, task_names: list[str], config: AuxiliaryEncoderConfig) -> None:
+    def __init__(self, task_names: list[str], config: AuxiliaryModelConfig) -> None:
         super().__init__()
         if not task_names:
             raise ValueError("task_names must be non-empty.")
@@ -482,7 +482,7 @@ class AuxiliaryEncoderModule(L.LightningModule):
             ``smiles_list``. ``embedding_dim`` is the backbone's native
             output width (CheMeleon's fixed width, or ``message_hidden_dim``
             for a random-init encoder), not
-            ``AuxiliaryEncoderConfig.embedding_dim``.
+            ``AuxiliaryModelConfig.embedding_dim``.
         """
         dataset = MoleculeDataset([MoleculeDatapoint.from_smi(s) for s in smiles_list])  # pyright: ignore[reportArgumentType]
         dataloader = build_dataloader(
@@ -501,7 +501,8 @@ class AuxiliaryEncoderModule(L.LightningModule):
 
 def pretrain_auxiliary_encoder(
     records: list[LabelRecord],
-    config: AuxiliaryEncoderConfig,
+    config: AuxiliaryModelConfig,
+    max_epochs: int = 30,
     trainer_kwargs: dict[str, Any] | None = None,
     datamodule_kwargs: dict[str, Any] | None = None,
 ) -> AuxiliaryEncoderModule:
@@ -519,8 +520,11 @@ def pretrain_auxiliary_encoder(
         All labeled records from the campaign state. Records with an empty
         ``raw_ps_readouts`` are filtered out before training; they carry no
         auxiliary training signal.
-    config : AuxiliaryEncoderConfig
+    config : AuxiliaryModelConfig
         Backbone, freeze schedule, and optimization hyperparameters.
+    max_epochs : int, optional
+        Number of pretraining epochs; overridden by ``trainer_kwargs["max_epochs"]``
+        when present (e.g. from ``PipelineConfig.auxiliary_trainer``). Default is 30.
     trainer_kwargs : dict[str, Any], optional
         Additional keyword arguments forwarded to ``lightning.Trainer``.
         Ignored when loading from ``config.checkpoint_path``.
@@ -561,9 +565,14 @@ def pretrain_auxiliary_encoder(
     dm.setup()
 
     kwargs: dict[str, Any] = {
-        "max_epochs": config.max_epochs,
+        "max_epochs": max_epochs,
         "enable_progress_bar": False,
         "enable_model_summary": False,
+        # Small readout-bearing pools can easily have fewer than Lightning's
+        # default log_every_n_steps=50 batches per epoch, which would silently
+        # suppress all step-level logs (same rationale as TrainerConfig's
+        # log_every_n_steps default for the main model).
+        "log_every_n_steps": 1,
     }
     if trainer_kwargs:
         kwargs.update(trainer_kwargs)
@@ -588,7 +597,7 @@ def save_auxiliary_encoder_checkpoint(module: AuxiliaryEncoderModule, path: str 
 
 
 def load_auxiliary_encoder_checkpoint(
-    path: str | Path, config: AuxiliaryEncoderConfig
+    path: str | Path, config: AuxiliaryModelConfig
 ) -> AuxiliaryEncoderModule:
     """Load an auxiliary encoder checkpoint written by :func:`save_auxiliary_encoder_checkpoint`.
 
@@ -596,7 +605,7 @@ def load_auxiliary_encoder_checkpoint(
     ----------
     path : str or Path
         Path to the checkpoint file.
-    config : AuxiliaryEncoderConfig
+    config : AuxiliaryModelConfig
         Backbone architecture the checkpoint was trained with; must match
         the checkpoint's own architecture (``from_foundation``,
         ``ffn_hidden_dim``, etc.) or ``load_state_dict`` will raise.
