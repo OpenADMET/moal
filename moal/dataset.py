@@ -139,7 +139,9 @@ class MixedFidelityDataModule(L.LightningDataModule):
             ``"test"``, ``"predict"``). Not used; accepted for interface
             compatibility.
         """
-        n_val = max(1, int(len(self.records) * self.val_fraction))
+        n_val = int(len(self.records) * self.val_fraction)
+        if self.val_fraction > 0.0:
+            n_val = max(1, n_val)
         n_train = len(self.records) - n_val
         if n_train <= 0:
             logger.warning(
@@ -215,18 +217,22 @@ class MixedFidelityDataModule(L.LightningDataModule):
             drop_last=False,
         )
 
-    def val_dataloader(self) -> DataLoader | None:
-        """Return the validation DataLoader, or ``None`` when no val split exists.
+    def val_dataloader(self) -> DataLoader:
+        """Return the validation DataLoader, empty when no val split exists.
+
+        Lightning requires a real iterable from this hook (returning ``None``
+        raises); an empty ``DataLoader`` yields zero validation batches,
+        which is the correct behavior for ``val_fraction=0.0`` or a record
+        pool too small to form a split during :meth:`setup`.
 
         Returns
         -------
-        DataLoader or None
-            Non-shuffled DataLoader over the validation split, or ``None``
-            if the record pool was too small to form a validation set during
-            :meth:`setup`.
+        DataLoader
+            Non-shuffled DataLoader over the validation split, or an empty
+            ``DataLoader`` if no split was formed.
         """
         if self._val_dataset is None:
-            return None
+            return DataLoader([], batch_size=self.batch_size)  # pyright: ignore[reportArgumentType]
         return DataLoader(
             self._val_dataset,
             batch_size=self.batch_size,
