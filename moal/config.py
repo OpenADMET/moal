@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from lightning.pytorch.callbacks import EarlyStopping
 
 
 @dataclass(frozen=True)
@@ -183,6 +184,28 @@ class TrainerConfig:
         Clipping algorithm passed to ``lightning.Trainer`` when
         ``gradient_clip_val`` is set: ``"norm"`` (default) or ``"value"``.
         Ignored when ``gradient_clip_val`` is None.
+    early_stopping : bool
+        Whether to attach a ``lightning.pytorch.callbacks.EarlyStopping``
+        callback. Default is False (train for exactly ``max_epochs``, current
+        behavior unchanged). Requires a validation split (``val_fraction`` >
+        0) so the monitored metric is actually logged each epoch.
+    early_stopping_monitor : str
+        Metric name to monitor. Default ``"val_loss"`` matches
+        ``ChemPropLightningModule``'s logged key; the auxiliary encoder logs
+        ``"aux_val_loss"`` instead, so ``auxiliary_trainer`` configs must set
+        this explicitly or ``EarlyStopping`` will raise. Ignored when
+        ``early_stopping`` is False.
+    early_stopping_patience : int
+        Number of epochs with no improvement (beyond ``early_stopping_min_delta``)
+        before stopping. Ignored when ``early_stopping`` is False.
+    early_stopping_mode : str
+        ``"min"`` (default) or ``"max"``, matching whether lower or higher
+        values of ``early_stopping_monitor`` are better. Ignored when
+        ``early_stopping`` is False.
+    early_stopping_min_delta : float
+        Minimum change in the monitored metric to qualify as an improvement.
+        Default is 0.0 (any improvement resets patience). Ignored when
+        ``early_stopping`` is False.
     """
 
     max_epochs: int = 30
@@ -195,6 +218,11 @@ class TrainerConfig:
     log_every_n_steps: int = 1
     gradient_clip_val: float | None = None
     gradient_clip_algorithm: str = "norm"
+    early_stopping: bool = False
+    early_stopping_monitor: str = "val_loss"
+    early_stopping_patience: int = 10
+    early_stopping_mode: str = "min"
+    early_stopping_min_delta: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         """Return only the kwargs that ``lightning.Trainer`` accepts.
@@ -211,6 +239,8 @@ class TrainerConfig:
             ``log_every_n_steps``.  ``gradient_clip_val`` (and
             ``gradient_clip_algorithm``) are added only when clipping is
             enabled, so the default (None) leaves Lightning's clipping off.
+            ``callbacks`` (an ``EarlyStopping`` instance) is added only when
+            ``early_stopping`` is True.
         """
         kwargs: dict[str, Any] = {
             "max_epochs": self.max_epochs,
@@ -224,6 +254,15 @@ class TrainerConfig:
         if self.gradient_clip_val is not None:
             kwargs["gradient_clip_val"] = self.gradient_clip_val
             kwargs["gradient_clip_algorithm"] = self.gradient_clip_algorithm
+        if self.early_stopping:
+            kwargs["callbacks"] = [
+                EarlyStopping(
+                    monitor=self.early_stopping_monitor,
+                    patience=self.early_stopping_patience,
+                    mode=self.early_stopping_mode,
+                    min_delta=self.early_stopping_min_delta,
+                )
+            ]
         return kwargs
 
     def to_datamodule_kwargs(self) -> dict[str, Any]:
