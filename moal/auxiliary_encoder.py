@@ -29,7 +29,7 @@ from torch.optim import Adam
 from torch.utils.data import DataLoader, Dataset, random_split
 
 from moal.config import AuxiliaryModelConfig
-from moal.model import build_mpnn
+from moal.model import build_mpnn, safe_inference_batch_size
 from moal.types import LabelRecord
 
 logger = logging.getLogger(__name__)
@@ -485,9 +485,8 @@ class AuxiliaryEncoderModule(L.LightningModule):
             ``AuxiliaryModelConfig.embedding_dim``.
         """
         dataset = MoleculeDataset([MoleculeDatapoint.from_smi(s) for s in smiles_list])  # pyright: ignore[reportArgumentType]
-        dataloader = build_dataloader(
-            dataset, batch_size=batch_size, shuffle=False, drop_last=False
-        )
+        batch_size = safe_inference_batch_size(len(dataset), batch_size)
+        dataloader = build_dataloader(dataset, batch_size=batch_size, shuffle=False)
 
         all_embeddings = []
         with torch.inference_mode():

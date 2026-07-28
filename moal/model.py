@@ -34,6 +34,35 @@ from moal.types import LabelRecord
 
 logger = logging.getLogger(__name__)
 
+
+def safe_inference_batch_size(dataset_size: int, batch_size: int) -> int:
+    """Return a batch size that avoids chemprop's silent single-molecule drop.
+
+    ``chemprop.data.dataloader.build_dataloader`` drops the last batch
+    whenever ``dataset_size % batch_size == 1``, to protect batch-norm during
+    training. At inference that would silently omit a molecule and misalign
+    predictions/embeddings with the input SMILES order, so this shrinks the
+    batch size (never below 1) until the remainder condition no longer holds.
+
+    Parameters
+    ----------
+    dataset_size : int
+        Number of molecules to batch.
+    batch_size : int
+        Requested batch size.
+
+    Returns
+    -------
+    int
+        A batch size no larger than ``dataset_size`` for which
+        ``dataset_size % batch_size != 1`` (or 1, if no larger value works).
+    """
+    effective = min(batch_size, dataset_size)
+    while effective > 1 and dataset_size % effective == 1:
+        effective -= 1
+    return effective
+
+
 _KNOWN_FOUNDATION_MODELS: frozenset[str] = frozenset({"chemeleon"})
 
 
@@ -619,13 +648,9 @@ class ChemPropLightningModule(L.LightningModule):
         dataset = MoleculeDataset([MoleculeDatapoint.from_smi(s) for s in smiles_list])  # pyright: ignore[reportArgumentType]
 
         # Let the dataloader handle batching and graph collation automatically.
-        # drop_last=False is explicit: chemprop defaults to dropping the last
-        # batch when len(dataset) % batch_size == 1 to protect batch-norm
-        # during training, but at inference that would silently omit a molecule
-        # and misalign predictions with the input SMILES list.
-        dataloader = build_dataloader(
-            dataset, batch_size=batch_size, shuffle=False, drop_last=False
-        )
+        # chemprop's build_dataloader no longer accepts drop_last as an override.
+        batch_size = safe_inference_batch_size(len(dataset), batch_size)
+        dataloader = build_dataloader(dataset, batch_size=batch_size, shuffle=False)
 
         all_preds = []
 
