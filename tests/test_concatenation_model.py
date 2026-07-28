@@ -72,13 +72,13 @@ def _records() -> list[LabelRecord]:
 class TestConcatenationFeatureDim:
     """Tests for concatenation_feature_dim's arithmetic."""
 
-    def test_matches_2n_plus_embedding_plus_1(self):
-        """The formula must be 2 * n_tasks + embedding_dim + 1."""
-        assert concatenation_feature_dim(n_tasks=3, embedding_dim=10) == 2 * 3 + 10 + 1
+    def test_matches_3n_plus_embedding_plus_1(self):
+        """The formula must be 3 * n_tasks + embedding_dim + 1."""
+        assert concatenation_feature_dim(n_tasks=3, embedding_dim=10) == 3 * 3 + 10 + 1
 
 
 class TestBuildConcatenationFeatures:
-    """Tests for build_concatenation_features: observed vs embedding routing and shape."""
+    """Tests for build_concatenation_features: observed/predicted vs embedding routing and shape."""
 
     def test_observed_readout_also_gets_embedding(self, aux_encoder):
         """A compound with a readout must populate readout/mask AND the embedding block, with flag=1."""
@@ -87,7 +87,7 @@ class TestBuildConcatenationFeatures:
 
         readout_block = features[0, :n_tasks]
         mask_block = features[0, n_tasks : 2 * n_tasks]
-        embedding_block = features[0, 2 * n_tasks : 2 * n_tasks + _EMBEDDING_DIM]
+        embedding_block = features[0, 3 * n_tasks : 3 * n_tasks + _EMBEDDING_DIM]
         flag = features[0, -1]
 
         assert readout_block[0] == 2.5
@@ -101,7 +101,7 @@ class TestBuildConcatenationFeatures:
         n_tasks = 2
 
         readout_mask_block = features[0, : 2 * n_tasks]
-        embedding_block = features[0, 2 * n_tasks : 2 * n_tasks + _EMBEDDING_DIM]
+        embedding_block = features[0, 3 * n_tasks : 3 * n_tasks + _EMBEDDING_DIM]
         flag = features[0, -1]
 
         assert np.all(readout_mask_block == 0.0)
@@ -121,8 +121,38 @@ class TestBuildConcatenationFeatures:
         assert np.all(with_readout[0, : 2 * n_tasks] == 0.0)
         assert with_readout[0, -1] == 0.0
         np.testing.assert_allclose(
-            with_readout[0, 2 * n_tasks : 2 * n_tasks + _EMBEDDING_DIM],
-            without_readout[0, 2 * n_tasks : 2 * n_tasks + _EMBEDDING_DIM],
+            with_readout[0, 3 * n_tasks : 3 * n_tasks + _EMBEDDING_DIM],
+            without_readout[0, 3 * n_tasks : 3 * n_tasks + _EMBEDDING_DIM],
+        )
+
+    def test_predicted_readout_disabled_by_default(self, aux_encoder):
+        """With use_predicted_readout unset (default False), the predicted-readout block must stay zero."""
+        features = build_concatenation_features(["CCO"], [{"log2fc_1um": 2.5}], aux_encoder)
+        n_tasks = 2
+
+        predicted_block = features[0, 2 * n_tasks : 3 * n_tasks]
+
+        assert np.all(predicted_block == 0.0)
+
+    def test_predicted_readout_matches_encoder_prediction_regardless_of_observed_readout(
+        self, aux_encoder
+    ):
+        """use_predicted_readout=True must populate the predicted block from the encoder's own
+        prediction, identically whether or not the compound has an observed readout.
+        """
+        n_tasks = 2
+        expected = aux_encoder.predict_smiles(["CCO"])[0]
+
+        with_observed = build_concatenation_features(
+            ["CCO"], [{"log2fc_1um": 2.5}], aux_encoder, use_predicted_readout=True
+        )
+        without_observed = build_concatenation_features(
+            ["CCO"], [{}], aux_encoder, use_predicted_readout=True
+        )
+
+        np.testing.assert_allclose(with_observed[0, 2 * n_tasks : 3 * n_tasks], expected, atol=1e-6)
+        np.testing.assert_allclose(
+            without_observed[0, 2 * n_tasks : 3 * n_tasks], expected, atol=1e-6
         )
 
     def test_output_shape_matches_concatenation_feature_dim(self, aux_encoder):

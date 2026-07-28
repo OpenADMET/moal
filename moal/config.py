@@ -200,6 +200,16 @@ class AuxiliaryModelConfig:
         compounds; a constant-zero input column is a mathematical no-op for
         a plain linear layer (zero gradient, zero forward contribution), so
         this does not degrade model capacity.
+    use_predicted_readout : bool
+        Also concatenates the auxiliary encoder's own predicted readout
+        (its multi-task predictor head's output, not just its pooled
+        embedding) into the main model's input, for every compound. Unlike
+        ``use_observed_readout``, this block is never masked or zeroed by
+        missing data: the auxiliary encoder can predict a value for any
+        SMILES, so training and inference always populate this block
+        identically, with no fallback branch to drift apart. Independent of
+        ``use_observed_readout``; both may be enabled together. Default is
+        False.
     """
 
     from_foundation: str | bool = "chemeleon"
@@ -213,6 +223,7 @@ class AuxiliaryModelConfig:
     embedding_dim: int = 300
     checkpoint_path: str | None = None
     use_observed_readout: bool = True
+    use_predicted_readout: bool = False
 
 
 @dataclass(frozen=True)

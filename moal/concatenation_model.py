@@ -58,10 +58,14 @@ def concatenation_feature_dim(n_tasks: int, embedding_dim: int) -> int:
     Returns
     -------
     int
-        ``2 * n_tasks + embedding_dim + 1``: observed-readout vector,
-        readout mask, structural embedding, and a single provenance flag.
+        ``3 * n_tasks + embedding_dim + 1``: observed-readout vector,
+        observed-readout mask, predicted-readout vector, structural
+        embedding, and a single provenance flag. Fixed regardless of
+        ``use_observed_readout``/``use_predicted_readout``; unused blocks
+        are zeroed by :func:`build_concatenation_features` rather than
+        omitted, so a model's input width never depends on those flags.
     """
-    return 2 * n_tasks + embedding_dim + 1
+    return 3 * n_tasks + embedding_dim + 1
 
 
 def build_concatenation_features(
@@ -70,6 +74,7 @@ def build_concatenation_features(
     aux_encoder: AuxiliaryEncoderModule,
     *,
     use_observed_readout: bool = True,
+    use_predicted_readout: bool = False,
     batch_size: int = 256,
 ) -> np.ndarray:
     """Build the per-compound concatenation feature matrix.
@@ -89,6 +94,15 @@ def build_concatenation_features(
     blocks stay zero and the flag is 0 — the compound is scored from its
     structural embedding alone.
 
+    When ``use_predicted_readout`` is True, the auxiliary encoder's own
+    predictor head is additionally run over every compound (via
+    :meth:`~moal.auxiliary_encoder.AuxiliaryEncoderModule.predict_smiles`)
+    and concatenated as a third block. Unlike the observed-readout block,
+    this one is never masked: the encoder can predict a value for any
+    SMILES, so it is populated identically for every compound at both
+    training and inference time, with no fallback branch for the two to
+    drift apart.
+
     Parameters
     ----------
     canonical_smiles : list[str]
@@ -97,16 +111,20 @@ def build_concatenation_features(
         Per-compound ``LabelRecord.raw_ps_readouts``-shaped dict, aligned
         with ``canonical_smiles``. An empty dict means "never PS-screened".
     aux_encoder : AuxiliaryEncoderModule
-        Pretrained auxiliary encoder; supplies both ``task_names`` (readout
-        key order) and the structural embedding.
+        Pretrained auxiliary encoder; supplies ``task_names`` (readout key
+        order), the structural embedding, and (when
+        ``use_predicted_readout``) the predicted-readout block.
     use_observed_readout : bool, optional
         When True (default), compounds with a non-empty readout also get
         their raw value concatenated alongside the embedding. When False,
-        the readout and mask blocks are always zero and every compound is
-        scored from its embedding alone, matching
+        the readout and mask blocks are always zero, matching
         ``AuxiliaryModelConfig.use_observed_readout``.
+    use_predicted_readout : bool, optional
+        When True, the auxiliary encoder's predicted readout is concatenated
+        for every compound. When False (default), that block is always
+        zero, matching ``AuxiliaryModelConfig.use_predicted_readout``.
     batch_size : int, optional
-        Batch size for the embedding forward pass. Default is 256.
+        Batch size for the embedding/prediction forward passes. Default is 256.
 
     Returns
     -------
@@ -143,9 +161,16 @@ def build_concatenation_features(
                     readout_mask[i, j] = 1.0
             readout_used[i, 0] = 1.0
 
+    if use_predicted_readout:
+        predicted_vec = aux_encoder.predict_smiles(canonical_smiles, batch_size=batch_size)
+    else:
+        predicted_vec = np.zeros((n, n_tasks), dtype=np.float32)
+
     embeddings = aux_encoder.embed_smiles(canonical_smiles, batch_size=batch_size)
 
-    return np.concatenate([readout_vec, readout_mask, embeddings, readout_used], axis=1)
+    return np.concatenate(
+        [readout_vec, readout_mask, predicted_vec, embeddings, readout_used], axis=1
+    )
 
 
 class _ConcatenatedDataset(Dataset):
@@ -241,6 +266,12 @@ class ConcatenationChemPropLightningModule(L.LightningModule):
         Deliberately not a per-call parameter on either method, so
         training-time and inference-time routing cannot drift apart. Default
         is True.
+    use_predicted_readout : bool, optional
+        Also fixed at construction, same rationale as ``use_observed_readout``.
+        Unlike that flag, this block is never masked when enabled: the
+        auxiliary encoder predicts a value for every compound, so it is
+        populated identically at training and inference time by
+        construction, not just by convention. Default is False.
     ffn_hidden_dim, ffn_num_layers, message_hidden_dim, depth, freeze_epochs,
     mpnn_lr, ffn_lr, mpnn_weight_decay, ffn_weight_decay, sigma,
     learnable_sigma, from_foundation
@@ -257,6 +288,7 @@ class ConcatenationChemPropLightningModule(L.LightningModule):
         self,
         concat_feature_dim: int,
         use_observed_readout: bool = True,
+        use_predicted_readout: bool = False,
         ffn_hidden_dim: int = 300,
         ffn_num_layers: int = 2,
         message_hidden_dim: int = 300,
@@ -275,6 +307,7 @@ class ConcatenationChemPropLightningModule(L.LightningModule):
         self._from_foundation = from_foundation
         self.concat_feature_dim = concat_feature_dim
         self.use_observed_readout = use_observed_readout
+        self.use_predicted_readout = use_predicted_readout
         self.save_hyperparameters()
 
         self.freeze_epochs = freeze_epochs
@@ -507,6 +540,7 @@ class ConcatenationChemPropLightningModule(L.LightningModule):
             readouts,
             aux_encoder,
             use_observed_readout=self.use_observed_readout,
+            use_predicted_readout=self.use_predicted_readout,
             batch_size=batch_size,
         )
         x_d = torch.as_tensor(features, dtype=torch.float32)
@@ -593,6 +627,7 @@ class ConcatenationChemPropLightningModule(L.LightningModule):
             [rec.raw_ps_readouts for rec in records],
             aux_encoder,
             use_observed_readout=self.use_observed_readout,
+            use_predicted_readout=self.use_predicted_readout,
         )
         dm = _ConcatenatedDataModule(records, features, **(datamodule_kwargs or {}))
         dm.setup()

@@ -862,8 +862,8 @@ def _build_concatenation_model(
     -------
     ConcatenationChemPropLightningModule
         Configured model ready for ``refit()`` and ``predict_smiles()``.
-        ``use_observed_readout`` is fixed here at construction (from
-        ``cfg.auxiliary_model.use_observed_readout``) rather than passed
+        ``use_observed_readout``/``use_predicted_readout`` are fixed here at
+        construction (from ``cfg.auxiliary_model``) rather than passed
         separately to each call, so training and inference routing cannot
         drift apart.
     """
@@ -873,6 +873,7 @@ def _build_concatenation_model(
     return ConcatenationChemPropLightningModule(
         concat_feature_dim=feature_dim,
         use_observed_readout=cfg.auxiliary_model.use_observed_readout,
+        use_predicted_readout=cfg.auxiliary_model.use_predicted_readout,
         ffn_hidden_dim=cfg.model.ffn_hidden_dim,
         ffn_num_layers=cfg.model.ffn_num_layers,
         message_hidden_dim=cfg.model.message_hidden_dim,

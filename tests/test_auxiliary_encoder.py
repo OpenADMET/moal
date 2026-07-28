@@ -126,6 +126,15 @@ class TestAuxiliaryEncoderModule:
 
         assert embeddings.shape == (3, 24)
 
+    def test_predict_smiles_returns_task_count_width_aligned_with_input(self):
+        """predict_smiles must return one prediction row per input SMILES, at task_names width."""
+        config = _fast_config()
+        module = AuxiliaryEncoderModule(task_names=["log2fc_1um", "pic50"], config=config)
+
+        predictions = module.predict_smiles(["CCO", "CCN", "CCC"])
+
+        assert predictions.shape == (3, 2)
+
 
 class TestPretrainAuxiliaryEncoder:
     """Tests for pretrain_auxiliary_encoder: training end-to-end and checkpoint opt-in."""

@@ -497,6 +497,47 @@ class AuxiliaryEncoderModule(L.LightningModule):
 
         return np.concatenate(all_embeddings, axis=0).astype(np.float32)
 
+    @torch.no_grad()
+    def predict_smiles(self, smiles_list: list[str], batch_size: int = 256) -> np.ndarray:
+        """Return multi-task readout predictions for a list of SMILES.
+
+        Unlike :meth:`embed_smiles`, this runs the full forward pass
+        including the predictor head, giving a predicted value per
+        ``task_names`` entry for every compound, whether or not it was
+        actually screened at that concentration. Used to backfill a
+        "predicted readout" feature column that covers the full compound
+        pool, as opposed to :func:`moal.concatenation_model.build_concatenation_features`'s
+        observed-readout fallback, which only has a value for screened
+        compounds.
+
+        Parameters
+        ----------
+        smiles_list : list[str]
+            **Must be RDKit-canonical, salt-stripped SMILES**, matching
+            :meth:`moal.model.ChemPropLightningModule.predict_smiles`'s
+            contract.
+        batch_size : int, optional
+            Number of molecules processed per forward pass. Default is 256.
+
+        Returns
+        -------
+        np.ndarray
+            Array of shape ``(N, len(task_names))``, aligned with
+            ``smiles_list``.
+        """
+        dataset = MoleculeDataset([MoleculeDatapoint.from_smi(s) for s in smiles_list])  # pyright: ignore[reportArgumentType]
+        batch_size = safe_inference_batch_size(len(dataset), batch_size)
+        dataloader = build_dataloader(dataset, batch_size=batch_size, shuffle=False)
+
+        all_preds = []
+        with torch.inference_mode():
+            for batch in dataloader:
+                batch.bmg.to(self.device)
+                preds = self(batch.bmg)
+                all_preds.append(preds.cpu().numpy())
+
+        return np.concatenate(all_preds, axis=0).astype(np.float32)
+
 
 def pretrain_auxiliary_encoder(
     records: list[LabelRecord],
