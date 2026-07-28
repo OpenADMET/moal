@@ -19,7 +19,12 @@ from chemprop.models import MPNN
 from chemprop.nn import BondMessagePassing, MeanAggregation, RegressionFFN
 
 from moal.loss import CensoredRegressionLoss
-from moal.model import _KNOWN_FOUNDATION_MODELS, ChemPropLightningModule, NoisyOracleModel
+from moal.model import (
+    _KNOWN_FOUNDATION_MODELS,
+    ChemPropLightningModule,
+    NoisyOracleModel,
+    safe_inference_batch_size,
+)
 from moal.types import CensoringType, LabelRecord, QueryType
 
 # Capture the real _build_model before any test fixture can patch it.
@@ -537,3 +542,23 @@ class TestFromFoundation:
         m = ChemPropLightningModule(from_foundation=str(weights_path))
         assert m.hparams["from_foundation"] == str(weights_path)
         assert isinstance(m.model, nn.Module)
+
+
+class TestSafeInferenceBatchSize:
+    """Tests for safe_inference_batch_size avoiding chemprop's remainder-1 batch drop."""
+
+    def test_single_molecule_does_not_collapse_to_zero(self):
+        """A single-molecule dataset must not shrink the batch size to 0."""
+        assert safe_inference_batch_size(dataset_size=1, batch_size=256) == 1
+
+    def test_no_remainder_leaves_batch_size_unchanged(self):
+        """A batch size that already avoids remainder 1 must be returned as-is."""
+        assert safe_inference_batch_size(dataset_size=512, batch_size=256) == 256
+
+    def test_remainder_one_shrinks_batch_size(self):
+        """A batch size producing exactly one leftover molecule must shrink by one."""
+        assert safe_inference_batch_size(dataset_size=257, batch_size=256) == 255
+
+    def test_batch_size_larger_than_dataset_is_capped(self):
+        """A batch size larger than the dataset must be capped to the dataset size."""
+        assert safe_inference_batch_size(dataset_size=5, batch_size=256) == 5
