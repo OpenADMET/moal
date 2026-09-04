@@ -655,6 +655,44 @@ class ChemPropLightningModule(L.LightningModule):
 
         return np.array(all_preds, dtype=np.float32)
 
+    @torch.no_grad()
+    def embed_smiles(self, smiles_list: list[str], batch_size: int = 256) -> np.ndarray:
+        """Return pooled structural embeddings (pre-predictor) for a list of SMILES.
+
+        Uses ``chemprop.models.MPNN.fingerprint``, which applies message-passing,
+        mean pooling, and batch-norm but stops short of the pEC50 predictor head,
+        so the returned vectors reflect whatever fine-tuning ``refit`` has done
+        to the encoder so far.
+
+        Parameters
+        ----------
+        smiles_list : list[str]
+            **Must be RDKit-canonical, salt-stripped SMILES**, matching
+            :meth:`predict_smiles`'s contract.
+        batch_size : int, optional
+            Number of molecules processed per forward pass. Default is 256.
+
+        Returns
+        -------
+        np.ndarray
+            Array of shape ``(N, embedding_dim)``, aligned with
+            ``smiles_list``. ``embedding_dim`` is CheMeleon's fixed native
+            width (2048) for a foundation checkpoint, or ``message_hidden_dim``
+            for a random-init encoder.
+        """
+        dataset = MoleculeDataset([MoleculeDatapoint.from_smi(s) for s in smiles_list])  # pyright: ignore[reportArgumentType]
+        batch_size = safe_inference_batch_size(len(dataset), batch_size)
+        dataloader = build_dataloader(dataset, batch_size=batch_size, shuffle=False)
+
+        all_embeddings = []
+        with torch.inference_mode():
+            for batch in dataloader:
+                batch.bmg.to(self.device)
+                embedding = cast(MPNN, self.model).fingerprint(batch.bmg)
+                all_embeddings.append(embedding.cpu().numpy())
+
+        return np.concatenate(all_embeddings, axis=0).astype(np.float32)
+
     def refit(
         self,
         records: list[LabelRecord],
